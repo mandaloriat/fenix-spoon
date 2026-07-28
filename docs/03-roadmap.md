@@ -45,8 +45,10 @@ Goal: `npm install` two widgets and build the demo page in ten lines.
 
 - [x] `@fenix-spoon/client` — typed JS/TS SDK for the wire protocol (fetch + WS, reconnection),
       plus runtime validators mirroring the server's pydantic rules (#7)
-- [ ] `@fenix-spoon/geometry-2d` — framework-agnostic (custom element) parametric 2D profile
-      editor: draggable points, splines, constraints, undo, JSON in/out per the geometry schema (#8)
+- [x] `@fenix-spoon/geometry-2d` — framework-agnostic (custom element) parametric 2D profile
+      editor: draggable points, polygon and centripetal Catmull-Rom spline modes, undo/redo,
+      full keyboard operation, JSON in/out per the geometry schema (#8).
+      *Constraint solving (symmetry, tangency) deferred — it wants its own design pass.*
 - [ ] `@fenix-spoon/viewer` — vtk.js-based field viewer custom element: unstructured 2D/3D,
       colormaps, contours, vector glyphs, probes (#9)
 - [ ] Rebuild `examples/airfoil-2d` on the widgets; keep the zero-dependency version as
