@@ -90,9 +90,10 @@ def test_mesh2d_output_and_vtk_artifact(tmp_path):
     for name in ("psi", "speed"):
         assert len(result.data["point_fields"][name]) == len(points)
 
-    # The unstructured mesh is genuinely unstructured: node spacing is not uniform.
-    xs = np.unique(np.round(points[:, 0], 6))
-    assert len(xs) > len(points) ** 0.5, "grid-like output would have few distinct x values"
+    # The mesh is genuinely unstructured: a Cartesian grid would have uniform node
+    # spacing along x, a triangulation does not.
+    gaps = np.diff(np.unique(np.round(points[:, 0], 9)))
+    assert gaps.std() / gaps.mean() > 0.1, "node spacing is uniform — this looks like a grid"
 
     # The obstacle is a hole in the mesh: no node lies in its interior. Test against the
     # polygon shrunk toward its centroid, since nodes *on* the boundary are classified

@@ -148,8 +148,10 @@ class DolfinxPotentialFlow2D(Solver):
 
         ctx.check_cancelled()
         ctx.progress(ProgressEvent(iteration=3, total=4, message="post-processing"))
-        points, triangles, psi_nodal = _p1_mesh_data(V, psi_h)
-        speed_nodal = _nodal_speed(points, triangles, psi_nodal)
+        # Extracting the triangulation costs O(cells); skip it when nothing needs it.
+        if params.output == "mesh2d" or params.write_vtk:
+            points, triangles, psi_nodal = _p1_mesh_data(V, psi_h)
+            speed_nodal = _nodal_speed(points, triangles, psi_nodal)
 
         if params.write_vtk:
             _write_vtk_unstructured(
