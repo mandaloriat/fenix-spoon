@@ -31,3 +31,6 @@ node_modules/
 
 # npm workspace lockfile is committed; build output is not
 client/**/dist/
+# Emitted JS/d.ts must never land next to TS sources (a build with a bad rootDir does this)
+client/packages/*/src/*.js
+client/packages/*/src/*.d.ts

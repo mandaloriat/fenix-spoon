@@ -1,0 +1,46 @@
+{
+  "name": "@fenix-spoon/geometry-2d",
+  "version": "0.1.0",
+  "description": "Framework-agnostic custom element for editing parametric 2D profiles as Fenix Spoon geometry",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./element": {
+      "types": "./dist/element.d.ts",
+      "default": "./dist/element.js"
+    },
+    "./spline": {
+      "types": "./dist/spline.d.ts",
+      "default": "./dist/spline.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@fenix-spoon/client": "^0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "jsdom": "^25.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mandaloriat/fenix-spoon.git",
+    "directory": "client/packages/geometry-2d"
+  }
+}
