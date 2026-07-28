@@ -118,7 +118,7 @@ async function run() {
     statusEl.textContent =
       error instanceof JobFailedError && error.status === 'cancelled'
         ? 'cancelled'
-        : `⚠ ${error.message}`;
+        : `⚠ ${describe(error)}`;
   } finally {
     running = false;
     runBtn.disabled = false;
@@ -126,6 +126,12 @@ async function run() {
     progEl.hidden = true;
     currentJob = null;
   }
+}
+
+// `catch` can receive anything, not just an Error — a bare `.message` would put
+// "undefined" on the status line.
+function describe(error) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function syncFieldOptions() {
@@ -175,7 +181,7 @@ try {
   statusEl.textContent = `server ok — ${usable.length} solver(s)`;
   await run();
 } catch (error) {
-  statusEl.textContent = `⚠ cannot reach the server — ${error.message}`;
+  statusEl.textContent = `⚠ cannot reach the server — ${describe(error)}`;
 }
 </script>
 <script type="module">
