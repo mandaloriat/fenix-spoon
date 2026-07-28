@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: pip install -e "./server[dev]"
+      - name: Lint
+        run: ruff check server
+      - name: Test (mock path, no FEniCSx)
+        run: pytest server/tests -v
+
+  # Roadmap M1: job running the dolfinx adapter tests inside dolfinx/dolfinx:stable.
