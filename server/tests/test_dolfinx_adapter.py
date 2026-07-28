@@ -75,6 +75,61 @@ def test_agrees_with_mock_solver(tmp_path):
     assert rms < 0.05, f"normalized RMS disagreement too large: {rms:.3f}"
 
 
+def test_mesh2d_output_and_vtk_artifact(tmp_path):
+    """The adapter can emit its own FEM triangulation, not just a resampled grid."""
+    ctx = make_ctx(tmp_path)
+    params = DolfinxPotentialFlow2D.Params(mesh_size=0.08, resolution=64, output="mesh2d")
+    result = DolfinxPotentialFlow2D().solve(GEOMETRY, params, ctx)
+
+    assert result.kind == "mesh2d"
+    points = np.asarray(result.data["points"])
+    triangles = np.asarray(result.data["triangles"])
+    assert points.ndim == 2 and points.shape[1] == 2
+    assert triangles.ndim == 2 and triangles.shape[1] == 3
+    assert triangles.min() >= 0 and triangles.max() < len(points)
+    for name in ("psi", "speed"):
+        assert len(result.data["point_fields"][name]) == len(points)
+
+    # The mesh is genuinely unstructured: a Cartesian grid would have uniform node
+    # spacing along x, a triangulation does not.
+    gaps = np.diff(np.unique(np.round(points[:, 0], 9)))
+    assert gaps.std() / gaps.mean() > 0.1, "node spacing is uniform — this looks like a grid"
+
+    # The obstacle is a hole in the mesh: no node lies in its interior. Test against the
+    # polygon shrunk toward its centroid, since nodes *on* the boundary are classified
+    # arbitrarily by the even-odd rule.
+    from fenixspoon.solvers.mock_laplace import polygon_mask
+
+    obstacle = np.asarray(GEOMETRY.obstacle.points, dtype=float)
+    shrunk = obstacle.mean(axis=0) + 0.9 * (obstacle - obstacle.mean(axis=0))
+    inside = polygon_mask(shrunk, points[:, 0][None, :], points[:, 1][None, :])
+    assert not inside.any()
+
+    arts = ctx.artifacts
+    assert [a["name"] for a in arts] == ["solution.vtk"]
+    content = (tmp_path / "artifacts" / "solution.vtk").read_text()
+    assert "DATASET UNSTRUCTURED_GRID" in content
+    assert f"POINTS {len(points)} double" in content
+    assert "SCALARS psi" in content and "SCALARS speed" in content
+
+
+def test_mesh2d_matches_grid2d_sampling(tmp_path):
+    """Both output kinds must describe the same solution."""
+    common = dict(mesh_size=0.06, resolution=64, write_vtk=False)
+    grid = DolfinxPotentialFlow2D().solve(
+        GEOMETRY, DolfinxPotentialFlow2D.Params(output="grid2d", **common), make_ctx(tmp_path)
+    )
+    mesh = DolfinxPotentialFlow2D().solve(
+        GEOMETRY, DolfinxPotentialFlow2D.Params(output="mesh2d", **common), make_ctx(tmp_path)
+    )
+    psi_mesh = np.asarray(mesh.data["point_fields"]["psi"])
+    ny, nx = grid.data["shape"]
+    psi_grid = np.asarray(grid.data["fields"]["psi"]).reshape(ny, nx)
+    grid_mask = np.asarray(grid.data["mask"], dtype=bool).reshape(ny, nx)
+    assert psi_mesh.min() == pytest.approx(psi_grid[~grid_mask].min(), abs=0.05)
+    assert psi_mesh.max() == pytest.approx(psi_grid[~grid_mask].max(), abs=0.05)
+
+
 def test_cancellation_before_solve(tmp_path):
     cancel = threading.Event()
     cancel.set()
