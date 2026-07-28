@@ -6,7 +6,7 @@ npm workspace for the Fenix Spoon browser packages.
 |---|---|---|
 | [`@fenix-spoon/client`](packages/client) | ✅ implemented | Typed SDK for the [wire protocol](../docs/04-wire-protocol.md): solver discovery, job submission, WebSocket progress streams with reconnection, results, artifacts, runtime validators. Zero UI. |
 | [`@fenix-spoon/geometry-2d`](packages/geometry-2d) | ✅ implemented | `<fs-geometry-2d>`: SVG-based parametric 2D profile editor. Draggable points, polygon and Catmull-Rom spline modes, undo/redo, full keyboard operation. Emits `domain2d` geometry JSON. |
-| `@fenix-spoon/viewer` | 📋 planned (#9) | Field viewer custom element built on [vtk.js](https://kitware.github.io/vtk-js/): `grid2d` and `mesh2d` results, colormaps, contours, glyphs, probes. |
+| [`@fenix-spoon/viewer`](packages/viewer) | ✅ implemented | `<fs-viewer>`: canvas field renderer for `grid2d` and `mesh2d` results — colormaps, colorbar, iso-contours, hover probe. vtk.js deferred until a 3D result kind exists; see its README. |
 
 ## Working on them
 

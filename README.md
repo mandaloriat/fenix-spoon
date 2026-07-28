@@ -13,10 +13,12 @@ The canonical use case: an engineer opens a web page, drags the control points o
 solenoid cross-section), presses *Run*, and watches the simulation result appear live — no local
 installation, no desktop tooling, just a browser talking to a FEniCSx server.
 
-> **Status: kickstart (M0).** The repository ships a working end-to-end vertical slice using a
-> pure-NumPy mock solver, so you can run the full loop (edit geometry → submit → stream progress →
-> render field) without installing FEniCSx. The real FEniCSx adapter and the widget library are the
-> next milestones — see the [roadmap](docs/03-roadmap.md).
+> **Status: M1 done, M2 nearly.** Two physics examples run end to end on real FEniCSx solves
+> (potential flow, magnetostatics), and the three browser packages — SDK, geometry editor, field
+> viewer — are published from `client/`. Pure-NumPy mock solvers mirror every FEniCSx one, so the
+> full loop (edit geometry → submit → stream progress → render field) runs without installing
+> FEniCSx at all. Next: rebuilding the demos on the widgets, then production job execution — see
+> the [roadmap](docs/03-roadmap.md).
 
 ## Why
 
@@ -37,7 +39,7 @@ see the [state-of-the-art survey](docs/01-state-of-the-art.md). Fenix Spoon is t
 | **Browser demos** — zero-dependency HTML pages: draggable airfoil with live flow, editable solenoid with magnetostatics and field lines | [`examples/airfoil-2d/`](examples/airfoil-2d/), [`examples/solenoid-2d/`](examples/solenoid-2d/) | ✅ working |
 | **JS/TS SDK** — `@fenix-spoon/client`: typed protocol client with progress streaming, reconnection and runtime validators | [`client/packages/client/`](client/packages/client/) | ✅ working |
 | **Geometry editor widget** — `<fs-geometry-2d>`: SVG-based parametric profile editor, keyboard-operable, emits protocol JSON | [`client/packages/geometry-2d/`](client/packages/geometry-2d/) | ✅ working |
-| **Field viewer widget** — vtk.js-based renderer for `grid2d`/`mesh2d` results | [`client/`](client/) | 📋 planned (#9) |
+| **Field viewer widget** — `<fs-viewer>`: canvas renderer for `grid2d`/`mesh2d` with colormaps, contours and a hover probe | [`client/packages/viewer/`](client/packages/viewer/) | ✅ working |
 | **Docker deployment** — one image with dolfinx + server, `docker compose up` | [`Dockerfile`](server/Dockerfile), [`docker-compose.yml`](docker-compose.yml) | ✅ scaffolded |
 
 ## Quickstart (no FEniCSx required)
@@ -92,10 +94,11 @@ serialization formats), is in [`docs/02-architecture.md`](docs/02-architecture.m
 ## Repository layout
 
 ```
-├── docs/                  # Survey, architecture, roadmap, wire protocol
-├── server/                # Python package `fenixspoon` (FastAPI app + solvers) and tests
-├── client/                # (planned) npm packages: geometry editors, field viewers, JS SDK
-├── examples/airfoil-2d/   # Self-contained browser demo
+├── docs/               # Survey, architecture, roadmap, wire protocol
+├── protocol/fixtures/  # Shared conformance corpus — read by both pytest and vitest
+├── server/             # Python package `fenixspoon` (FastAPI app + solvers) and tests
+├── client/             # npm workspace: @fenix-spoon/{client,geometry-2d,viewer}
+├── examples/           # Self-contained browser demos (airfoil, solenoid)
 └── docker-compose.yml
 ```
 
