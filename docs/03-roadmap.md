@@ -43,14 +43,16 @@ Goal: the demo runs on an unstructured FEniCSx solve inside Docker, same UX.
 
 Goal: `npm install` two widgets and build the demo page in ten lines.
 
-- [ ] `@fenix-spoon/client` — typed JS/TS SDK for the wire protocol (fetch + WS, reconnection) (#7)
+- [x] `@fenix-spoon/client` — typed JS/TS SDK for the wire protocol (fetch + WS, reconnection),
+      plus runtime validators mirroring the server's pydantic rules (#7)
 - [ ] `@fenix-spoon/geometry-2d` — framework-agnostic (custom element) parametric 2D profile
       editor: draggable points, splines, constraints, undo, JSON in/out per the geometry schema (#8)
 - [ ] `@fenix-spoon/viewer` — vtk.js-based field viewer custom element: unstructured 2D/3D,
       colormaps, contours, vector glyphs, probes (#9)
 - [ ] Rebuild `examples/airfoil-2d` on the widgets; keep the zero-dependency version as
       reference (#10)
-- [ ] Versioned protocol conformance tests shared between server (pytest) and SDK (vitest) (#11)
+- [x] Versioned protocol conformance tests shared between server (pytest) and SDK (vitest) —
+      both sides read `protocol/fixtures/` and CI runs both (#11)
 
 ## M3 — Production job execution
 

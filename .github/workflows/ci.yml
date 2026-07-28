@@ -23,6 +23,31 @@ jobs:
       - name: Test (mock path, no FEniCSx)
         run: pytest server/tests -v
 
+  client:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # The integration tests boot a real server; without the Python package they
+      # would silently skip, so install it here and keep them honest.
+      - name: Install server
+        run: pip install -e ./server
+      # Deliberately `ci`, not `install`: a lockfile that has drifted from
+      # package.json should fail the build, not be silently regenerated.
+      - name: Install client
+        run: npm ci --prefix client
+      - name: Typecheck
+        run: npm run typecheck --prefix client
+      - name: Test
+        run: npm test --prefix client
+      - name: Build
+        run: npm run build --prefix client
+
   fenics:
     runs-on: ubuntu-latest
     container:

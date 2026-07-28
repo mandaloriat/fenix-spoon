@@ -53,6 +53,27 @@
       }
     },
     {
+      "name": "fractional grid shape",
+      "reason": "shape is a pair of integers",
+      "payload": {
+        "job_id": "j-x", "kind": "grid2d",
+        "data": { "bounds": [0, 0, 1, 1], "shape": [1.5, 4],
+                  "fields": { "psi": [1, 2, 3, 4, 5, 6] }, "mask": [0, 0, 0, 0, 0, 0] }
+      }
+    },
+    {
+      "name": "fractional artifact size",
+      "reason": "artifact size is an integer byte count",
+      "payload": {
+        "job_id": "j-x", "kind": "grid2d",
+        "data": { "bounds": [0, 0, 1, 1], "shape": [1, 2],
+                  "fields": { "psi": [1, 2] }, "mask": [0, 0] },
+        "artifacts": [
+          { "name": "a.vtk", "content_type": "model/vnd.vtk", "size": 10.5, "url": "/a" }
+        ]
+      }
+    },
+    {
       "name": "unknown result kind",
       "reason": "kind must be grid2d or mesh2d",
       "payload": { "job_id": "j-x", "kind": "hologram", "data": {} }

@@ -17,6 +17,12 @@
       "payload": { "type": "status", "status": "exploded" } },
     { "name": "progress without iteration",
       "reason": "iteration is required on progress events",
-      "payload": { "type": "progress", "total": 100 } }
+      "payload": { "type": "progress", "total": 100 } },
+    { "name": "fractional iteration",
+      "reason": "iteration is an integer; a lossless 5.0 is fine but 5.5 is not",
+      "payload": { "type": "progress", "iteration": 5.5 } },
+    { "name": "fractional total",
+      "reason": "total is an integer",
+      "payload": { "type": "progress", "iteration": 5, "total": 99.5 } }
   ]
 }

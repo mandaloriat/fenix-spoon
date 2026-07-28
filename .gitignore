@@ -28,3 +28,6 @@ node_modules/
 *.h5
 *.vtu
 *.pvd
+
+# npm workspace lockfile is committed; build output is not
+client/**/dist/
