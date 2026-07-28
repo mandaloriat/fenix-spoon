@@ -1,0 +1,91 @@
+{
+  "$comment": "Conformance corpus for the geometry schema (docs/04-wire-protocol.md). Consumed by server/tests/test_protocol_fixtures.py and, at M2, by the JS SDK test suite.",
+  "valid": [
+    {
+      "name": "airfoil in default bounds",
+      "payload": {
+        "type": "domain2d",
+        "bounds": [-1.0, -1.0, 2.0, 1.0],
+        "obstacle": {
+          "type": "polygon2d",
+          "points": [[0.0, 0.0], [0.35, 0.09], [1.0, 0.0], [0.35, -0.06]]
+        }
+      }
+    },
+    {
+      "name": "minimal triangle obstacle",
+      "payload": {
+        "type": "domain2d",
+        "bounds": [0.0, 0.0, 1.0, 1.0],
+        "obstacle": {
+          "type": "polygon2d",
+          "points": [[0.4, 0.4], [0.6, 0.4], [0.5, 0.6]]
+        }
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "two-point polygon",
+      "reason": "polygon2d requires at least 3 points",
+      "payload": {
+        "type": "domain2d",
+        "bounds": [-1.0, -1.0, 2.0, 1.0],
+        "obstacle": { "type": "polygon2d", "points": [[0.0, 0.0], [1.0, 1.0]] }
+      }
+    },
+    {
+      "name": "inverted bounds",
+      "reason": "xmin must be < xmax",
+      "payload": {
+        "type": "domain2d",
+        "bounds": [2.0, -1.0, -1.0, 1.0],
+        "obstacle": {
+          "type": "polygon2d",
+          "points": [[0.4, 0.4], [0.6, 0.4], [0.5, 0.6]]
+        }
+      }
+    },
+    {
+      "name": "obstacle outside domain",
+      "reason": "obstacle points must lie strictly inside the bounds",
+      "payload": {
+        "type": "domain2d",
+        "bounds": [0.0, 0.0, 1.0, 1.0],
+        "obstacle": {
+          "type": "polygon2d",
+          "points": [[5.0, 5.0], [6.0, 5.0], [5.5, 6.0]]
+        }
+      }
+    },
+    {
+      "name": "self-intersecting bowtie polygon",
+      "reason": "polygons must be simple; self-intersections can hang meshers",
+      "payload": {
+        "type": "domain2d",
+        "bounds": [-1.0, -1.0, 2.0, 1.0],
+        "obstacle": {
+          "type": "polygon2d",
+          "points": [[0.0, 0.0], [1.0, 0.5], [1.0, 0.0], [0.0, 0.5]]
+        }
+      }
+    },
+    {
+      "name": "duplicate consecutive points",
+      "reason": "degenerate zero-length edges are rejected",
+      "payload": {
+        "type": "domain2d",
+        "bounds": [0.0, 0.0, 1.0, 1.0],
+        "obstacle": {
+          "type": "polygon2d",
+          "points": [[0.4, 0.4], [0.4, 0.4], [0.6, 0.4], [0.5, 0.6]]
+        }
+      }
+    },
+    {
+      "name": "unknown geometry type",
+      "reason": "type must be a registered geometry kind",
+      "payload": { "type": "sphere3d", "radius": 1.0 }
+    }
+  ]
+}

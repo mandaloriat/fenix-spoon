@@ -55,17 +55,26 @@ Errors: `404` unknown solver · `422` invalid geometry/params (pydantic detail f
 
 ### `GET /api/v1/jobs/{job_id}`
 
-`{ "job_id": "...", "solver": "...", "status": "queued|running|done|failed", "error": null, "created_at": "...", "finished_at": null }`
+`{ "job_id": "...", "solver": "...", "status": "queued|running|done|failed|cancelled", "error": null, "created_at": "...", "finished_at": null }`
+
+### `POST /api/v1/jobs/{job_id}/cancel` → `202`
+
+Requests cooperative cancellation; the solver stops at its next check point and the job ends in
+the `cancelled` terminal status. `409` if the job already ended. Long-running jobs are also
+subject to a server-side wall-clock timeout (`FENIXSPOON_JOB_TIMEOUT`, default 600 s), which
+fails the job with a timeout error.
 
 ### `WS /api/v1/jobs/{job_id}/events`
 
 Server pushes one JSON message per event. Past events are replayed on connect, so subscribing
-after completion still yields the full history. Stream closes after a terminal event.
+after completion still yields the full history. Stream closes after a terminal event
+(`done`, `failed`, or `cancelled`).
 
 ```json
 { "type": "progress", "iteration": 400, "total": 2000, "residual": 3.2e-05, "message": null }
 { "type": "status", "status": "done" }
 { "type": "status", "status": "failed", "error": "..." }
+{ "type": "status", "status": "cancelled" }
 ```
 
 ### `GET /api/v1/jobs/{job_id}/result`
@@ -76,24 +85,31 @@ after completion still yields the full history. Stream closes after a terminal e
 {
   "job_id": "j-8f3a...",
   "kind": "grid2d",
-  "data": {
-    "bounds": [-2.0, -1.5, 4.0, 1.5],
-    "shape": [96, 192],
-    "fields": { "psi": ["<row-major floats>"], "speed": ["..."] },
-    "mask": ["<0/1 obstacle mask, row-major>"]
-  },
-  "artifacts": []
+  "data": { "...": "see result kinds below" },
+  "artifacts": [
+    { "name": "solution.vtk", "content_type": "model/vnd.vtk", "size": 191234,
+      "url": "/api/v1/jobs/j-8f3a.../artifacts/solution.vtk" }
+  ]
 }
 ```
 
 Result kinds:
 
-- `grid2d` (v0, implemented): fields sampled on a regular grid — `shape` is `[ny, nx]`, arrays are
-  row-major with index `[iy * nx + ix]`, y increasing upward.
-- `mesh2d` (M1, reserved): `points` (N×2), `triangles` (M×3 indices), `point_fields` /
-  `cell_fields`.
-- `artifacts` (M1, reserved): `[{ "name": "solution.vtu", "content_type": "...", "url": "..." }]`
-  for payloads too large to inline.
+- `grid2d` (implemented): fields sampled on a regular grid —
+  `{ "bounds": [xmin, ymin, xmax, ymax], "shape": [ny, nx], "fields": { "<name>": [...] },
+  "mask": [...] }`. Arrays are row-major with index `[iy * nx + ix]`, y increasing upward;
+  `mask` is 1 inside the obstacle.
+- `mesh2d` (implemented): unstructured triangle mesh —
+  `{ "bounds": [...], "points": [[x, y], ...], "triangles": [[i, j, k], ...],
+  "point_fields": { "<name>": [...] } }`. Triangle indices reference `points`; `cell_fields`
+  is reserved for per-triangle data.
+
+### `GET /api/v1/jobs/{job_id}/artifacts/{name}`
+
+Downloads an artifact listed in the result envelope. Only names registered by the solver are
+servable (artifact names are bare filenames by construction — no path traversal). Artifacts
+live on the server filesystem under `FENIXSPOON_DATA_DIR` and share the job's lifetime
+(persistence is roadmap M3).
 
 ## Conventions
 

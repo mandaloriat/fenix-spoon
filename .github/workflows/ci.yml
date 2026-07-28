@@ -23,4 +23,20 @@ jobs:
       - name: Test (mock path, no FEniCSx)
         run: pytest server/tests -v
 
-  # Roadmap M1: job running the dolfinx adapter tests inside dolfinx/dolfinx:stable.
+  fenics:
+    runs-on: ubuntu-latest
+    container:
+      # Pinned for reproducibility; bump deliberately when a new dolfinx releases and
+      # the adapter has been checked against it (see solvers/dolfinx_poisson.py).
+      image: dolfinx/dolfinx:v0.11.0
+    env:
+      PIP_BREAK_SYSTEM_PACKAGES: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install
+        run: pip install -e "./server[dev]"
+      - name: Guard against silently skipped tests
+        # The adapter tests importorskip these; fail loudly if the image lacks them.
+        run: python3 -c "import dolfinx, gmsh"
+      - name: Test (FEniCSx adapter)
+        run: pytest server/tests -m fenics -v

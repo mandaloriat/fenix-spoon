@@ -32,6 +32,7 @@ remove it, double-click an edge to add one. The field is solved server-side
 
 <div class="controls">
   <button id="run">Run ▶</button>
+  <button id="cancel" hidden>Cancel ✕</button>
   <label><input type="checkbox" id="auto" checked> auto-run on edit</label>
   <label>field
     <select id="field"><option value="speed" selected>|velocity|</option><option value="psi">streamfunction ψ</option></select>
@@ -39,10 +40,12 @@ remove it, double-click an edge to add one. The field is solved server-side
   <label>resolution
     <select id="res"><option>64</option><option selected>128</option><option>192</option></select>
   </label>
+  <label><input type="checkbox" id="mesh"> unstructured (mesh2d)</label>
   <label>solver <select id="solver"></select></label>
   <progress id="prog" value="0" max="1" hidden></progress>
 </div>
 <div id="status">connecting…</div>
+<div id="artifacts" class="hint"></div>
 
 <script>
 "use strict";
@@ -83,28 +86,55 @@ function colormap(t) {
 }
 
 // ---- rendering -------------------------------------------------------------
+function renderGrid2d(data) {
+  const { shape: [ny, nx], fields, mask } = data;
+  const values = fields[document.getElementById("field").value];
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < values.length; i++) if (!mask[i]) {
+    if (values[i] < lo) lo = values[i];
+    if (values[i] > hi) hi = values[i];
+  }
+  const span = hi - lo || 1;
+  const img = new ImageData(nx, ny);
+  for (let iy = 0; iy < ny; iy++) for (let ix = 0; ix < nx; ix++) {
+    const src = iy * nx + ix;                 // row-major, y increasing upward
+    const dst = ((ny - 1 - iy) * nx + ix) * 4; // canvas rows go downward
+    const [r, g, b] = mask[src] ? [30, 30, 34] : colormap((values[src] - lo) / span);
+    img.data[dst] = r; img.data[dst + 1] = g; img.data[dst + 2] = b; img.data[dst + 3] = 255;
+  }
+  const off = new OffscreenCanvas(nx, ny);
+  off.getContext("2d").putImageData(img, 0, 0);
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(off, 0, 0, canvas.width, canvas.height);
+}
+
+function renderMesh2d(data) {
+  const { points, triangles, point_fields } = data;
+  const values = point_fields[document.getElementById("field").value];
+  let lo = Infinity, hi = -Infinity;
+  for (const v of values) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  const span = hi - lo || 1;
+  ctx.fillStyle = "rgb(30,30,34)"; // holes (the obstacle) show as background
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const px = points.map(toPx);
+  for (const [i, j, k] of triangles) {
+    const t = ((values[i] + values[j] + values[k]) / 3 - lo) / span;
+    const [r, g, b] = colormap(t);
+    ctx.fillStyle = `rgb(${r},${g},${b})`;
+    ctx.beginPath();
+    ctx.moveTo(px[i][0], px[i][1]);
+    ctx.lineTo(px[j][0], px[j][1]);
+    ctx.lineTo(px[k][0], px[k][1]);
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
 function render() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   if (lastResult) {
-    const { shape: [ny, nx], fields, mask } = lastResult.data;
-    const values = fields[document.getElementById("field").value];
-    let lo = Infinity, hi = -Infinity;
-    for (let i = 0; i < values.length; i++) if (!mask[i]) {
-      if (values[i] < lo) lo = values[i];
-      if (values[i] > hi) hi = values[i];
-    }
-    const span = hi - lo || 1;
-    const img = new ImageData(nx, ny);
-    for (let iy = 0; iy < ny; iy++) for (let ix = 0; ix < nx; ix++) {
-      const src = iy * nx + ix;                 // row-major, y increasing upward
-      const dst = ((ny - 1 - iy) * nx + ix) * 4; // canvas rows go downward
-      const [r, g, b] = mask[src] ? [30, 30, 34] : colormap((values[src] - lo) / span);
-      img.data[dst] = r; img.data[dst + 1] = g; img.data[dst + 2] = b; img.data[dst + 3] = 255;
-    }
-    const off = new OffscreenCanvas(nx, ny);
-    off.getContext("2d").putImageData(img, 0, 0);
-    ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(off, 0, 0, canvas.width, canvas.height);
+    if (lastResult.kind === "mesh2d") renderMesh2d(lastResult.data);
+    else renderGrid2d(lastResult.data);
   }
   // polygon overlay
   ctx.beginPath();
@@ -182,15 +212,37 @@ async function loadSolvers() {
 }
 
 let running = false;
+let currentJobId = null;
+const cancelBtn = document.getElementById("cancel");
+const artifactsEl = document.getElementById("artifacts");
+
+function showArtifacts(artifacts) {
+  artifactsEl.innerHTML = "";
+  if (!artifacts || !artifacts.length) return;
+  artifactsEl.append("artifacts: ");
+  artifacts.forEach((a, i) => {
+    const link = document.createElement("a");
+    link.href = `${API}${a.url}`;
+    link.download = a.name;
+    link.textContent = `${a.name} (${(a.size / 1024).toFixed(0)} kB)`;
+    if (i) artifactsEl.append(" · ");
+    artifactsEl.append(link);
+  });
+}
+
 async function run() {
   if (running) return;
-  running = true; runBtn.disabled = true; progEl.hidden = false; progEl.value = 0;
+  running = true; runBtn.disabled = true; cancelBtn.hidden = false;
+  progEl.hidden = false; progEl.value = 0; artifactsEl.innerHTML = "";
   try {
     const body = {
       solver: document.getElementById("solver").value || "mock.laplace2d",
       geometry: { type: "domain2d", bounds: BOUNDS,
                   obstacle: { type: "polygon2d", points } },
-      params: { resolution: +document.getElementById("res").value },
+      params: {
+        resolution: +document.getElementById("res").value,
+        output: document.getElementById("mesh").checked ? "mesh2d" : "grid2d",
+      },
     };
     const resp = await fetch(`${API}/api/v1/jobs`, {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -198,6 +250,7 @@ async function run() {
     });
     if (!resp.ok) throw new Error(`submit failed: HTTP ${resp.status}`);
     const { job_id } = await resp.json();
+    currentJobId = job_id;
 
     await new Promise((resolve, reject) => {
       const ws = new WebSocket(`${WS_API}/api/v1/jobs/${job_id}/events`);
@@ -209,24 +262,33 @@ async function run() {
             (ev.residual != null ? ` — residual ${ev.residual.toExponential(2)}` : "") +
             (ev.message ? ` — ${ev.message}` : "");
         } else if (ev.type === "status" && ev.status === "done") { ws.close(); resolve(); }
-        else if (ev.type === "status" && ev.status === "failed") {
+        else if (ev.type === "status" && ev.status === "cancelled") {
+          ws.close(); reject(new Error("cancelled"));
+        } else if (ev.type === "status" && ev.status === "failed") {
           ws.close(); reject(new Error(ev.error || "solver failed"));
         }
       };
       ws.onerror = () => reject(new Error("websocket error"));
     });
 
-    lastResult = await (await fetch(`${API}/api/v1/jobs/${job_id}/result`)).json();
+    const result = await (await fetch(`${API}/api/v1/jobs/${job_id}/result`)).json();
+    lastResult = result;
     statusEl.textContent = "done";
+    showArtifacts(result.artifacts);
     render();
   } catch (err) {
-    statusEl.textContent = `⚠ ${err.message}`;
+    statusEl.textContent = err.message === "cancelled" ? "cancelled" : `⚠ ${err.message}`;
   } finally {
-    running = false; runBtn.disabled = false; progEl.hidden = true;
+    running = false; runBtn.disabled = false; cancelBtn.hidden = true;
+    progEl.hidden = true; currentJobId = null;
   }
 }
 
 runBtn.addEventListener("click", run);
+cancelBtn.addEventListener("click", () => {
+  if (currentJobId) fetch(`${API}/api/v1/jobs/${currentJobId}/cancel`, { method: "POST" });
+});
+document.getElementById("mesh").addEventListener("change", run);
 document.getElementById("field").addEventListener("change", render);
 render();
 loadSolvers().then(() => { if (document.getElementById("auto").checked) run(); });

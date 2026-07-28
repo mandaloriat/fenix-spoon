@@ -27,12 +27,12 @@ see the [state-of-the-art survey](docs/01-state-of-the-art.md). Fenix Spoon is t
 
 | Component | Where | Status |
 |---|---|---|
-| **Simulation server** — FastAPI app: job submission, progress streaming over WebSocket, result retrieval | [`server/`](server/) | ✅ working |
-| **Solver adapter protocol** — plug any solver (FEniCSx, mock, anything Python) behind the same API | [`server/fenixspoon/solvers/`](server/fenixspoon/solvers/) | ✅ working |
+| **Simulation server** — FastAPI app: job submission, WebSocket progress streaming, cancellation, wall-clock timeouts, result + artifact retrieval | [`server/`](server/) | ✅ working |
+| **Solver adapter protocol** — plug any solver (FEniCSx, mock, anything Python) behind the same API via `SolverContext` (progress / cancel / artifacts) | [`server/fenixspoon/solvers/`](server/fenixspoon/solvers/) | ✅ working |
 | **Mock solver** — 2D potential-flow (Laplace) on a Cartesian grid, NumPy only; lets you develop the front-end without FEniCSx | [`server/fenixspoon/solvers/mock_laplace.py`](server/fenixspoon/solvers/mock_laplace.py) | ✅ working |
-| **FEniCSx adapter** — same problem solved with dolfinx + Gmsh on an unstructured mesh | [`server/fenixspoon/solvers/dolfinx_poisson.py`](server/fenixspoon/solvers/dolfinx_poisson.py) | 🧪 experimental (needs the Docker image, not yet CI-tested) |
-| **Wire protocol** — JSON schemas for geometry, jobs, progress events, and field results | [`docs/04-wire-protocol.md`](docs/04-wire-protocol.md) | 📝 draft v0 |
-| **Browser demo** — zero-dependency HTML page: draggable airfoil editor + live field rendering | [`examples/airfoil-2d/`](examples/airfoil-2d/) | ✅ working |
+| **FEniCSx adapter** — same problem solved with dolfinx + Gmsh on an unstructured mesh, cross-validated against the mock solver | [`server/fenixspoon/solvers/dolfinx_poisson.py`](server/fenixspoon/solvers/dolfinx_poisson.py) | ✅ validated on dolfinx 0.11 (`pytest -m fenics`, CI job in the dolfinx image) |
+| **Wire protocol** — JSON schemas for geometry, jobs, events, `grid2d`/`mesh2d` results, artifacts — with a conformance fixture corpus | [`docs/04-wire-protocol.md`](docs/04-wire-protocol.md), [`protocol/fixtures/`](protocol/fixtures/) | ✅ v0 implemented |
+| **Browser demo** — zero-dependency HTML page: draggable airfoil editor, live field rendering (grid + unstructured), cancel, artifact downloads | [`examples/airfoil-2d/`](examples/airfoil-2d/) | ✅ working |
 | **Widget library** — embeddable geometry editors and vtk.js-based viewers as npm packages | [`client/`](client/) | 📋 planned (M2) |
 | **Docker deployment** — one image with dolfinx + server, `docker compose up` | [`Dockerfile`](server/Dockerfile), [`docker-compose.yml`](docker-compose.yml) | ✅ scaffolded |
 
@@ -52,6 +52,16 @@ With Docker (full FEniCSx runtime):
 
 ```bash
 docker compose up --build
+```
+
+Without Docker, a conda environment works too (this is also how the FEniCSx test suite runs):
+
+```bash
+micromamba create -p ./fenicsenv -c conda-forge python=3.12 fenics-dolfinx python-gmsh \
+    fastapi uvicorn pytest httpx
+./fenicsenv/bin/pip install -e ./server
+./fenicsenv/bin/pytest server/tests            # includes the `-m fenics` adapter tests
+./fenicsenv/bin/uvicorn fenixspoon.main:app --app-dir server
 ```
 
 ## Architecture at a glance

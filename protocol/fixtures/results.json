@@ -1,0 +1,61 @@
+{
+  "$comment": "Conformance corpus for result envelopes. Grids/meshes are deliberately tiny.",
+  "valid": [
+    {
+      "name": "grid2d 2x3 with artifact",
+      "payload": {
+        "job_id": "j-abc123def456",
+        "kind": "grid2d",
+        "data": {
+          "bounds": [0.0, 0.0, 2.0, 1.0],
+          "shape": [2, 3],
+          "fields": { "psi": [0.0, 0.1, 0.2, 1.0, 1.1, 1.2], "speed": [0, 0, 0, 1, 1, 1] },
+          "mask": [0, 0, 0, 0, 1, 0]
+        },
+        "artifacts": [
+          { "name": "solution.vtk", "content_type": "model/vnd.vtk", "size": 1234,
+            "url": "/api/v1/jobs/j-abc123def456/artifacts/solution.vtk" }
+        ]
+      }
+    },
+    {
+      "name": "mesh2d single quad",
+      "payload": {
+        "job_id": "j-abc123def456",
+        "kind": "mesh2d",
+        "data": {
+          "bounds": [0.0, 0.0, 1.0, 1.0],
+          "points": [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+          "triangles": [[0, 1, 2], [0, 2, 3]],
+          "point_fields": { "psi": [0.0, 0.0, 1.0, 1.0] }
+        },
+        "artifacts": []
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "grid2d field length mismatch",
+      "reason": "fields must have ny*nx entries",
+      "payload": {
+        "job_id": "j-x", "kind": "grid2d",
+        "data": { "bounds": [0, 0, 1, 1], "shape": [2, 3],
+                  "fields": { "psi": [1, 2, 3] }, "mask": [0, 0, 0, 0, 0, 0] }
+      }
+    },
+    {
+      "name": "mesh2d dangling triangle index",
+      "reason": "triangle indices must reference existing points",
+      "payload": {
+        "job_id": "j-x", "kind": "mesh2d",
+        "data": { "bounds": [0, 0, 1, 1], "points": [[0, 0], [1, 0], [0, 1]],
+                  "triangles": [[0, 1, 7]], "point_fields": { "psi": [0, 0, 0] } }
+      }
+    },
+    {
+      "name": "unknown result kind",
+      "reason": "kind must be grid2d or mesh2d",
+      "payload": { "job_id": "j-x", "kind": "hologram", "data": {} }
+    }
+  ]
+}

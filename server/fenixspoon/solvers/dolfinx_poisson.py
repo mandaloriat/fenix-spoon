@@ -1,9 +1,9 @@
 """FEniCSx adapter: the same potential-flow problem on an unstructured Gmsh mesh.
 
-.. warning:: **Experimental (roadmap M1).** This module registers only when ``dolfinx``,
-   ``gmsh`` and ``mpi4py`` import cleanly — i.e. inside the ``dolfinx/dolfinx`` Docker image.
-   It is not exercised by CI yet; treat it as a starting point for the M1 hardening work and
-   expect small API adjustments across dolfinx releases (written against the 0.9/0.10 API).
+This module registers only when ``dolfinx``, ``gmsh`` and ``mpi4py`` import cleanly — i.e.
+inside the ``dolfinx/dolfinx`` Docker image or a conda env with ``fenics-dolfinx`` +
+``python-gmsh``. Validated against dolfinx 0.11; tests live in
+``tests/test_dolfinx_adapter.py`` (``pytest -m fenics``).
 
 The solve mirrors ``mock.laplace2d`` semantically — Laplace for the streamfunction, uniform
 stream at the far field, constant psi on the obstacle — so results are directly comparable.
@@ -23,14 +23,16 @@ from mpi4py import MPI
 from pydantic import BaseModel, Field
 
 from ..geometry import Domain2D
-from .base import ProgressCallback, ProgressEvent, Solver, SolverResult
+from .base import ProgressEvent, Solver, SolverContext, SolverResult
 from .registry import register
 
 
 def _build_mesh(geometry: Domain2D, mesh_size: float):
     """Rectangle minus polygon, meshed with Gmsh (OpenCascade kernel)."""
     xmin, ymin, xmax, ymax = geometry.bounds
-    gmsh.initialize()
+    # interruptible=False: skip gmsh's signal handlers, which cannot be installed from the
+    # worker threads the job manager runs solvers on.
+    gmsh.initialize(interruptible=False)
     try:
         gmsh.option.setNumber("General.Terminal", 0)
         occ = gmsh.model.occ
@@ -45,12 +47,13 @@ def _build_mesh(geometry: Domain2D, mesh_size: float):
         domain = out[0][1]
         occ.synchronize()
         gmsh.model.addPhysicalGroup(2, [domain], tag=1)
-        gmsh.option.setNumber("Mesh.CharacteristicLengthMax", mesh_size)
+        gmsh.option.setNumber("Mesh.MeshSizeMax", mesh_size)
         gmsh.model.mesh.generate(2)
-        from dolfinx.io import gmshio
+        from dolfinx.io.gmsh import model_to_mesh
 
-        msh, _, _ = gmshio.model_to_mesh(gmsh.model, MPI.COMM_WORLD, 0, gdim=2)
-        return msh
+        data = model_to_mesh(gmsh.model, MPI.COMM_WORLD, 0, gdim=2)
+        # dolfinx >= 0.11 returns a MeshData object; earlier versions a (mesh, ct, ft) tuple.
+        return data.mesh if hasattr(data, "mesh") else data[0]
     finally:
         gmsh.finalize()
 
@@ -75,12 +78,13 @@ class DolfinxPotentialFlow2D(Solver):
         self,
         geometry: Domain2D,
         params: "DolfinxPotentialFlow2D.Params",
-        progress: ProgressCallback,
+        ctx: SolverContext,
     ) -> SolverResult:
-        progress(ProgressEvent(iteration=0, message="meshing with Gmsh"))
+        ctx.progress(ProgressEvent(iteration=0, total=4, message="meshing with Gmsh"))
         msh = _build_mesh(geometry, params.mesh_size)
 
-        progress(ProgressEvent(iteration=1, message="assembling"))
+        ctx.check_cancelled()
+        ctx.progress(ProgressEvent(iteration=1, total=4, message="assembling"))
         V = fem.functionspace(msh, ("Lagrange", 1))
         u, v = ufl.TrialFunction(V), ufl.TestFunction(V)
         a = ufl.inner(ufl.grad(u), ufl.grad(v)) * ufl.dx
@@ -116,16 +120,26 @@ class DolfinxPotentialFlow2D(Solver):
             V,
         )
 
-        progress(ProgressEvent(iteration=2, message="solving (LU)"))
-        problem = LinearProblem(
-            a, L, bcs=[bc_outer, bc_body],
-            petsc_options={"ksp_type": "preonly", "pc_type": "lu"},
-        )
-        psi_h = problem.solve()
+        ctx.check_cancelled()
+        ctx.progress(ProgressEvent(iteration=2, total=4, message="solving (LU)"))
+        petsc_options = {"ksp_type": "preonly", "pc_type": "lu"}
+        try:
+            # dolfinx >= 0.10 requires an options prefix.
+            problem = LinearProblem(
+                a, L, bcs=[bc_outer, bc_body],
+                petsc_options=petsc_options,
+                petsc_options_prefix="fenixspoon_",
+            )
+        except TypeError:  # older dolfinx without the keyword
+            problem = LinearProblem(a, L, bcs=[bc_outer, bc_body], petsc_options=petsc_options)
+        solved = problem.solve()
+        # dolfinx >= 0.11 returns (function, convergence_reason, iterations).
+        psi_h = solved[0] if isinstance(solved, tuple) else solved
 
-        progress(ProgressEvent(iteration=3, message="sampling onto grid"))
+        ctx.check_cancelled()
+        ctx.progress(ProgressEvent(iteration=3, total=4, message="sampling onto grid"))
         data = _sample_grid2d(msh, psi_h, geometry, params.resolution, obstacle_pts)
-        progress(ProgressEvent(iteration=4, total=4, message="done"))
+        ctx.progress(ProgressEvent(iteration=4, total=4, message="done"))
         return SolverResult(kind="grid2d", data=data)
 
 
