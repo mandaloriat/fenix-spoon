@@ -260,4 +260,29 @@ describe('FenixSpoonClient', () => {
   it('exposes FenixSpoonError for instanceof checks', () => {
     expect(new FenixSpoonError('x', 500, null)).toBeInstanceOf(Error);
   });
+
+  it('calls the global fetch with its own receiver', async () => {
+    // Browsers throw "Illegal invocation" when `fetch` is called as a bare reference
+    // rather than a method of `window`. Node is lenient, so assert the binding directly.
+    const original = globalThis.fetch;
+    let receiver: unknown = 'never called';
+    Object.defineProperty(globalThis, 'fetch', {
+      configurable: true,
+      writable: true,
+      value: function boundCheck(this: unknown) {
+        receiver = this;
+        return Promise.resolve(new Response('[]', { status: 200 }));
+      },
+    });
+    try {
+      await new FenixSpoonClient('http://server').listSolvers();
+    } finally {
+      Object.defineProperty(globalThis, 'fetch', {
+        configurable: true,
+        writable: true,
+        value: original,
+      });
+    }
+    expect(receiver).toBe(globalThis);
+  });
 });

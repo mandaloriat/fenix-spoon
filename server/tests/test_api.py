@@ -40,6 +40,19 @@ def wait_terminal(client, job_id, timeout=15.0):
     raise TimeoutError("job did not finish")
 
 
+def test_client_packages_are_mounted_when_built(client):
+    """The widget demo loads the packages from /packages via an import map, so a built
+    checkout must serve them — and an unbuilt one must serve nothing rather than a
+    half-loaded page."""
+    from fenixspoon.main import _CLIENT_PACKAGES_DIR
+
+    built = [p.parent.name for p in sorted(_CLIENT_PACKAGES_DIR.glob("*/dist")) if p.is_dir()]
+    assert client.app.state.client_packages == built
+    for name in built:
+        assert client.get(f"/packages/{name}/index.js").status_code == 200
+    assert client.get("/packages/nope/index.js").status_code == 404
+
+
 def test_solvers_listed(client):
     solvers = client.get("/api/v1/solvers").json()
     names = {s["name"] for s in solvers}

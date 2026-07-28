@@ -13,12 +13,12 @@ The canonical use case: an engineer opens a web page, drags the control points o
 solenoid cross-section), presses *Run*, and watches the simulation result appear live — no local
 installation, no desktop tooling, just a browser talking to a FEniCSx server.
 
-> **Status: M1 done, M2 nearly.** Two physics examples run end to end on real FEniCSx solves
-> (potential flow, magnetostatics), and the three browser packages — SDK, geometry editor, field
-> viewer — are published from `client/`. Pure-NumPy mock solvers mirror every FEniCSx one, so the
-> full loop (edit geometry → submit → stream progress → render field) runs without installing
-> FEniCSx at all. Next: rebuilding the demos on the widgets, then production job execution — see
-> the [roadmap](docs/03-roadmap.md).
+> **Status: M1 and M2 done.** Two physics examples run end to end on real FEniCSx solves
+> (potential flow, magnetostatics), the three browser packages — SDK, geometry editor, field
+> viewer — are published from `client/`, and the airfoil demo is built from them. Pure-NumPy mock
+> solvers mirror every FEniCSx one, so the full loop (edit geometry → submit → stream progress →
+> render field) runs without installing FEniCSx at all. Next up is production job execution:
+> a real queue, persistence and auth — see the [roadmap](docs/03-roadmap.md).
 
 ## Why
 
@@ -36,7 +36,7 @@ see the [state-of-the-art survey](docs/01-state-of-the-art.md). Fenix Spoon is t
 | **Mock solvers** — potential flow and magnetostatics in pure NumPy; let you develop the front-end without FEniCSx | [`mock_laplace.py`](server/fenixspoon/solvers/mock_laplace.py), [`mock_magnetostatics.py`](server/fenixspoon/solvers/mock_magnetostatics.py) | ✅ working |
 | **FEniCSx adapters** — the same two problems on unstructured Gmsh meshes, cross-validated against the mock solvers | [`dolfinx_poisson.py`](server/fenixspoon/solvers/dolfinx_poisson.py), [`dolfinx_magnetostatics.py`](server/fenixspoon/solvers/dolfinx_magnetostatics.py) | ✅ validated on dolfinx 0.11 (`pytest -m fenics`, CI job in the dolfinx image) |
 | **Wire protocol** — JSON schemas for geometry (`domain2d`, `regions2d`), jobs, events, `grid2d`/`mesh2d` results, artifacts — with a conformance fixture corpus | [`docs/04-wire-protocol.md`](docs/04-wire-protocol.md), [`protocol/fixtures/`](protocol/fixtures/) | ✅ v0 implemented |
-| **Browser demos** — zero-dependency HTML pages: draggable airfoil with live flow, editable solenoid with magnetostatics and field lines | [`examples/airfoil-2d/`](examples/airfoil-2d/), [`examples/solenoid-2d/`](examples/solenoid-2d/) | ✅ working |
+| **Browser demos** — the airfoil built from the three packages, plus zero-dependency versions of both airfoil and solenoid kept as protocol references | [`examples/airfoil-2d/`](examples/airfoil-2d/), [`examples/solenoid-2d/`](examples/solenoid-2d/) | ✅ working |
 | **JS/TS SDK** — `@fenix-spoon/client`: typed protocol client with progress streaming, reconnection and runtime validators | [`client/packages/client/`](client/packages/client/) | ✅ working |
 | **Geometry editor widget** — `<fs-geometry-2d>`: SVG-based parametric profile editor, keyboard-operable, emits protocol JSON | [`client/packages/geometry-2d/`](client/packages/geometry-2d/) | ✅ working |
 | **Field viewer widget** — `<fs-viewer>`: canvas renderer for `grid2d`/`mesh2d` with colormaps, contours and a hover probe | [`client/packages/viewer/`](client/packages/viewer/) | ✅ working |
@@ -53,6 +53,13 @@ uvicorn fenixspoon.main:app --reload
 Then open <http://localhost:8000/> for the demo index — drag the airfoil's control points and
 watch the flow field update, or resize a solenoid's iron core and watch the flux redistribute.
 API docs (OpenAPI) live at <http://localhost:8000/docs>.
+
+The widget-based airfoil page additionally needs the browser packages built; the server then
+serves them at `/packages/`:
+
+```bash
+npm --prefix client install && npm --prefix client run build
+```
 
 With Docker (full FEniCSx runtime):
 

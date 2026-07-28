@@ -26,9 +26,15 @@ Fenix Spoon wire protocol.</p>
 <ul>
   <li>
     <a href="airfoil-2d/index.html">Airfoil — 2D potential flow</a>
-    <p>Drag the control points of an airfoil and watch the flow field update. Demonstrates the
-    <code>domain2d</code> geometry (a body cut out of the domain), <code>grid2d</code> and
-    <code>mesh2d</code> results, live progress and cancellation.</p>
+    <p>Drag the control points of an airfoil and watch the flow field update. Built from the
+    published packages: <code>@fenix-spoon/client</code>, <code>&lt;fs-geometry-2d&gt;</code> and
+    <code>&lt;fs-viewer&gt;</code>. Needs <code>npm --prefix client run build</code> first.</p>
+  </li>
+  <li>
+    <a href="airfoil-2d/index-vanilla.html">Airfoil — zero-dependency version</a>
+    <p>The same problem in one self-contained HTML file with no build step and no packages —
+    the reference implementation of the protocol, and the thing to read when you want to see
+    exactly what goes over the wire.</p>
   </li>
   <li>
     <a href="solenoid-2d/index.html">Solenoid — 2D magnetostatics</a>
@@ -39,8 +45,8 @@ Fenix Spoon wire protocol.</p>
 </ul>
 
 <footer>
-Each page is a single self-contained HTML file with no build step — they double as the
-reference implementation of the protocol while the widget packages are built.
+The vanilla pages are single self-contained HTML files with no build step, and they stay in
+the repository as the readable reference for what goes over the wire.
 </footer>
 </body>
 </html>
