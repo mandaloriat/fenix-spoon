@@ -1,0 +1,11 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+      # For a lightweight image without FEniCSx (mock solver only), uncomment:
+      # args:
+      #   BASE_IMAGE: python:3.12-slim
+    ports:
+      - "8000:8000"
+    # M3 adds: worker + redis services, artifact volume, resource limits.
