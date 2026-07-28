@@ -99,7 +99,8 @@ Result kinds:
   `{ "bounds": [xmin, ymin, xmax, ymax], "shape": [ny, nx], "fields": { "<name>": [...] },
   "mask": [...] }`. Arrays are row-major with index `[iy * nx + ix]`, y increasing upward;
   `mask` is 1 inside the obstacle.
-- `mesh2d` (implemented): unstructured triangle mesh —
+- `mesh2d` (implemented; emitted by both the mock solver and the FEniCSx adapter, where it
+  carries the actual P1 triangulation): unstructured triangle mesh —
   `{ "bounds": [...], "points": [[x, y], ...], "triangles": [[i, j, k], ...],
   "point_fields": { "<name>": [...] } }`. Triangle indices reference `points`; `cell_fields`
   is reserved for per-triangle data.

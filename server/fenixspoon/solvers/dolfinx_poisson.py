@@ -7,10 +7,13 @@ inside the ``dolfinx/dolfinx`` Docker image or a conda env with ``fenics-dolfinx
 
 The solve mirrors ``mock.laplace2d`` semantically — Laplace for the streamfunction, uniform
 stream at the far field, constant psi on the obstacle — so results are directly comparable.
-The FEM solution is sampled back onto a regular grid to produce the same ``grid2d`` result
-payload, keeping every client identical across the mock and real paths. Emitting the raw
-unstructured mesh (``mesh2d`` result kind) is an M1 deliverable.
+Both result kinds are supported: ``grid2d`` samples the FEM solution onto a regular grid
+(identical payload to the mock path), while ``mesh2d`` emits the actual P1 triangulation
+with nodal fields. The solution is also attached as a legacy-VTK unstructured-grid artifact
+that opens directly in ParaView.
 """
+
+from typing import Literal
 
 import dolfinx
 import gmsh  # noqa: F401  - availability gate, see solvers/__init__.py
@@ -73,6 +76,13 @@ class DolfinxPotentialFlow2D(Solver):
             default=128, ge=16, le=512, description="Sampling grid for the grid2d result"
         )
         u_inf: float = Field(default=1.0)
+        output: Literal["grid2d", "mesh2d"] = Field(
+            default="grid2d",
+            description="Result kind: regular sampling grid, or the FEM triangulation itself",
+        )
+        write_vtk: bool = Field(
+            default=True, description="Attach the solution as a legacy-VTK artifact"
+        )
 
     def solve(
         self,
@@ -137,10 +147,88 @@ class DolfinxPotentialFlow2D(Solver):
         psi_h = solved[0] if isinstance(solved, tuple) else solved
 
         ctx.check_cancelled()
-        ctx.progress(ProgressEvent(iteration=3, total=4, message="sampling onto grid"))
-        data = _sample_grid2d(msh, psi_h, geometry, params.resolution, obstacle_pts)
+        ctx.progress(ProgressEvent(iteration=3, total=4, message="post-processing"))
+        points, triangles, psi_nodal = _p1_mesh_data(V, psi_h)
+        speed_nodal = _nodal_speed(points, triangles, psi_nodal)
+
+        if params.write_vtk:
+            _write_vtk_unstructured(
+                ctx.artifact("solution.vtk"),
+                points,
+                triangles,
+                {"psi": psi_nodal, "speed": speed_nodal},
+            )
+
+        if params.output == "mesh2d":
+            data = {
+                "bounds": [xmin, ymin, xmax, ymax],
+                "points": points.tolist(),
+                "triangles": triangles.tolist(),
+                "point_fields": {
+                    "psi": psi_nodal.tolist(),
+                    "speed": speed_nodal.tolist(),
+                },
+            }
+        else:
+            data = _sample_grid2d(msh, psi_h, geometry, params.resolution, obstacle_pts)
         ctx.progress(ProgressEvent(iteration=4, total=4, message="done"))
-        return SolverResult(kind="grid2d", data=data)
+        return SolverResult(kind=params.output, data=data)
+
+
+def _p1_mesh_data(V, psi_h):
+    """Extract the P1 triangulation in dof ordering: points (N,2), triangles (M,3), psi (N,)."""
+    points = V.tabulate_dof_coordinates()[:, :2].copy()
+    msh = V.mesh
+    num_cells = msh.topology.index_map(msh.topology.dim).size_local
+    triangles = np.asarray(
+        [V.dofmap.cell_dofs(c) for c in range(num_cells)], dtype=np.int64
+    )
+    psi = np.asarray(psi_h.x.array.real, dtype=float)[: len(points)]
+    return points, triangles, psi
+
+
+def _nodal_speed(points, triangles, psi):
+    """|velocity| = |grad psi| per node: constant P1 cell gradients, area-averaged at nodes."""
+    p = points[triangles]  # (M, 3, 2)
+    x1, y1 = p[:, 0, 0], p[:, 0, 1]
+    x2, y2 = p[:, 1, 0], p[:, 1, 1]
+    x3, y3 = p[:, 2, 0], p[:, 2, 1]
+    area2 = (x2 - x1) * (y3 - y1) - (x3 - x1) * (y2 - y1)
+    area2 = np.where(np.abs(area2) < 1e-30, 1e-30, area2)
+    bx = np.stack([y2 - y3, y3 - y1, y1 - y2], axis=1) / area2[:, None]
+    by = np.stack([x3 - x2, x1 - x3, x2 - x1], axis=1) / area2[:, None]
+    vals = psi[triangles]
+    gx = (bx * vals).sum(axis=1)
+    gy = (by * vals).sum(axis=1)
+    cell_speed = np.hypot(gx, gy)
+    weight = np.abs(area2) / 2.0
+    acc = np.zeros(len(points))
+    wacc = np.zeros(len(points))
+    np.add.at(acc, triangles, (cell_speed * weight)[:, None].repeat(3, axis=1))
+    np.add.at(wacc, triangles, weight[:, None].repeat(3, axis=1))
+    return acc / np.maximum(wacc, 1e-30)
+
+
+def _write_vtk_unstructured(path, points, triangles, fields) -> None:
+    """Write a legacy-VTK UNSTRUCTURED_GRID file (opens directly in ParaView)."""
+    with open(path, "w") as f:
+        f.write("# vtk DataFile Version 3.0\n")
+        f.write("fenixspoon mesh2d result\n")
+        f.write("ASCII\nDATASET UNSTRUCTURED_GRID\n")
+        f.write(f"POINTS {len(points)} double\n")
+        np.savetxt(f, np.column_stack([points, np.zeros(len(points))]), fmt="%.9g")
+        f.write(f"CELLS {len(triangles)} {len(triangles) * 4}\n")
+        np.savetxt(
+            f,
+            np.column_stack([np.full(len(triangles), 3), triangles]),
+            fmt="%d",
+        )
+        f.write(f"CELL_TYPES {len(triangles)}\n")
+        np.savetxt(f, np.full(len(triangles), 5), fmt="%d")  # 5 = VTK_TRIANGLE
+        f.write(f"POINT_DATA {len(points)}\n")
+        for name, values in fields.items():
+            f.write(f"SCALARS {name} double 1\nLOOKUP_TABLE default\n")
+            np.savetxt(f, np.asarray(values), fmt="%.9g")
 
 
 def _sample_grid2d(msh, psi_h, geometry: Domain2D, resolution: int, obstacle_pts) -> dict:

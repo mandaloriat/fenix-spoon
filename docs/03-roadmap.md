@@ -24,15 +24,17 @@ Goal: a working vertical slice with zero heavy dependencies, plus the planning d
 
 Goal: the demo runs on an unstructured FEniCSx solve inside Docker, same UX.
 
-- [ ] Harden `dolfinx_poisson` adapter: Gmsh meshing of `domain2d` geometry, validated against the
+- [x] Harden `dolfinx_poisson` adapter: Gmsh meshing of `domain2d` geometry, validated against the
       mock solver on coincident cases (#1)
-- [ ] CI job that runs the FEniCSx adapter tests inside the `dolfinx/dolfinx` image (#2)
-- [ ] Result serialization for unstructured meshes: triangles + node values (protocol `mesh2d`
-      kind) (#3)
-- [ ] Artifact channel: results downloadable as VTU/XDMF; inline JSON kept for small fields (#4)
+- [x] CI job that runs the FEniCSx adapter tests inside the `dolfinx/dolfinx` image (#2)
+- [x] Result serialization for unstructured meshes: triangles + node values (protocol `mesh2d`
+      kind) — emitted by both the mock solver and the FEniCSx adapter (#3)
+- [x] Artifact channel: results downloadable as VTK; inline JSON kept for small fields (#4).
+      *XDMF/VTU via dolfinx I/O remains a follow-up.*
 - [ ] Second physics example: 2D magnetostatics of a solenoid cross-section (axisymmetric A-φ),
       exercising material regions in the geometry schema (#5)
 - [ ] Mesh-size/quality parameters exposed through solver params, with server-side caps (#6)
+      — *partially done: wall-clock timeout + cancellation shipped; cell-count caps pending.*
 
 ## M2 — Embeddable client widgets (`client/` becomes real)
 
