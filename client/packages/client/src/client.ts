@@ -101,10 +101,16 @@ export class FenixSpoonClient {
   }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
+    // Merge through Headers rather than object spread: `fetchOptions.headers` may be a
+    // Headers instance or an array of pairs, and spreading either silently drops the
+    // caller's auth headers.
+    const headers = new Headers(this.options.fetchOptions?.headers);
+    new Headers(init?.headers).forEach((value, key) => headers.set(key, value));
+
     const response = await this.fetchImpl(this.url(path), {
       ...this.options.fetchOptions,
       ...init,
-      headers: { ...this.options.fetchOptions?.headers, ...init?.headers },
+      headers,
     });
     if (!response.ok) {
       let detail: unknown;
@@ -296,15 +302,17 @@ export class Job {
   /**
    * Consume the event stream to completion, then fetch the result.
    *
-   * `onProgress` sees every progress event. Throws {@link JobFailedError} if the
-   * job fails or is cancelled.
+   * `onEvent` receives *every* event, progress and status alike — status transitions
+   * are worth surfacing too ("meshing", "solving"). Narrow with `event.type` if you
+   * only care about progress. Throws {@link JobFailedError} if the job fails or is
+   * cancelled.
    */
   async wait(
-    onProgress?: (event: JobEvent) => void,
+    onEvent?: (event: JobEvent) => void,
     options?: SubscribeOptions,
   ): Promise<JobResult> {
     for await (const event of this.events(options)) {
-      onProgress?.(event);
+      onEvent?.(event);
       if (event.type === 'status' && (event.status === 'failed' || event.status === 'cancelled')) {
         throw new JobFailedError(event.status, event.error ?? `job ${event.status}`);
       }

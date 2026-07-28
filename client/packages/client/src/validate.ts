@@ -41,6 +41,21 @@ function requireNumber(value: unknown, what: string): number {
   return value;
 }
 
+/**
+ * Integer fields, matching pydantic: a lossless float like `5.0` is fine (JSON has no
+ * int/float distinction anyway), a fractional one like `5.5` is not.
+ */
+function requireInteger(value: unknown, what: string, { min }: { min?: number } = {}): number {
+  const parsed = requireNumber(value, what);
+  if (!Number.isInteger(parsed)) {
+    fail(`${what} must be an integer, got ${JSON.stringify(value)}`);
+  }
+  if (min !== undefined && parsed < min) {
+    fail(`${what} must be >= ${min}, got ${parsed}`);
+  }
+  return parsed;
+}
+
 function requireBounds(value: unknown): Bounds2D {
   if (!Array.isArray(value) || value.length !== 4) {
     fail('bounds must be [xmin, ymin, xmax, ymax]');
@@ -200,10 +215,10 @@ export function validateJobEvent(value: unknown): JobEvent {
   if (value.type === 'progress') {
     return {
       type: 'progress',
-      iteration: requireNumber(value.iteration, 'iteration'),
+      iteration: requireInteger(value.iteration, 'iteration'),
       total: value.total === undefined || value.total === null
         ? null
-        : requireNumber(value.total, 'total'),
+        : requireInteger(value.total, 'total'),
       residual: value.residual === undefined || value.residual === null
         ? null
         : requireNumber(value.residual, 'residual'),
@@ -238,8 +253,8 @@ export function validateJobResult(value: unknown): JobResult {
     const data = value.data;
     const bounds = requireBounds(data.bounds);
     if (!Array.isArray(data.shape) || data.shape.length !== 2) fail('shape must be [ny, nx]');
-    const ny = requireNumber(data.shape[0], 'shape[0]');
-    const nx = requireNumber(data.shape[1], 'shape[1]');
+    const ny = requireInteger(data.shape[0], 'shape[0] (ny)', { min: 1 });
+    const nx = requireInteger(data.shape[1], 'shape[1] (nx)', { min: 1 });
     const expected = ny * nx;
     if (!isRecord(data.fields)) fail('grid2d needs a fields object');
     const fields: Record<string, number[]> = {};
@@ -317,7 +332,7 @@ function validateArtifacts(value: unknown) {
     return {
       name: artifact.name as string,
       content_type: artifact.content_type as string,
-      size: requireNumber(artifact.size, `artifact ${i} size`),
+      size: requireInteger(artifact.size, `artifact ${i} size`, { min: 0 }),
       url: artifact.url as string,
     };
   });
