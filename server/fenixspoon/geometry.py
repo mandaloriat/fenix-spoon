@@ -51,6 +51,19 @@ class Polygon2D(BaseModel):
         return self
 
 
+def _check_bounds(bounds: tuple[float, float, float, float]) -> None:
+    xmin, ymin, xmax, ymax = bounds
+    if xmax <= xmin or ymax <= ymin:
+        raise ValueError("bounds must satisfy xmin < xmax and ymin < ymax")
+
+
+def _check_inside(polygon: Polygon2D, bounds: tuple[float, float, float, float], what: str) -> None:
+    xmin, ymin, xmax, ymax = bounds
+    for x, y in polygon.points:
+        if not (xmin < x < xmax and ymin < y < ymax):
+            raise ValueError(f"{what} points must lie strictly inside the domain bounds")
+
+
 class Domain2D(BaseModel):
     """A rectangular computational domain with a polygonal obstacle (hole) inside it."""
 
@@ -62,14 +75,75 @@ class Domain2D(BaseModel):
 
     @model_validator(mode="after")
     def _check(self) -> "Domain2D":
-        xmin, ymin, xmax, ymax = self.bounds
-        if xmax <= xmin or ymax <= ymin:
-            raise ValueError("bounds must satisfy xmin < xmax and ymin < ymax")
-        for x, y in self.obstacle.points:
-            if not (xmin < x < xmax and ymin < y < ymax):
-                raise ValueError("obstacle points must lie strictly inside the domain bounds")
+        _check_bounds(self.bounds)
+        _check_inside(self.obstacle, self.bounds, "obstacle")
         return self
 
 
+class Region2D(BaseModel):
+    """A named material region: a polygon plus solver-interpreted material properties.
+
+    ``material`` is deliberately an open dict of scalars rather than a typed physics
+    model — the protocol stays physics-agnostic and each solver documents the keys it
+    reads (e.g. ``mu_r`` and ``current_density`` for magnetostatics). Unknown keys are
+    ignored by solvers, so a payload can carry properties several solvers care about.
+    """
+
+    name: str = Field(min_length=1)
+    shape: Polygon2D
+    material: dict[str, float] = {}
+
+
+class Regions2D(BaseModel):
+    """A rectangular domain filled with material regions over a background material.
+
+    Unlike :class:`Domain2D` (one hole cut out of the domain), every region here is
+    *filled*: the mesh covers the whole rectangle and the physics varies by region.
+    This is what problems like a solenoid cross-section need — iron core, copper coil
+    carrying a current density, air everywhere else.
+
+    Regions may be nested (an iron core inside a coil): **later entries in the list win**
+    where they overlap, like painter's order. Regions whose outlines properly cross are
+    rejected, since that describes an ambiguous material assignment rather than nesting.
+    """
+
+    type: Literal["regions2d"] = "regions2d"
+    bounds: tuple[float, float, float, float] = Field(
+        default=(-0.1, -0.1, 0.1, 0.1), description="[xmin, ymin, xmax, ymax]"
+    )
+    regions: Annotated[list[Region2D], Field(min_length=1)]
+    background: dict[str, float] = Field(
+        default={}, description="Material outside every region (typically air)"
+    )
+
+    @model_validator(mode="after")
+    def _check(self) -> "Regions2D":
+        _check_bounds(self.bounds)
+        names = [r.name for r in self.regions]
+        if len(set(names)) != len(names):
+            raise ValueError("region names must be unique")
+        for region in self.regions:
+            _check_inside(region.shape, self.bounds, f"region {region.name!r}")
+        for i, a in enumerate(self.regions):
+            for b in self.regions[i + 1 :]:
+                if _outlines_cross(a.shape.points, b.shape.points):
+                    raise ValueError(
+                        f"regions {a.name!r} and {b.name!r} overlap partially; regions must be "
+                        "disjoint or fully nested"
+                    )
+        return self
+
+
+def _outlines_cross(a: list[Point2D], b: list[Point2D]) -> bool:
+    """True if two polygon outlines properly cross (partial overlap, not nesting)."""
+    for i in range(len(a)):
+        for j in range(len(b)):
+            if _properly_intersect(
+                a[i], a[(i + 1) % len(a)], b[j], b[(j + 1) % len(b)]
+            ):
+                return True
+    return False
+
+
 # Discriminated union of every geometry kind the protocol knows about.
-Geometry = Annotated[Domain2D, Field(discriminator="type")]
+Geometry = Annotated[Domain2D | Regions2D, Field(discriminator="type")]

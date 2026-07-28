@@ -1,4 +1,6 @@
-# Fenix Spoon 🥄
+<p align="center">
+  <img src="logo.png" alt="Fenix Spoon" width="420">
+</p>
 
 **A Swiss-army toolkit for building web-based engineering applications powered by [FEniCSx](https://fenicsproject.org/).**
 

@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisco
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ValidationError
 
-from .geometry import Domain2D
+from .geometry import Geometry
 from .jobs import JobManager, JobStatus
 from .solvers import available_solvers, get_solver
 from .solvers.base import SolverInfo
@@ -17,7 +17,7 @@ router = APIRouter(prefix="/api/v1")
 
 class JobRequest(BaseModel):
     solver: str
-    geometry: Domain2D
+    geometry: Geometry
     params: dict[str, Any] = {}
 
 
@@ -40,6 +40,14 @@ async def create_job(req: JobRequest, request: Request) -> JobCreated:
     solver_cls = get_solver(req.solver)
     if solver_cls is None:
         raise HTTPException(status_code=404, detail=f"unknown solver: {req.solver!r}")
+    if req.geometry.type not in solver_cls.geometry_types:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"solver {req.solver!r} accepts geometry types "
+                f"{solver_cls.geometry_types}, got {req.geometry.type!r}"
+            ),
+        )
     try:
         params = solver_cls.Params.model_validate(req.params)
     except ValidationError as exc:

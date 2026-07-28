@@ -9,7 +9,7 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from fenixspoon.api import JobRequest
-from fenixspoon.geometry import Domain2D
+from fenixspoon.geometry import Geometry
 from fenixspoon.protocol import ProgressEvent, ResultEnvelope, StatusEvent
 
 FIXTURES = Path(__file__).resolve().parents[2] / "protocol" / "fixtures"
@@ -17,7 +17,7 @@ FIXTURES = Path(__file__).resolve().parents[2] / "protocol" / "fixtures"
 _event_adapter = TypeAdapter(ProgressEvent | StatusEvent)
 
 VALIDATORS = {
-    "geometries.json": TypeAdapter(Domain2D).validate_python,
+    "geometries.json": TypeAdapter(Geometry).validate_python,
     "events.json": _event_adapter.validate_python,
     "results.json": TypeAdapter(ResultEnvelope).validate_python,
     "job-requests.json": TypeAdapter(JobRequest).validate_python,
