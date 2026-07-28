@@ -2,6 +2,7 @@
 solver whose dependencies are available in the current environment."""
 
 from . import mock_laplace as _mock_laplace  # noqa: F401  (registers itself)
+from . import mock_magnetostatics as _mock_magnetostatics  # noqa: F401
 from .base import (
     JobCancelled,
     ProgressEvent,

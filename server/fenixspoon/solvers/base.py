@@ -15,7 +15,7 @@ from typing import Any, ClassVar
 
 from pydantic import BaseModel
 
-from ..geometry import Domain2D
+from ..geometry import Geometry
 
 
 class JobCancelled(Exception):
@@ -139,5 +139,5 @@ class Solver(ABC):
 
     @abstractmethod
     def solve(
-        self, geometry: Domain2D, params: "Solver.Params", ctx: SolverContext
+        self, geometry: Geometry, params: "Solver.Params", ctx: SolverContext
     ) -> SolverResult: ...

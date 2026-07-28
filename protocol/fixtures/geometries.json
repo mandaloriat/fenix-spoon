@@ -22,6 +22,65 @@
           "points": [[0.4, 0.4], [0.6, 0.4], [0.5, 0.6]]
         }
       }
+    },
+    {
+      "name": "solenoid cross-section (regions2d)",
+      "payload": {
+        "type": "regions2d",
+        "bounds": [-0.06, -0.06, 0.06, 0.06],
+        "background": { "mu_r": 1.0 },
+        "regions": [
+          {
+            "name": "core",
+            "shape": {
+              "type": "polygon2d",
+              "points": [[-0.01, -0.03], [0.01, -0.03], [0.01, 0.03], [-0.01, 0.03]]
+            },
+            "material": { "mu_r": 1000.0 }
+          },
+          {
+            "name": "coil_left",
+            "shape": {
+              "type": "polygon2d",
+              "points": [[-0.025, -0.03], [-0.015, -0.03], [-0.015, 0.03], [-0.025, 0.03]]
+            },
+            "material": { "current_density": -5000000.0 }
+          },
+          {
+            "name": "coil_right",
+            "shape": {
+              "type": "polygon2d",
+              "points": [[0.015, -0.03], [0.025, -0.03], [0.025, 0.03], [0.015, 0.03]]
+            },
+            "material": { "current_density": 5000000.0 }
+          }
+        ]
+      }
+    },
+    {
+      "name": "nested regions (later wins)",
+      "payload": {
+        "type": "regions2d",
+        "bounds": [0.0, 0.0, 1.0, 1.0],
+        "regions": [
+          {
+            "name": "outer",
+            "shape": {
+              "type": "polygon2d",
+              "points": [[0.1, 0.1], [0.9, 0.1], [0.9, 0.9], [0.1, 0.9]]
+            },
+            "material": { "mu_r": 10.0 }
+          },
+          {
+            "name": "inner",
+            "shape": {
+              "type": "polygon2d",
+              "points": [[0.4, 0.4], [0.6, 0.4], [0.6, 0.6], [0.4, 0.6]]
+            },
+            "material": { "mu_r": 500.0 }
+          }
+        ]
+      }
     }
   ],
   "invalid": [
@@ -81,6 +140,59 @@
           "points": [[0.4, 0.4], [0.4, 0.4], [0.6, 0.4], [0.5, 0.6]]
         }
       }
+    },
+    {
+      "name": "partially overlapping regions",
+      "reason": "regions must be disjoint or fully nested, never partially overlapping",
+      "payload": {
+        "type": "regions2d",
+        "bounds": [0.0, 0.0, 1.0, 1.0],
+        "regions": [
+          {
+            "name": "a",
+            "shape": {
+              "type": "polygon2d",
+              "points": [[0.1, 0.1], [0.5, 0.1], [0.5, 0.5], [0.1, 0.5]]
+            }
+          },
+          {
+            "name": "b",
+            "shape": {
+              "type": "polygon2d",
+              "points": [[0.3, 0.3], [0.7, 0.3], [0.7, 0.7], [0.3, 0.7]]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "duplicate region names",
+      "reason": "region names identify the region and must be unique",
+      "payload": {
+        "type": "regions2d",
+        "bounds": [0.0, 0.0, 1.0, 1.0],
+        "regions": [
+          {
+            "name": "core",
+            "shape": {
+              "type": "polygon2d",
+              "points": [[0.1, 0.1], [0.2, 0.1], [0.2, 0.2], [0.1, 0.2]]
+            }
+          },
+          {
+            "name": "core",
+            "shape": {
+              "type": "polygon2d",
+              "points": [[0.6, 0.6], [0.7, 0.6], [0.7, 0.7], [0.6, 0.7]]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "regions2d with no regions",
+      "reason": "at least one region is required",
+      "payload": { "type": "regions2d", "bounds": [0.0, 0.0, 1.0, 1.0], "regions": [] }
     },
     {
       "name": "unknown geometry type",

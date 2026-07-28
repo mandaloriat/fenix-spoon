@@ -23,9 +23,13 @@ forms from it):
 ]
 ```
 
-## Geometry (v0)
+## Geometry
 
-One geometry kind so far — a rectangular domain with a polygonal obstacle:
+Geometry payloads are a discriminated union on `type`. Two kinds exist.
+
+### `domain2d` — a domain with a hole
+
+For flow-around-a-body problems: the obstacle is *cut out* of the mesh.
 
 ```json
 {
@@ -35,11 +39,44 @@ One geometry kind so far — a rectangular domain with a polygonal obstacle:
 }
 ```
 
-- `bounds`: `[xmin, ymin, xmax, ymax]`.
-- `polygon2d.points`: ≥ 3 vertices, implicitly closed, in domain coordinates.
+### `regions2d` — a domain filled with material regions
 
-Planned kinds (M1/M2): `spline2d` profiles, multi-region `domain2d` with per-region material tags
-(solenoid: core / coil / air), `axisymmetric2d`.
+For field problems where the physics varies by material (solenoid: iron core, copper coil, air).
+Every region is *filled*; the mesh covers the whole rectangle.
+
+```json
+{
+  "type": "regions2d",
+  "bounds": [-0.06, -0.06, 0.06, 0.06],
+  "background": { "mu_r": 1.0 },
+  "regions": [
+    { "name": "core", "shape": { "type": "polygon2d", "points": [["..."]] },
+      "material": { "mu_r": 1000.0 } },
+    { "name": "coil_right", "shape": { "type": "polygon2d", "points": [["..."]] },
+      "material": { "current_density": 5.0e6 } }
+  ]
+}
+```
+
+- `material` is an **open dict of scalars**, not a typed physics model: the protocol stays
+  physics-agnostic and each solver documents the keys it reads (unknown keys are ignored,
+  so one payload can carry properties for several solvers). `mock.magnetostatics2d` reads
+  `mu_r` and `current_density`.
+- Regions may be **nested** (core inside a coil); where they overlap, **later entries in the
+  list win**, like painter's order. Regions whose outlines properly *cross* are rejected —
+  that describes an ambiguous material assignment rather than nesting.
+- `background` applies wherever no region covers.
+
+### Common rules
+
+- `bounds`: `[xmin, ymin, xmax, ymax]`, with `xmin < xmax` and `ymin < ymax`.
+- `polygon2d.points`: ≥ 3 vertices, implicitly closed, strictly inside the bounds. Polygons
+  must be **simple** — self-intersections are rejected at validation time because downstream
+  meshers can hang on them.
+- A job is rejected with `422` if the geometry kind is not in the chosen solver's
+  `geometry_types` (see `GET /solvers`).
+
+Planned kinds: `spline2d` profiles, `axisymmetric2d`, `step3d` (uploaded CAD).
 
 ## Job lifecycle
 
