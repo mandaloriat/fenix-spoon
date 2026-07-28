@@ -38,7 +38,7 @@ def create_app() -> FastAPI:
 
         @app.get("/", include_in_schema=False)
         def index() -> RedirectResponse:
-            return RedirectResponse(url="/demo/airfoil-2d/index.html")
+            return RedirectResponse(url="/demo/index.html")
 
     return app
 

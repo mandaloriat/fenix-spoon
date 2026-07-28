@@ -31,10 +31,10 @@ see the [state-of-the-art survey](docs/01-state-of-the-art.md). Fenix Spoon is t
 |---|---|---|
 | **Simulation server** — FastAPI app: job submission, WebSocket progress streaming, cancellation, wall-clock timeouts, result + artifact retrieval | [`server/`](server/) | ✅ working |
 | **Solver adapter protocol** — plug any solver (FEniCSx, mock, anything Python) behind the same API via `SolverContext` (progress / cancel / artifacts) | [`server/fenixspoon/solvers/`](server/fenixspoon/solvers/) | ✅ working |
-| **Mock solver** — 2D potential-flow (Laplace) on a Cartesian grid, NumPy only; lets you develop the front-end without FEniCSx | [`server/fenixspoon/solvers/mock_laplace.py`](server/fenixspoon/solvers/mock_laplace.py) | ✅ working |
-| **FEniCSx adapter** — same problem solved with dolfinx + Gmsh on an unstructured mesh, cross-validated against the mock solver | [`server/fenixspoon/solvers/dolfinx_poisson.py`](server/fenixspoon/solvers/dolfinx_poisson.py) | ✅ validated on dolfinx 0.11 (`pytest -m fenics`, CI job in the dolfinx image) |
-| **Wire protocol** — JSON schemas for geometry, jobs, events, `grid2d`/`mesh2d` results, artifacts — with a conformance fixture corpus | [`docs/04-wire-protocol.md`](docs/04-wire-protocol.md), [`protocol/fixtures/`](protocol/fixtures/) | ✅ v0 implemented |
-| **Browser demo** — zero-dependency HTML page: draggable airfoil editor, live field rendering (grid + unstructured), cancel, artifact downloads | [`examples/airfoil-2d/`](examples/airfoil-2d/) | ✅ working |
+| **Mock solvers** — potential flow and magnetostatics in pure NumPy; let you develop the front-end without FEniCSx | [`mock_laplace.py`](server/fenixspoon/solvers/mock_laplace.py), [`mock_magnetostatics.py`](server/fenixspoon/solvers/mock_magnetostatics.py) | ✅ working |
+| **FEniCSx adapters** — the same two problems on unstructured Gmsh meshes, cross-validated against the mock solvers | [`dolfinx_poisson.py`](server/fenixspoon/solvers/dolfinx_poisson.py), [`dolfinx_magnetostatics.py`](server/fenixspoon/solvers/dolfinx_magnetostatics.py) | ✅ validated on dolfinx 0.11 (`pytest -m fenics`, CI job in the dolfinx image) |
+| **Wire protocol** — JSON schemas for geometry (`domain2d`, `regions2d`), jobs, events, `grid2d`/`mesh2d` results, artifacts — with a conformance fixture corpus | [`docs/04-wire-protocol.md`](docs/04-wire-protocol.md), [`protocol/fixtures/`](protocol/fixtures/) | ✅ v0 implemented |
+| **Browser demos** — zero-dependency HTML pages: draggable airfoil with live flow, editable solenoid with magnetostatics and field lines | [`examples/airfoil-2d/`](examples/airfoil-2d/), [`examples/solenoid-2d/`](examples/solenoid-2d/) | ✅ working |
 | **Widget library** — embeddable geometry editors and vtk.js-based viewers as npm packages | [`client/`](client/) | 📋 planned (M2) |
 | **Docker deployment** — one image with dolfinx + server, `docker compose up` | [`Dockerfile`](server/Dockerfile), [`docker-compose.yml`](docker-compose.yml) | ✅ scaffolded |
 
@@ -46,9 +46,9 @@ pip install -e ".[dev]"
 uvicorn fenixspoon.main:app --reload
 ```
 
-Then open <http://localhost:8000/demo/airfoil-2d/index.html> — drag the airfoil's control points,
-press **Run**, and watch the flow field update. API docs (OpenAPI) live at
-<http://localhost:8000/docs>.
+Then open <http://localhost:8000/> for the demo index — drag the airfoil's control points and
+watch the flow field update, or resize a solenoid's iron core and watch the flux redistribute.
+API docs (OpenAPI) live at <http://localhost:8000/docs>.
 
 With Docker (full FEniCSx runtime):
 
