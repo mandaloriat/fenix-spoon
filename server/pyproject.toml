@@ -41,3 +41,6 @@ select = ["E", "F", "W", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "fenics: tests requiring dolfinx + gmsh (skipped automatically when not installed)",
+]

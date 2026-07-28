@@ -23,4 +23,15 @@ jobs:
       - name: Test (mock path, no FEniCSx)
         run: pytest server/tests -v
 
-  # Roadmap M1: job running the dolfinx adapter tests inside dolfinx/dolfinx:stable.
+  fenics:
+    runs-on: ubuntu-latest
+    container:
+      image: dolfinx/dolfinx:stable
+    env:
+      PIP_BREAK_SYSTEM_PACKAGES: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install
+        run: pip install -e "./server[dev]"
+      - name: Test (FEniCSx adapter)
+        run: pytest server/tests -m fenics -v

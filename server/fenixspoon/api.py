@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, ValidationError
 
 from .geometry import Domain2D
@@ -55,21 +56,52 @@ def job_status(job_id: str, request: Request) -> JobStatus:
     return JobStatus.from_job(job)
 
 
+@router.post("/jobs/{job_id}/cancel", response_model=JobStatus, status_code=202)
+def cancel_job(job_id: str, request: Request) -> JobStatus:
+    job = _manager(request).get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    if not _manager(request).cancel(job):
+        raise HTTPException(
+            status_code=409, detail=f"job already finished (status: {job.status})"
+        )
+    return JobStatus.from_job(job)
+
+
 @router.get("/jobs/{job_id}/result")
 def job_result(job_id: str, request: Request) -> dict[str, Any]:
     job = _manager(request).get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
-    if job.status == "failed":
-        raise HTTPException(status_code=409, detail=f"job failed: {job.error}")
+    if job.status in ("failed", "cancelled"):
+        raise HTTPException(status_code=409, detail=f"job {job.status}: {job.error or ''}".strip())
     if job.status != "done" or job.result is None:
         raise HTTPException(status_code=409, detail=f"job not finished (status: {job.status})")
     return {
         "job_id": job.id,
         "kind": job.result.kind,
         "data": job.result.data,
-        "artifacts": job.result.artifacts,
+        "artifacts": [
+            {**entry, "url": f"/api/v1/jobs/{job.id}/artifacts/{entry['name']}"}
+            for entry in job.artifacts
+        ],
     }
+
+
+@router.get("/jobs/{job_id}/artifacts/{name}")
+def job_artifact(job_id: str, name: str, request: Request) -> FileResponse:
+    job = _manager(request).get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    # Only names registered by the solver are servable — this, plus the bare-filename
+    # rule enforced at registration, prevents any path traversal.
+    entry = next((a for a in job.artifacts if a["name"] == name), None)
+    if entry is None or job.artifact_dir is None:
+        raise HTTPException(status_code=404, detail="artifact not found")
+    path = job.artifact_dir / name
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="artifact file missing")
+    return FileResponse(path, media_type=entry["content_type"], filename=name)
 
 
 @router.websocket("/jobs/{job_id}/events")

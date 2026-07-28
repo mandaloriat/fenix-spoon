@@ -2,36 +2,62 @@
 
 Runs solves on a thread pool inside the API process and fans progress events out to
 WebSocket subscribers, replaying history to late joiners. The public surface (submit /
-get / subscribe) is deliberately small so an out-of-process backend (Celery, arq) can
-replace it at M3 without touching the API layer.
+get / cancel / subscribe) is deliberately small so an out-of-process backend (Celery,
+arq) can replace it at M3 without touching the API layer.
+
+Configuration (environment):
+
+- ``FENIXSPOON_DATA_DIR`` — root directory for per-job artifact files
+  (default: ``<system tmp>/fenixspoon-jobs``).
+- ``FENIXSPOON_JOB_TIMEOUT`` — wall-clock seconds a solve may run (default 600; 0 disables).
+  Timeouts are cooperative: the worker thread is asked to stop via the cancel event, and
+  the job is failed immediately from the caller's point of view.
 """
 
 import asyncio
+import os
+import tempfile
+import threading
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
 
 from .geometry import Domain2D
-from .solvers.base import ProgressEvent, Solver, SolverResult
+from .solvers.base import JobCancelled, ProgressEvent, Solver, SolverContext, SolverResult
 
-TERMINAL = ("done", "failed")
+TERMINAL = ("done", "failed", "cancelled")
+
+
+def _default_data_dir() -> Path:
+    env = os.environ.get("FENIXSPOON_DATA_DIR")
+    if env:
+        return Path(env)
+    return Path(tempfile.gettempdir()) / "fenixspoon-jobs"
+
+
+def _default_timeout() -> float:
+    return float(os.environ.get("FENIXSPOON_JOB_TIMEOUT", "600"))
 
 
 @dataclass
 class Job:
     id: str
     solver_name: str
-    status: str = "queued"  # queued | running | done | failed
+    status: str = "queued"  # queued | running | done | failed | cancelled
     error: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     finished_at: datetime | None = None
     result: SolverResult | None = None
+    artifacts: list[dict[str, Any]] = field(default_factory=list)
+    artifact_dir: Path | None = None
     events: list[dict[str, Any]] = field(default_factory=list)
     subscribers: set[asyncio.Queue] = field(default_factory=set)
+    cancel_event: threading.Event = field(default_factory=threading.Event)
 
 
 class JobStatus(BaseModel):
@@ -55,8 +81,10 @@ class JobStatus(BaseModel):
 
 
 class JobManager:
-    def __init__(self) -> None:
+    def __init__(self, data_dir: Path | None = None, job_timeout: float | None = None) -> None:
         self._jobs: dict[str, Job] = {}
+        self._data_dir = data_dir if data_dir is not None else _default_data_dir()
+        self._timeout = job_timeout if job_timeout is not None else _default_timeout()
 
     def get(self, job_id: str) -> Job | None:
         return self._jobs.get(job_id)
@@ -65,9 +93,17 @@ class JobManager:
         self, solver_cls: type[Solver], geometry: Domain2D, params: BaseModel
     ) -> Job:
         job = Job(id=f"j-{uuid.uuid4().hex[:12]}", solver_name=solver_cls.name)
+        job.artifact_dir = self._data_dir / job.id
         self._jobs[job.id] = job
         asyncio.create_task(self._run(job, solver_cls, geometry, params))
         return job
+
+    def cancel(self, job: Job) -> bool:
+        """Request cooperative cancellation. Returns False if the job already ended."""
+        if job.status in TERMINAL:
+            return False
+        job.cancel_event.set()
+        return True
 
     async def _run(
         self, job: Job, solver_cls: type[Solver], geometry: Domain2D, params: BaseModel
@@ -80,12 +116,24 @@ class JobManager:
             # Called from the worker thread; hop onto the event loop to publish.
             loop.call_soon_threadsafe(self._publish, job, event.model_dump())
 
+        ctx = SolverContext(
+            progress_cb=on_progress,
+            cancel_event=job.cancel_event,
+            artifact_dir=job.artifact_dir,
+        )
         try:
             solver = solver_cls()
-            job.result = await loop.run_in_executor(
-                None, solver.solve, geometry, params, on_progress
-            )
+            work = loop.run_in_executor(None, solver.solve, geometry, params, ctx)
+            job.result = await asyncio.wait_for(work, self._timeout or None)
+            job.artifacts = ctx.artifacts
             job.status = "done"
+        except TimeoutError:
+            # The worker thread cannot be killed; ask it to stop and fail the job now.
+            job.cancel_event.set()
+            job.status = "failed"
+            job.error = f"job exceeded the wall-clock timeout ({self._timeout:g}s)"
+        except JobCancelled:
+            job.status = "cancelled"
         except Exception as exc:  # solver bugs must fail the job, not the server
             job.status = "failed"
             job.error = f"{type(exc).__name__}: {exc}"

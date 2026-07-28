@@ -1,0 +1,47 @@
+{
+  "$comment": "Conformance corpus for POST /api/v1/jobs request bodies.",
+  "valid": [
+    {
+      "name": "minimal request with default params",
+      "payload": {
+        "solver": "mock.laplace2d",
+        "geometry": {
+          "type": "domain2d",
+          "bounds": [-1.0, -1.0, 2.0, 1.0],
+          "obstacle": { "type": "polygon2d", "points": [[0.4, 0.4], [0.6, 0.4], [0.5, 0.6]] }
+        }
+      }
+    },
+    {
+      "name": "request with params",
+      "payload": {
+        "solver": "mock.laplace2d",
+        "geometry": {
+          "type": "domain2d",
+          "bounds": [-1.0, -1.0, 2.0, 1.0],
+          "obstacle": { "type": "polygon2d", "points": [[0.4, 0.4], [0.6, 0.4], [0.5, 0.6]] }
+        },
+        "params": { "resolution": 64, "output": "mesh2d" }
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "missing geometry",
+      "reason": "geometry is required",
+      "payload": { "solver": "mock.laplace2d", "params": {} }
+    },
+    {
+      "name": "geometry with invalid obstacle",
+      "reason": "nested geometry validation must run on job requests",
+      "payload": {
+        "solver": "mock.laplace2d",
+        "geometry": {
+          "type": "domain2d",
+          "bounds": [-1.0, -1.0, 2.0, 1.0],
+          "obstacle": { "type": "polygon2d", "points": [[0, 0], [1, 1]] }
+        }
+      }
+    }
+  ]
+}

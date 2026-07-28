@@ -1,0 +1,22 @@
+{
+  "$comment": "Conformance corpus for WebSocket event payloads.",
+  "valid": [
+    { "name": "progress with residual",
+      "payload": { "type": "progress", "iteration": 400, "total": 2000, "residual": 3.2e-5, "message": null } },
+    { "name": "progress message-only",
+      "payload": { "type": "progress", "iteration": 1, "total": 4, "message": "meshing with Gmsh" } },
+    { "name": "status running", "payload": { "type": "status", "status": "running" } },
+    { "name": "status done", "payload": { "type": "status", "status": "done", "error": null } },
+    { "name": "status failed",
+      "payload": { "type": "status", "status": "failed", "error": "ValueError: bad geometry" } },
+    { "name": "status cancelled", "payload": { "type": "status", "status": "cancelled" } }
+  ],
+  "invalid": [
+    { "name": "unknown status value",
+      "reason": "status must be running|done|failed|cancelled",
+      "payload": { "type": "status", "status": "exploded" } },
+    { "name": "progress without iteration",
+      "reason": "iteration is required on progress events",
+      "payload": { "type": "progress", "total": 100 } }
+  ]
+}
