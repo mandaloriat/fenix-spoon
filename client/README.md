@@ -1,18 +1,39 @@
-# Client packages (roadmap M2 — not yet implemented)
+# Client packages
 
-This directory will host the npm workspace for the embeddable browser components:
+npm workspace for the Fenix Spoon browser packages.
 
-| Package | Purpose |
-|---|---|
-| `@fenix-spoon/client` | Typed TS SDK for the [wire protocol](../docs/04-wire-protocol.md): job submission, WebSocket event streams with reconnection, result fetching. Zero UI. |
-| `@fenix-spoon/geometry-2d` | Framework-agnostic custom element for parametric 2D profile editing: draggable points, splines, snapping/constraints, undo, emits `domain2d` geometry JSON. |
-| `@fenix-spoon/viewer` | Field viewer custom element built on [vtk.js](https://kitware.github.io/vtk-js/): `grid2d` and `mesh2d` results, colormaps, contours, vector glyphs, probes. |
+| Package | Status | Purpose |
+|---|---|---|
+| [`@fenix-spoon/client`](packages/client) | ✅ implemented | Typed SDK for the [wire protocol](../docs/04-wire-protocol.md): solver discovery, job submission, WebSocket progress streams with reconnection, results, artifacts, runtime validators. Zero UI. |
+| `@fenix-spoon/geometry-2d` | 📋 planned (#8) | Framework-agnostic custom element for parametric 2D profile editing: draggable points, splines, constraints, undo. Emits geometry JSON. |
+| `@fenix-spoon/viewer` | 📋 planned (#9) | Field viewer custom element built on [vtk.js](https://kitware.github.io/vtk-js/): `grid2d` and `mesh2d` results, colormaps, contours, glyphs, probes. |
 
-Design constraints (from [architecture](../docs/02-architecture.md)):
+## Working on them
 
-- **Custom elements**, so they embed identically in React, Vue, Svelte, or plain HTML.
+```bash
+cd client
+npm install
+npm test          # every package
+npm run build
+npm run typecheck
+```
+
+`@fenix-spoon/client`'s test suite has three layers: conformance tests reading the shared
+fixture corpus in [`protocol/fixtures/`](../protocol/fixtures) (the same files
+`server/tests/test_protocol_fixtures.py` reads, so the two sides cannot drift), unit tests
+over a fake transport, and integration tests against a real server booted by the harness.
+The integration layer skips itself when the Python package isn't importable, so `npm test`
+works in a JS-only checkout.
+
+## Design constraints
+
+Carried over from the [architecture](../docs/02-architecture.md):
+
+- **Custom elements** for the UI packages, so they embed identically in React, Vue, Svelte or
+  plain HTML.
 - **Protocol-only coupling**: packages depend on the wire protocol, never on server internals.
-- **Mock-first development**: everything must be developable against the NumPy mock solver.
+- **Mock-first development**: everything must be developable against the NumPy mock solvers,
+  with no FEniCSx installed.
 
-Until these exist, the reference implementation is the zero-dependency demo in
-[`examples/airfoil-2d/`](../examples/airfoil-2d/).
+Until the widget packages exist, the reference implementations are the zero-dependency demos in
+[`examples/`](../examples).
