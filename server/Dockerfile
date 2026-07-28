@@ -6,6 +6,7 @@ FROM ${BASE_IMAGE}
 WORKDIR /app
 COPY server/ /app/server/
 COPY examples/ /app/examples/
+COPY protocol/ /app/protocol/
 
 RUN pip install --no-cache-dir /app/server
 
