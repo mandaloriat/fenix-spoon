@@ -91,6 +91,16 @@ describe('colormaps', () => {
   it('returns a defined colour for a non-finite input', () => {
     expect(sampleColormap('viridis', NaN).every(Number.isFinite)).toBe(true);
   });
+
+  it('does not accept inherited Object properties as colormap names', () => {
+    // `'toString' in STOPS` is true, and sampling it would read past the end of a
+    // function and throw — so the check must be own-property only.
+    for (const inherited of ['toString', 'constructor', 'hasOwnProperty', '__proto__']) {
+      expect(isColormapName(inherited)).toBe(false);
+      expect(() => sampleColormap(inherited, 0.5)).not.toThrow();
+      expect(sampleColormap(inherited, 0.5)).toEqual(sampleColormap('viridis', 0.5));
+    }
+  });
 });
 
 describe('ranges', () => {

@@ -276,10 +276,11 @@ export class FieldViewerElement extends HTMLElement {
         image.data[dst + 3] = 255;
       }
     }
-    const buffer = new OffscreenCanvas(nx, ny);
-    buffer.getContext('2d')!.putImageData(image, 0, 0);
+    const buffer = createBuffer(nx, ny);
+    if (!buffer) return;
+    buffer.context.putImageData(image, 0, 0);
     ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(buffer, 0, 0, width, height);
+    ctx.drawImage(buffer.surface as CanvasImageSource, 0, 0, width, height);
   }
 
   #drawMesh(
@@ -398,6 +399,29 @@ export class FieldViewerElement extends HTMLElement {
   #onPointerLeave = (): void => {
     this.#readout.hidden = true;
   };
+}
+
+/**
+ * An offscreen pixel buffer, falling back to a detached `<canvas>`.
+ *
+ * `OffscreenCanvas` is missing in browsers that otherwise support canvas fine (Safari
+ * before 16.4), where constructing it throws and the field never renders at all.
+ */
+function createBuffer(
+  width: number,
+  height: number,
+): { surface: unknown; context: CanvasRenderingContext2D } | null {
+  if (typeof OffscreenCanvas === 'function') {
+    const surface = new OffscreenCanvas(width, height);
+    const context = surface.getContext('2d') as CanvasRenderingContext2D | null;
+    if (context) return { surface, context };
+  }
+  if (typeof document === 'undefined') return null;
+  const surface = document.createElement('canvas');
+  surface.width = width;
+  surface.height = height;
+  const context = surface.getContext('2d');
+  return context ? { surface, context } : null;
 }
 
 function formatValue(value: number): string {

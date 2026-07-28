@@ -43,12 +43,14 @@ export type ColormapName = keyof typeof STOPS & string;
 export const COLORMAP_NAMES = Object.keys(STOPS) as ColormapName[];
 
 export function isColormapName(name: string): name is ColormapName {
-  return name in STOPS;
+  // `in` would also accept inherited names like "toString", whose value is a function
+  // rather than an array of stops — sampling that reads past the end and throws.
+  return Object.hasOwn(STOPS, name);
 }
 
 /** Sample a colormap at `t` in [0, 1]; out-of-range values clamp to the ends. */
-export function sampleColormap(name: ColormapName, t: number): RGB {
-  const stops = STOPS[name] ?? STOPS.viridis!;
+export function sampleColormap(name: string, t: number): RGB {
+  const stops = (isColormapName(name) ? STOPS[name] : undefined) ?? STOPS.viridis!;
   if (!Number.isFinite(t)) return stops[0]!;
   const scaled = Math.min(1, Math.max(0, t)) * (stops.length - 1);
   const index = Math.min(stops.length - 2, Math.floor(scaled));
