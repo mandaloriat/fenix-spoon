@@ -197,7 +197,7 @@ function drawRegionOutlines() {
   const handle = toPx([geo.coreHalfWidth, 0]);
   ctx.fillStyle = "#fff";
   ctx.strokeStyle = "#c0392b";
-  ctx.beginPath(); ctx.arc(handle[0], handle[1], 7, 0, 7); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.arc(handle[0], handle[1], 7, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
 }
 
 function render() {

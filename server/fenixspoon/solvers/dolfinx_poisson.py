@@ -26,6 +26,7 @@ from mpi4py import MPI
 from pydantic import BaseModel, Field
 
 from ..geometry import Domain2D
+from ._gmsh import gmsh_session
 from .base import ProgressEvent, Solver, SolverContext, SolverResult
 from .registry import register
 
@@ -33,11 +34,7 @@ from .registry import register
 def _build_mesh(geometry: Domain2D, mesh_size: float):
     """Rectangle minus polygon, meshed with Gmsh (OpenCascade kernel)."""
     xmin, ymin, xmax, ymax = geometry.bounds
-    # interruptible=False: skip gmsh's signal handlers, which cannot be installed from the
-    # worker threads the job manager runs solvers on.
-    gmsh.initialize(interruptible=False)
-    try:
-        gmsh.option.setNumber("General.Terminal", 0)
+    with gmsh_session():
         occ = gmsh.model.occ
         rect = occ.addRectangle(xmin, ymin, 0.0, xmax - xmin, ymax - ymin)
         pts = [occ.addPoint(x, y, 0.0, mesh_size) for x, y in geometry.obstacle.points]
@@ -57,8 +54,6 @@ def _build_mesh(geometry: Domain2D, mesh_size: float):
         data = model_to_mesh(gmsh.model, MPI.COMM_WORLD, 0, gdim=2)
         # dolfinx >= 0.11 returns a MeshData object; earlier versions a (mesh, ct, ft) tuple.
         return data.mesh if hasattr(data, "mesh") else data[0]
-    finally:
-        gmsh.finalize()
 
 
 @register

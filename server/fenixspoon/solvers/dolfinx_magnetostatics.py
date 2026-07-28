@@ -24,6 +24,7 @@ from mpi4py import MPI
 from pydantic import BaseModel, Field
 
 from ..geometry import Regions2D
+from ._gmsh import gmsh_session
 from .base import ProgressEvent, Solver, SolverContext, SolverResult
 from .dolfinx_poisson import _nodal_speed, _p1_mesh_data, _write_vtk_unstructured
 from .mock_magnetostatics import MU0
@@ -44,9 +45,7 @@ def _build_tagged_mesh(geometry: Regions2D, mesh_size: float):
     nest, which is exactly the painter's-order precedence the schema documents.
     """
     xmin, ymin, xmax, ymax = geometry.bounds
-    gmsh.initialize(interruptible=False)
-    try:
-        gmsh.option.setNumber("General.Terminal", 0)
+    with gmsh_session():
         occ = gmsh.model.occ
         background = occ.addRectangle(xmin, ymin, 0.0, xmax - xmin, ymax - ymin)
 
@@ -71,6 +70,11 @@ def _build_tagged_mesh(geometry: Regions2D, mesh_size: float):
         by_tag: dict[int, list[int]] = {}
         for surface, tag in tag_of.items():
             by_tag.setdefault(tag, []).append(surface)
+        # The background gets physical group 0. It must get one: dolfinx's model_to_mesh
+        # requires every cell to be tagged exactly once and raises "All cells are expected
+        # to be tagged once" if the background is left out. Gmsh honours tag=0 verbatim
+        # (it returns 0 and registers group (2, 0)), so there is no collision with the
+        # 1..N region tags.
         for tag, surfaces in sorted(by_tag.items()):
             gmsh.model.addPhysicalGroup(2, surfaces, tag=tag)
 
@@ -82,8 +86,6 @@ def _build_tagged_mesh(geometry: Regions2D, mesh_size: float):
         if hasattr(data, "mesh"):
             return data.mesh, data.cell_tags
         return data[0], data[1]
-    finally:
-        gmsh.finalize()
 
 
 @register

@@ -129,6 +129,43 @@ def test_mesh2d_payload_and_vtk_artifact(tmp_path):
     assert "SCALARS A" in content and "SCALARS B" in content
 
 
+def test_concurrent_meshing_is_serialized(tmp_path):
+    """Gmsh keeps global process state and the job manager runs solvers on a thread pool,
+    so concurrent meshing must be serialized or it corrupts meshes / crashes the process.
+    Runs both dolfinx adapters at once, which is the case a per-adapter lock would miss."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from fenixspoon.geometry import Domain2D, Polygon2D
+    from fenixspoon.solvers.dolfinx_poisson import DolfinxPotentialFlow2D
+
+    airfoil = Domain2D(
+        bounds=(-1.0, -1.0, 2.0, 1.0),
+        obstacle=Polygon2D(points=[(0.0, 0.0), (0.35, 0.09), (1.0, 0.0), (0.35, -0.06)]),
+    )
+
+    def magnetostatics(_):
+        return solve(SOLENOID, tmp_path, mesh_size=0.008, write_vtk=False)
+
+    def potential_flow(_):
+        return DolfinxPotentialFlow2D().solve(
+            airfoil,
+            DolfinxPotentialFlow2D.Params(mesh_size=0.1, resolution=48, write_vtk=False),
+            make_ctx(tmp_path),
+        )
+
+    jobs = [magnetostatics, potential_flow] * 3
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        results = list(pool.map(lambda fn: fn(None), jobs))
+
+    assert all(r.kind in ("mesh2d", "grid2d") for r in results)
+    for r in results:
+        values = (
+            r.data["point_fields"] if r.kind == "mesh2d" else r.data["fields"]
+        )
+        for name, arr in values.items():
+            assert np.isfinite(np.asarray(arr)).all(), f"{name} has non-finite values"
+
+
 def test_cancellation(tmp_path):
     cancel = threading.Event()
     cancel.set()
