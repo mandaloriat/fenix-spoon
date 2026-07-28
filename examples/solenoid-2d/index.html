@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fenix Spoon — solenoid demo</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 1.5rem; max-width: 960px;
+         margin-inline: auto; }
+  h1 { font-size: 1.25rem; }
+  #canvas { width: 100%; border: 1px solid #8884; border-radius: 6px; cursor: ew-resize;
+            touch-action: none; display: block; }
+  .controls { display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem; align-items: center;
+              margin: 0.75rem 0; }
+  .controls label { display: flex; gap: 0.4rem; align-items: center; font-size: 0.9rem; }
+  button { padding: 0.45rem 1.2rem; font-size: 1rem; border-radius: 6px; border: 1px solid #8886;
+           background: #3b82f6; color: white; cursor: pointer; }
+  button:disabled { opacity: 0.5; cursor: wait; }
+  input[type=range] { width: 130px; }
+  progress { width: 140px; }
+  #status { font-size: 0.85rem; opacity: 0.75; min-height: 1.2em; }
+  .hint { font-size: 0.8rem; opacity: 0.6; }
+  .legend { display: flex; gap: 1rem; font-size: 0.8rem; margin-top: 0.4rem; }
+  .swatch { display: inline-block; width: 0.9rem; height: 0.9rem; border-radius: 3px;
+            vertical-align: -2px; margin-right: 0.3rem; border: 1px solid #8886; }
+</style>
+</head>
+<body>
+<h1>Fenix Spoon 🥄 — solenoid cross-section, live magnetostatics</h1>
+<p class="hint">Drag the iron core's edge left/right to change its width, or use the sliders.
+The vector potential <em>A<sub>z</sub></em> is solved server-side on a mesh where every
+material region is its own physical group — so the iron/air interface lands exactly on
+element edges. Field lines are contours of <em>A<sub>z</sub></em>.</p>
+
+<canvas id="canvas" width="900" height="700"></canvas>
+<div class="legend">
+  <span><span class="swatch" style="background:#c0392b"></span>iron core (μ<sub>r</sub> high)</span>
+  <span><span class="swatch" style="background:#b8860b"></span>coil (current)</span>
+  <span><span class="swatch" style="background:#5a6570"></span>air</span>
+</div>
+
+<div class="controls">
+  <button id="run">Run ▶</button>
+  <button id="cancel" hidden>Cancel ✕</button>
+  <label><input type="checkbox" id="auto" checked> auto-run on edit</label>
+  <label>field
+    <select id="field">
+      <option value="B" selected>|B| flux density</option>
+      <option value="A">A<sub>z</sub> potential</option>
+      <option value="mu_r">μ<sub>r</sub> material</option>
+    </select>
+  </label>
+  <label><input type="checkbox" id="lines" checked> field lines</label>
+  <label>μ<sub>r</sub> core <input type="range" id="mu" min="1" max="4" step="0.05" value="3">
+    <span id="muval">1000</span></label>
+  <label>solver <select id="solver"></select></label>
+  <progress id="prog" value="0" max="1" hidden></progress>
+</div>
+<div id="status">connecting…</div>
+<div id="artifacts" class="hint"></div>
+
+<script>
+"use strict";
+const API = location.protocol === "file:" ? "http://localhost:8000" : "";
+const WS_API = API ? API.replace("http", "ws")
+  : `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
+
+const BOUNDS = [-0.06, -0.06, 0.06, 0.06];
+// Editable geometry parameters (metres).
+const geo = { coreHalfWidth: 0.010, coreHalfHeight: 0.030, coilInner: 0.015,
+              coilOuter: 0.025, muCore: 1000, current: 5.0e6 };
+
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const statusEl = document.getElementById("status");
+const progEl = document.getElementById("prog");
+const runBtn = document.getElementById("run");
+const cancelBtn = document.getElementById("cancel");
+const artifactsEl = document.getElementById("artifacts");
+let lastResult = null, running = false, currentJobId = null;
+
+const [XMIN, YMIN, XMAX, YMAX] = BOUNDS;
+const toPx = ([x, y]) => [
+  (x - XMIN) / (XMAX - XMIN) * canvas.width,
+  canvas.height - (y - YMIN) / (YMAX - YMIN) * canvas.height,
+];
+const toWorldX = px => XMIN + px / canvas.width * (XMAX - XMIN);
+
+const VIRIDIS = [[68,1,84],[59,82,139],[33,145,140],[94,201,98],[253,231,37]];
+function colormap(t) {
+  t = Math.min(1, Math.max(0, t)) * (VIRIDIS.length - 1);
+  const i = Math.min(VIRIDIS.length - 2, Math.floor(t)), f = t - i;
+  return VIRIDIS[i].map((c, k) => Math.round(c + f * (VIRIDIS[i + 1][k] - c)));
+}
+
+function buildGeometry() {
+  const rect = (x0, y0, x1, y1) =>
+    ({ type: "polygon2d", points: [[x0, y0], [x1, y0], [x1, y1], [x0, y1]] });
+  const h = geo.coreHalfHeight;
+  return {
+    type: "regions2d",
+    bounds: BOUNDS,
+    background: { mu_r: 1.0 },
+    regions: [
+      { name: "core", shape: rect(-geo.coreHalfWidth, -h, geo.coreHalfWidth, h),
+        material: { mu_r: geo.muCore } },
+      { name: "coil_left", shape: rect(-geo.coilOuter, -h, -geo.coilInner, h),
+        material: { current_density: -geo.current } },
+      { name: "coil_right", shape: rect(geo.coilInner, -h, geo.coilOuter, h),
+        material: { current_density: geo.current } },
+    ],
+  };
+}
+
+// ---- rendering -------------------------------------------------------------
+function fieldRange(values) {
+  let lo = Infinity, hi = -Infinity;
+  for (const v of values) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  return [lo, hi - lo || 1];
+}
+
+function renderMesh(data, name) {
+  const { points, triangles, point_fields } = data;
+  const values = point_fields[name];
+  const [lo, span] = fieldRange(values);
+  const px = points.map(toPx);
+  for (const [i, j, k] of triangles) {
+    const t = ((values[i] + values[j] + values[k]) / 3 - lo) / span;
+    const [r, g, b] = colormap(t);
+    ctx.fillStyle = `rgb(${r},${g},${b})`;
+    ctx.beginPath();
+    ctx.moveTo(px[i][0], px[i][1]);
+    ctx.lineTo(px[j][0], px[j][1]);
+    ctx.lineTo(px[k][0], px[k][1]);
+    ctx.closePath();
+    ctx.fill();
+  }
+  if (document.getElementById("lines").checked) drawFieldLines(px, triangles, point_fields.A);
+}
+
+function renderGrid(data, name) {
+  const { shape: [ny, nx], fields } = data;
+  const values = fields[name];
+  const [lo, span] = fieldRange(values);
+  const img = new ImageData(nx, ny);
+  for (let iy = 0; iy < ny; iy++) for (let ix = 0; ix < nx; ix++) {
+    const src = iy * nx + ix;
+    const dst = ((ny - 1 - iy) * nx + ix) * 4;
+    const [r, g, b] = colormap((values[src] - lo) / span);
+    img.data[dst] = r; img.data[dst+1] = g; img.data[dst+2] = b; img.data[dst+3] = 255;
+  }
+  const off = new OffscreenCanvas(nx, ny);
+  off.getContext("2d").putImageData(img, 0, 0);
+  ctx.drawImage(off, 0, 0, canvas.width, canvas.height);
+}
+
+// Contours of A are field lines: march each triangle for the iso-level crossing.
+function drawFieldLines(px, triangles, a) {
+  if (!a) return;
+  const [lo, span] = fieldRange(a);
+  ctx.strokeStyle = "rgba(255,255,255,0.55)";
+  ctx.lineWidth = 1;
+  const levels = 14;
+  ctx.beginPath();
+  for (let l = 1; l < levels; l++) {
+    const iso = lo + span * l / levels;
+    for (const [i, j, k] of triangles) {
+      const seg = [];
+      for (const [p, q] of [[i, j], [j, k], [k, i]]) {
+        if ((a[p] > iso) !== (a[q] > iso)) {
+          const f = (iso - a[p]) / ((a[q] - a[p]) || 1e-30);
+          seg.push([px[p][0] + f * (px[q][0] - px[p][0]),
+                    px[p][1] + f * (px[q][1] - px[p][1])]);
+        }
+      }
+      if (seg.length === 2) { ctx.moveTo(seg[0][0], seg[0][1]); ctx.lineTo(seg[1][0], seg[1][1]); }
+    }
+  }
+  ctx.stroke();
+}
+
+function drawRegionOutlines() {
+  const h = geo.coreHalfHeight;
+  const boxes = [
+    [[-geo.coreHalfWidth, -h, geo.coreHalfWidth, h], "#c0392b"],
+    [[-geo.coilOuter, -h, -geo.coilInner, h], "#b8860b"],
+    [[geo.coilInner, -h, geo.coilOuter, h], "#b8860b"],
+  ];
+  ctx.lineWidth = 2;
+  for (const [[x0, y0, x1, y1], colour] of boxes) {
+    const a = toPx([x0, y0]), b = toPx([x1, y1]);
+    ctx.strokeStyle = colour;
+    ctx.strokeRect(a[0], b[1], b[0] - a[0], a[1] - b[1]);
+  }
+  // Handle for dragging the core width.
+  const handle = toPx([geo.coreHalfWidth, 0]);
+  ctx.fillStyle = "#fff";
+  ctx.strokeStyle = "#c0392b";
+  ctx.beginPath(); ctx.arc(handle[0], handle[1], 7, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
+}
+
+function render() {
+  ctx.fillStyle = "rgb(30,30,34)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  if (lastResult) {
+    const name = document.getElementById("field").value;
+    if (lastResult.kind === "mesh2d") renderMesh(lastResult.data, name);
+    else renderGrid(lastResult.data, name);
+  }
+  drawRegionOutlines();
+}
+
+// ---- editing ---------------------------------------------------------------
+let dragging = false;
+const evX = e => (e.clientX - canvas.getBoundingClientRect().left)
+  * canvas.width / canvas.getBoundingClientRect().width;
+canvas.addEventListener("pointerdown", e => {
+  const handleX = toPx([geo.coreHalfWidth, 0])[0];
+  if (Math.abs(evX(e) - handleX) < 20) { dragging = true; canvas.setPointerCapture(e.pointerId); }
+});
+canvas.addEventListener("pointermove", e => {
+  if (!dragging) return;
+  // Keep the core strictly inside the coil bore.
+  geo.coreHalfWidth = Math.min(geo.coilInner - 0.002, Math.max(0.002, Math.abs(toWorldX(evX(e)))));
+  render();
+});
+canvas.addEventListener("pointerup", () => {
+  if (dragging && document.getElementById("auto").checked) run();
+  dragging = false;
+});
+
+const muSlider = document.getElementById("mu");
+muSlider.addEventListener("input", () => {
+  geo.muCore = Math.round(Math.pow(10, +muSlider.value));
+  document.getElementById("muval").textContent = geo.muCore;
+});
+muSlider.addEventListener("change", () => { if (document.getElementById("auto").checked) run(); });
+document.getElementById("field").addEventListener("change", render);
+document.getElementById("lines").addEventListener("change", render);
+
+// ---- server ----------------------------------------------------------------
+function showArtifacts(artifacts) {
+  artifactsEl.innerHTML = "";
+  if (!artifacts || !artifacts.length) return;
+  artifactsEl.append("artifacts: ");
+  artifacts.forEach((a, i) => {
+    const link = document.createElement("a");
+    link.href = `${API}${a.url}`;
+    link.download = a.name;
+    link.textContent = `${a.name} (${(a.size / 1024).toFixed(0)} kB)`;
+    if (i) artifactsEl.append(" · ");
+    artifactsEl.append(link);
+  });
+}
+
+async function loadSolvers() {
+  try {
+    const solvers = await (await fetch(`${API}/api/v1/solvers`)).json();
+    const magnetostatic = solvers.filter(s => s.geometry_types.includes("regions2d"));
+    const sel = document.getElementById("solver");
+    sel.innerHTML = "";
+    for (const s of magnetostatic) {
+      const o = document.createElement("option");
+      o.value = s.name; o.textContent = s.title;
+      sel.appendChild(o);
+    }
+    // Prefer the FEniCSx adapter when the server has one.
+    const fenics = magnetostatic.find(s => s.name.startsWith("dolfinx."));
+    if (fenics) sel.value = fenics.name;
+    statusEl.textContent = `server ok — ${magnetostatic.length} magnetostatics solver(s)`;
+    return magnetostatic.length > 0;
+  } catch {
+    statusEl.textContent =
+      "⚠ cannot reach the server — start it with: uvicorn fenixspoon.main:app";
+    return false;
+  }
+}
+
+async function run() {
+  if (running) return;
+  running = true; runBtn.disabled = true; cancelBtn.hidden = false;
+  progEl.hidden = false; progEl.value = 0; artifactsEl.innerHTML = "";
+  try {
+    const solver = document.getElementById("solver").value;
+    const resp = await fetch(`${API}/api/v1/jobs`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ solver, geometry: buildGeometry(), params: {} }),
+    });
+    if (!resp.ok) throw new Error(`submit failed: HTTP ${resp.status}`);
+    const { job_id } = await resp.json();
+    currentJobId = job_id;
+
+    await new Promise((resolve, reject) => {
+      const ws = new WebSocket(`${WS_API}/api/v1/jobs/${job_id}/events`);
+      ws.onmessage = m => {
+        const ev = JSON.parse(m.data);
+        if (ev.type === "progress") {
+          if (ev.total) progEl.value = ev.iteration / ev.total;
+          statusEl.textContent = ev.message
+            ? `${ev.message}…`
+            : `iter ${ev.iteration}${ev.total ? "/" + ev.total : ""}` +
+              (ev.residual != null ? ` — residual ${ev.residual.toExponential(2)}` : "");
+        } else if (ev.type === "status" && ev.status === "done") { ws.close(); resolve(); }
+        else if (ev.type === "status" && ev.status === "cancelled") {
+          ws.close(); reject(new Error("cancelled"));
+        } else if (ev.type === "status" && ev.status === "failed") {
+          ws.close(); reject(new Error(ev.error || "solver failed"));
+        }
+      };
+      ws.onerror = () => reject(new Error("websocket error"));
+    });
+
+    lastResult = await (await fetch(`${API}/api/v1/jobs/${job_id}/result`)).json();
+    statusEl.textContent = `done — ${lastResult.kind === "mesh2d"
+      ? lastResult.data.triangles.length + " elements" : "grid"}`;
+    showArtifacts(lastResult.artifacts);
+    render();
+  } catch (err) {
+    statusEl.textContent = err.message === "cancelled" ? "cancelled" : `⚠ ${err.message}`;
+  } finally {
+    running = false; runBtn.disabled = false; cancelBtn.hidden = true;
+    progEl.hidden = true; currentJobId = null;
+  }
+}
+
+runBtn.addEventListener("click", run);
+cancelBtn.addEventListener("click", () => {
+  if (currentJobId) fetch(`${API}/api/v1/jobs/${currentJobId}/cancel`, { method: "POST" });
+});
+
+document.getElementById("muval").textContent = geo.muCore;
+render();
+loadSolvers().then(ok => { if (ok && document.getElementById("auto").checked) run(); });
+</script>
+</body>
+</html>

@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fenix Spoon — demos</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 2rem 1.5rem; max-width: 760px;
+         margin-inline: auto; line-height: 1.5; }
+  h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
+  .sub { opacity: 0.7; margin-top: 0; }
+  ul { list-style: none; padding: 0; }
+  li { border: 1px solid #8884; border-radius: 8px; padding: 1rem 1.2rem; margin: 0.8rem 0; }
+  li a { font-size: 1.05rem; font-weight: 600; text-decoration: none; color: #3b82f6; }
+  li p { margin: 0.4rem 0 0; font-size: 0.9rem; opacity: 0.8; }
+  code { font-size: 0.85em; }
+  footer { margin-top: 2rem; font-size: 0.85rem; opacity: 0.7; }
+</style>
+</head>
+<body>
+<h1>Fenix Spoon 🥄 — demos</h1>
+<p class="sub">Browser front-ends talking to a FEniCSx-backed simulation server over the
+Fenix Spoon wire protocol.</p>
+
+<ul>
+  <li>
+    <a href="airfoil-2d/index.html">Airfoil — 2D potential flow</a>
+    <p>Drag the control points of an airfoil and watch the flow field update. Demonstrates the
+    <code>domain2d</code> geometry (a body cut out of the domain), <code>grid2d</code> and
+    <code>mesh2d</code> results, live progress and cancellation.</p>
+  </li>
+  <li>
+    <a href="solenoid-2d/index.html">Solenoid — 2D magnetostatics</a>
+    <p>Resize an iron core inside a current-carrying coil and watch the flux redistribute.
+    Demonstrates the <code>regions2d</code> geometry (multiple material regions), per-region
+    physics on a tagged FEM mesh, and field-line contours.</p>
+  </li>
+</ul>
+
+<footer>
+Each page is a single self-contained HTML file with no build step — they double as the
+reference implementation of the protocol while the widget packages are built.
+</footer>
+</body>
+</html>

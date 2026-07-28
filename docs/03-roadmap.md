@@ -31,8 +31,11 @@ Goal: the demo runs on an unstructured FEniCSx solve inside Docker, same UX.
       kind) — emitted by both the mock solver and the FEniCSx adapter (#3)
 - [x] Artifact channel: results downloadable as VTK; inline JSON kept for small fields (#4).
       *XDMF/VTU via dolfinx I/O remains a follow-up.*
-- [ ] Second physics example: 2D magnetostatics of a solenoid cross-section (axisymmetric A-φ),
-      exercising material regions in the geometry schema (#5)
+- [x] Second physics example: 2D magnetostatics of a solenoid cross-section, exercising
+      material regions in the geometry schema (#5) — added the `regions2d` geometry kind,
+      `mock.magnetostatics2d` and `dolfinx.magnetostatics2d`, and `examples/solenoid-2d/`.
+      *Axisymmetric (A-φ) formulation deferred: the planar cut is what the demo needs, and
+      axisymmetry belongs with a dedicated `axisymmetric2d` geometry kind.*
 - [ ] Mesh-size/quality parameters exposed through solver params, with server-side caps (#6)
       — *partially done: wall-clock timeout + cancellation shipped; cell-count caps pending.*
 

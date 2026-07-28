@@ -13,8 +13,9 @@ from .base import (
 )
 from .registry import available_solvers, get_solver, register
 
-# The FEniCSx adapter registers only if dolfinx + gmsh import cleanly.
+# The FEniCSx adapters register only if dolfinx + gmsh import cleanly.
 try:
+    from . import dolfinx_magnetostatics as _dolfinx_magnetostatics  # noqa: F401
     from . import dolfinx_poisson as _dolfinx_poisson  # noqa: F401
 except ImportError:  # pragma: no cover - exercised only without dolfinx
     pass
