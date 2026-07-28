@@ -39,7 +39,7 @@ Goal: the demo runs on an unstructured FEniCSx solve inside Docker, same UX.
 - [ ] Mesh-size/quality parameters exposed through solver params, with server-side caps (#6)
       — *partially done: wall-clock timeout + cancellation shipped; cell-count caps pending.*
 
-## M2 — Embeddable client widgets (`client/` becomes real)
+## M2 — Embeddable client widgets ✅
 
 Goal: `npm install` two widgets and build the demo page in ten lines.
 
@@ -54,8 +54,11 @@ Goal: `npm install` two widgets and build the demo page in ten lines.
       *Built on canvas rather than vtk.js: every result kind is 2D today, and a multi-megabyte
       WebGL toolkit would blow the embed footprint. The rendering surface is isolated so a WebGL
       backend can land with the first 3D result kind (#25). Vector glyphs await a vector field.*
-- [ ] Rebuild `examples/airfoil-2d` on the widgets; keep the zero-dependency version as
-      reference (#10)
+- [x] Rebuild `examples/airfoil-2d` on the widgets; keep the zero-dependency version as
+      reference (#10) — the server now serves built packages at `/packages/`, and the page
+      loads them through an import map. *Rebuilding it caught a browser-only SDK bug: an
+      unbound `globalThis.fetch` throws "Illegal invocation" in a page, which Node never
+      reproduces. That is the payoff of this item.*
 - [x] Versioned protocol conformance tests shared between server (pytest) and SDK (vitest) —
       both sides read `protocol/fixtures/` and CI runs both (#11)
 

@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fenix Spoon — airfoil demo</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 1.5rem; max-width: 960px;
+         margin-inline: auto; }
+  h1 { font-size: 1.25rem; } h1 .spoon { font-weight: normal; }
+  #canvas { width: 100%; border: 1px solid #8884; border-radius: 6px; cursor: crosshair;
+            touch-action: none; display: block; }
+  .controls { display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem; align-items: center;
+              margin: 0.75rem 0; }
+  .controls label { display: flex; gap: 0.4rem; align-items: center; font-size: 0.9rem; }
+  button { padding: 0.45rem 1.2rem; font-size: 1rem; border-radius: 6px; border: 1px solid #8886;
+           background: #3b82f6; color: white; cursor: pointer; }
+  button:disabled { opacity: 0.5; cursor: wait; }
+  progress { width: 160px; }
+  #status { font-size: 0.85rem; opacity: 0.75; min-height: 1.2em; }
+  .hint { font-size: 0.8rem; opacity: 0.6; }
+</style>
+</head>
+<body>
+<h1>Fenix Spoon <span class="spoon">🥄</span> — live 2D flow around an editable airfoil</h1>
+<p class="hint">Drag the white control points to reshape the profile. Double-click a point to
+remove it, double-click an edge to add one. The field is solved server-side
+(<code>mock.laplace2d</code> or a FEniCSx adapter — same protocol) and streamed back.</p>
+
+<canvas id="canvas" width="900" height="600"></canvas>
+
+<div class="controls">
+  <button id="run">Run ▶</button>
+  <button id="cancel" hidden>Cancel ✕</button>
+  <label><input type="checkbox" id="auto" checked> auto-run on edit</label>
+  <label>field
+    <select id="field"><option value="speed" selected>|velocity|</option><option value="psi">streamfunction ψ</option></select>
+  </label>
+  <label>resolution
+    <select id="res"><option>64</option><option selected>128</option><option>192</option></select>
+  </label>
+  <label><input type="checkbox" id="mesh"> unstructured (mesh2d)</label>
+  <label>solver <select id="solver"></select></label>
+  <progress id="prog" value="0" max="1" hidden></progress>
+</div>
+<div id="status">connecting…</div>
+<div id="artifacts" class="hint"></div>
+
+<script>
+"use strict";
+// When opened as a plain file, talk to a locally running server; otherwise same origin.
+const API = location.protocol === "file:" ? "http://localhost:8000" : "";
+const WS_API = API ? API.replace("http", "ws") : `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
+
+const BOUNDS = [-1.0, -1.0, 2.0, 1.0]; // xmin, ymin, xmax, ymax
+let points = [ // a plausible cambered airfoil
+  [0.0, 0.0], [0.12, 0.06], [0.35, 0.09], [0.65, 0.07], [1.0, 0.005],
+  [0.65, -0.02], [0.35, -0.05], [0.12, -0.04],
+];
+
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const statusEl = document.getElementById("status");
+const progEl = document.getElementById("prog");
+const runBtn = document.getElementById("run");
+let lastResult = null;
+
+// ---- coordinate transforms -------------------------------------------------
+const [XMIN, YMIN, XMAX, YMAX] = BOUNDS;
+const toPx = ([x, y]) => [
+  (x - XMIN) / (XMAX - XMIN) * canvas.width,
+  canvas.height - (y - YMIN) / (YMAX - YMIN) * canvas.height,
+];
+const toWorld = (px, py) => [
+  XMIN + px / canvas.width * (XMAX - XMIN),
+  YMIN + (canvas.height - py) / canvas.height * (YMAX - YMIN),
+];
+
+// ---- colormap (compact viridis approximation) ------------------------------
+const VIRIDIS = [[68,1,84],[59,82,139],[33,145,140],[94,201,98],[253,231,37]];
+function colormap(t) {
+  t = Math.min(1, Math.max(0, t)) * (VIRIDIS.length - 1);
+  const i = Math.min(VIRIDIS.length - 2, Math.floor(t)), f = t - i;
+  return VIRIDIS[i].map((c, k) => Math.round(c + f * (VIRIDIS[i + 1][k] - c)));
+}
+
+// ---- rendering -------------------------------------------------------------
+function renderGrid2d(data) {
+  const { shape: [ny, nx], fields, mask } = data;
+  const values = fields[document.getElementById("field").value];
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < values.length; i++) if (!mask[i]) {
+    if (values[i] < lo) lo = values[i];
+    if (values[i] > hi) hi = values[i];
+  }
+  const span = hi - lo || 1;
+  const img = new ImageData(nx, ny);
+  for (let iy = 0; iy < ny; iy++) for (let ix = 0; ix < nx; ix++) {
+    const src = iy * nx + ix;                 // row-major, y increasing upward
+    const dst = ((ny - 1 - iy) * nx + ix) * 4; // canvas rows go downward
+    const [r, g, b] = mask[src] ? [30, 30, 34] : colormap((values[src] - lo) / span);
+    img.data[dst] = r; img.data[dst + 1] = g; img.data[dst + 2] = b; img.data[dst + 3] = 255;
+  }
+  const off = new OffscreenCanvas(nx, ny);
+  off.getContext("2d").putImageData(img, 0, 0);
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(off, 0, 0, canvas.width, canvas.height);
+}
+
+function renderMesh2d(data) {
+  const { points, triangles, point_fields } = data;
+  const values = point_fields[document.getElementById("field").value];
+  let lo = Infinity, hi = -Infinity;
+  for (const v of values) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  const span = hi - lo || 1;
+  ctx.fillStyle = "rgb(30,30,34)"; // holes (the obstacle) show as background
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const px = points.map(toPx);
+  for (const [i, j, k] of triangles) {
+    const t = ((values[i] + values[j] + values[k]) / 3 - lo) / span;
+    const [r, g, b] = colormap(t);
+    ctx.fillStyle = `rgb(${r},${g},${b})`;
+    ctx.beginPath();
+    ctx.moveTo(px[i][0], px[i][1]);
+    ctx.lineTo(px[j][0], px[j][1]);
+    ctx.lineTo(px[k][0], px[k][1]);
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
+function render() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (lastResult) {
+    if (lastResult.kind === "mesh2d") renderMesh2d(lastResult.data);
+    else renderGrid2d(lastResult.data);
+  }
+  // polygon overlay
+  ctx.beginPath();
+  points.map(toPx).forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+  ctx.closePath();
+  ctx.fillStyle = "rgba(20,20,24,0.55)"; ctx.fill();
+  ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5; ctx.stroke();
+  for (const [x, y] of points.map(toPx)) {
+    ctx.beginPath(); ctx.arc(x, y, 6, 0, 2 * Math.PI);
+    ctx.fillStyle = "#fff"; ctx.fill();
+    ctx.strokeStyle = "#3b82f6"; ctx.lineWidth = 2; ctx.stroke();
+  }
+}
+
+// ---- point editing ---------------------------------------------------------
+let dragging = -1;
+const hit = (px, py) => points.findIndex(p => {
+  const [x, y] = toPx(p); return (x - px) ** 2 + (y - py) ** 2 < 12 ** 2;
+});
+const evPos = e => {
+  const r = canvas.getBoundingClientRect();
+  return [(e.clientX - r.left) * canvas.width / r.width,
+          (e.clientY - r.top) * canvas.height / r.height];
+};
+canvas.addEventListener("pointerdown", e => {
+  dragging = hit(...evPos(e));
+  if (dragging >= 0) canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener("pointermove", e => {
+  if (dragging < 0) return;
+  const [x, y] = toWorld(...evPos(e));
+  const m = 0.02 * (XMAX - XMIN); // keep points strictly inside the domain
+  points[dragging] = [Math.min(XMAX - m, Math.max(XMIN + m, x)),
+                      Math.min(YMAX - m, Math.max(YMIN + m, y))];
+  render();
+});
+canvas.addEventListener("pointerup", () => {
+  if (dragging >= 0 && document.getElementById("auto").checked) run();
+  dragging = -1;
+});
+canvas.addEventListener("dblclick", e => {
+  const [px, py] = evPos(e);
+  const i = hit(px, py);
+  if (i >= 0 && points.length > 3) { points.splice(i, 1); }
+  else if (i < 0) { // insert on the nearest edge
+    const w = toWorld(px, py);
+    let best = 0, bestD = Infinity;
+    for (let k = 0; k < points.length; k++) {
+      const a = points[k], b = points[(k + 1) % points.length];
+      const d = ((a[0] + b[0]) / 2 - w[0]) ** 2 + ((a[1] + b[1]) / 2 - w[1]) ** 2;
+      if (d < bestD) { bestD = d; best = k; }
+    }
+    points.splice(best + 1, 0, w);
+  }
+  render();
+  if (document.getElementById("auto").checked) run();
+});
+
+// ---- talking to the server -------------------------------------------------
+async function loadSolvers() {
+  try {
+    const solvers = await (await fetch(`${API}/api/v1/solvers`)).json();
+    const sel = document.getElementById("solver");
+    sel.innerHTML = "";
+    for (const s of solvers) {
+      const o = document.createElement("option");
+      o.value = s.name; o.textContent = s.title;
+      sel.appendChild(o);
+    }
+    statusEl.textContent = `server ok — ${solvers.length} solver(s) available`;
+  } catch {
+    statusEl.textContent =
+      "⚠ cannot reach the server — start it with: uvicorn fenixspoon.main:app";
+  }
+}
+
+let running = false;
+let currentJobId = null;
+const cancelBtn = document.getElementById("cancel");
+const artifactsEl = document.getElementById("artifacts");
+
+function showArtifacts(artifacts) {
+  artifactsEl.innerHTML = "";
+  if (!artifacts || !artifacts.length) return;
+  artifactsEl.append("artifacts: ");
+  artifacts.forEach((a, i) => {
+    const link = document.createElement("a");
+    link.href = `${API}${a.url}`;
+    link.download = a.name;
+    link.textContent = `${a.name} (${(a.size / 1024).toFixed(0)} kB)`;
+    if (i) artifactsEl.append(" · ");
+    artifactsEl.append(link);
+  });
+}
+
+async function run() {
+  if (running) return;
+  running = true; runBtn.disabled = true; cancelBtn.hidden = false;
+  progEl.hidden = false; progEl.value = 0; artifactsEl.innerHTML = "";
+  try {
+    const body = {
+      solver: document.getElementById("solver").value || "mock.laplace2d",
+      geometry: { type: "domain2d", bounds: BOUNDS,
+                  obstacle: { type: "polygon2d", points } },
+      params: {
+        resolution: +document.getElementById("res").value,
+        output: document.getElementById("mesh").checked ? "mesh2d" : "grid2d",
+      },
+    };
+    const resp = await fetch(`${API}/api/v1/jobs`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) throw new Error(`submit failed: HTTP ${resp.status}`);
+    const { job_id } = await resp.json();
+    currentJobId = job_id;
+
+    await new Promise((resolve, reject) => {
+      const ws = new WebSocket(`${WS_API}/api/v1/jobs/${job_id}/events`);
+      ws.onmessage = m => {
+        const ev = JSON.parse(m.data);
+        if (ev.type === "progress") {
+          if (ev.total) progEl.value = ev.iteration / ev.total;
+          statusEl.textContent = `iter ${ev.iteration}${ev.total ? "/" + ev.total : ""}` +
+            (ev.residual != null ? ` — residual ${ev.residual.toExponential(2)}` : "") +
+            (ev.message ? ` — ${ev.message}` : "");
+        } else if (ev.type === "status" && ev.status === "done") { ws.close(); resolve(); }
+        else if (ev.type === "status" && ev.status === "cancelled") {
+          ws.close(); reject(new Error("cancelled"));
+        } else if (ev.type === "status" && ev.status === "failed") {
+          ws.close(); reject(new Error(ev.error || "solver failed"));
+        }
+      };
+      ws.onerror = () => reject(new Error("websocket error"));
+    });
+
+    const result = await (await fetch(`${API}/api/v1/jobs/${job_id}/result`)).json();
+    lastResult = result;
+    statusEl.textContent = "done";
+    showArtifacts(result.artifacts);
+    render();
+  } catch (err) {
+    statusEl.textContent = err.message === "cancelled" ? "cancelled" : `⚠ ${err.message}`;
+  } finally {
+    running = false; runBtn.disabled = false; cancelBtn.hidden = true;
+    progEl.hidden = true; currentJobId = null;
+  }
+}
+
+runBtn.addEventListener("click", run);
+cancelBtn.addEventListener("click", () => {
+  if (currentJobId) fetch(`${API}/api/v1/jobs/${currentJobId}/cancel`, { method: "POST" });
+});
+document.getElementById("mesh").addEventListener("change", run);
+document.getElementById("field").addEventListener("change", render);
+render();
+loadSolvers().then(() => { if (document.getElementById("auto").checked) run(); });
+</script>
+</body>
+</html>

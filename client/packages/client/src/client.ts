@@ -80,7 +80,13 @@ export class FenixSpoonClient {
   private get fetchImpl(): typeof globalThis.fetch {
     const impl = this.options.fetch ?? globalThis.fetch;
     if (!impl) throw new Error('no fetch implementation available; pass options.fetch');
-    return impl;
+    // Browsers require `fetch` to be called with `window` as its receiver: a bare
+    // reference throws "Illegal invocation", and calling it as `this.fetchImpl(…)`
+    // would hand it this client instead. Node doesn't care, which is why this only
+    // ever shows up in a real page. Bind whatever we selected — an injected
+    // `window.fetch` is just as unbound as the global one, and re-binding an already
+    // bound function or an arrow is a no-op.
+    return impl.bind(globalThis);
   }
 
   private get socketImpl(): typeof globalThis.WebSocket {

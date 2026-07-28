@@ -260,4 +260,44 @@ describe('FenixSpoonClient', () => {
   it('exposes FenixSpoonError for instanceof checks', () => {
     expect(new FenixSpoonError('x', 500, null)).toBeInstanceOf(Error);
   });
+
+  it('calls the global fetch with its own receiver', async () => {
+    // Browsers throw "Illegal invocation" when `fetch` is called as a bare reference
+    // rather than a method of `window`. Node is lenient, so assert the binding directly.
+    const original = globalThis.fetch;
+    let receiver: unknown = 'never called';
+    Object.defineProperty(globalThis, 'fetch', {
+      configurable: true,
+      writable: true,
+      value: function boundCheck(this: unknown) {
+        receiver = this;
+        return Promise.resolve(new Response('[]', { status: 200 }));
+      },
+    });
+    try {
+      await new FenixSpoonClient('http://server').listSolvers();
+    } finally {
+      Object.defineProperty(globalThis, 'fetch', {
+        configurable: true,
+        writable: true,
+        value: original,
+      });
+    }
+    expect(receiver).toBe(globalThis);
+  });
+
+  it('binds an injected fetch too, not just the global one', async () => {
+    // Passing `window.fetch` through options is the natural thing to do, and it is
+    // exactly as unbound as the global — without binding it would be invoked with the
+    // client instance as its receiver and throw in a browser.
+    let receiver: unknown = 'never called';
+    const injected = function injectedFetch(this: unknown) {
+      receiver = this;
+      return Promise.resolve(new Response('[]', { status: 200 }));
+    };
+    await new FenixSpoonClient('http://server', {
+      fetch: injected as unknown as typeof globalThis.fetch,
+    }).listSolvers();
+    expect(receiver).toBe(globalThis);
+  });
 });
