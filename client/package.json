@@ -7,7 +7,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspace @fenix-spoon/client && npm run build --workspace @fenix-spoon/geometry-2d",
+    "build": "npm run build --workspace @fenix-spoon/client && npm run build --workspace @fenix-spoon/geometry-2d && npm run build --workspace @fenix-spoon/viewer",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present"
   },

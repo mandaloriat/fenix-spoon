@@ -49,8 +49,11 @@ Goal: `npm install` two widgets and build the demo page in ten lines.
       editor: draggable points, polygon and centripetal Catmull-Rom spline modes, undo/redo,
       full keyboard operation, JSON in/out per the geometry schema (#8).
       *Constraint solving (symmetry, tangency) deferred — it wants its own design pass.*
-- [ ] `@fenix-spoon/viewer` — vtk.js-based field viewer custom element: unstructured 2D/3D,
-      colormaps, contours, vector glyphs, probes (#9)
+- [x] `@fenix-spoon/viewer` — field viewer custom element: `grid2d` and `mesh2d`, colormaps,
+      colorbar, iso-contours, hover probe (#9).
+      *Built on canvas rather than vtk.js: every result kind is 2D today, and a multi-megabyte
+      WebGL toolkit would blow the embed footprint. The rendering surface is isolated so a WebGL
+      backend can land with the first 3D result kind (#25). Vector glyphs await a vector field.*
 - [ ] Rebuild `examples/airfoil-2d` on the widgets; keep the zero-dependency version as
       reference (#10)
 - [x] Versioned protocol conformance tests shared between server (pytest) and SDK (vitest) —
