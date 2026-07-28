@@ -93,7 +93,7 @@ class SolverContext:
             content_type = (
                 mimetypes.guess_type(name)[0]
                 or {"vtk": "model/vnd.vtk", "vtu": "model/vnd.vtu"}.get(
-                    name.rsplit(".", 1)[-1], "application/octet-stream"
+                    name.rsplit(".", 1)[-1].lower(), "application/octet-stream"
                 )
             )
         self._artifacts.append({"name": name, "content_type": content_type})

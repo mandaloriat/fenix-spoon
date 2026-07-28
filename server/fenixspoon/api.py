@@ -74,7 +74,8 @@ def job_result(job_id: str, request: Request) -> dict[str, Any]:
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
     if job.status in ("failed", "cancelled"):
-        raise HTTPException(status_code=409, detail=f"job {job.status}: {job.error or ''}".strip())
+        detail = f"job {job.status}" + (f": {job.error}" if job.error else "")
+        raise HTTPException(status_code=409, detail=detail)
     if job.status != "done" or job.result is None:
         raise HTTPException(status_code=409, detail=f"job not finished (status: {job.status})")
     return {
