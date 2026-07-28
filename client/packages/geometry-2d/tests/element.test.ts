@@ -276,6 +276,92 @@ describe('<fs-geometry-2d>', () => {
     expect(element.canUndo()).toBe(false);
   });
 
+  it('re-clamps points and drops history when bounds shrink', () => {
+    const element = mount({ bounds: '0,0,10,10' });
+    element.controlPoints = [
+      [1, 1],
+      [9, 1],
+      [5, 9],
+    ];
+    key(handles(element)[0]!, { key: 'ArrowRight' }); // give it some history
+    expect(element.canUndo()).toBe(true);
+
+    element.setAttribute('bounds', '0,0,2,2');
+
+    // Points that were valid under the old bounds must not survive as invalid ones.
+    for (const [x, y] of element.controlPoints) {
+      expect(x).toBeGreaterThan(0);
+      expect(x).toBeLessThan(2);
+      expect(y).toBeGreaterThan(0);
+      expect(y).toBeLessThan(2);
+    }
+    expect(() => element.value).not.toThrow();
+    // Old snapshots would resurrect out-of-bounds points, so they are discarded.
+    expect(element.canUndo()).toBe(false);
+    expect(element.canRedo()).toBe(false);
+  });
+
+  it('ignores an invalid bounds attribute rather than accepting it', () => {
+    const element = mount({ bounds: '0,0,1,1' });
+    element.setAttribute('bounds', '1,1,0,0'); // inverted
+    expect(element.bounds).toEqual([0, 0, 1, 1]);
+  });
+
+  it('keeps redo when a click starts and ends without moving', () => {
+    const element = mount({ bounds: '0,0,1,1' });
+    element.controlPoints = [
+      [0.2, 0.2],
+      [0.8, 0.2],
+      [0.5, 0.8],
+    ];
+    key(handles(element)[0]!, { key: 'ArrowRight' });
+    element.undo();
+    expect(element.canRedo()).toBe(true);
+
+    // A pointerdown that never moves is not an edit, so it must not discard redo.
+    const handle = handles(element)[0]!;
+    const svg = element.shadowRoot!.querySelector('svg')!;
+    handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
+    svg.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
+    expect(element.canRedo()).toBe(true);
+  });
+
+  it('discards redo once a drag actually moves a point', () => {
+    const element = mount({ bounds: '0,0,1,1' });
+    element.controlPoints = [
+      [0.2, 0.2],
+      [0.8, 0.2],
+      [0.5, 0.8],
+    ];
+    key(handles(element)[0]!, { key: 'ArrowRight' });
+    element.undo();
+    expect(element.canRedo()).toBe(true);
+
+    const handle = handles(element)[0]!;
+    const svg = element.shadowRoot!.querySelector('svg')!;
+    handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
+    svg.dispatchEvent(
+      new PointerEvent('pointermove', { bubbles: true, pointerId: 1, clientX: 10, clientY: 5 }),
+    );
+    svg.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
+    expect(element.canRedo()).toBe(false);
+  });
+
+  it('labels handles as buttons carrying their position', () => {
+    const element = mount({ bounds: '0,0,1,1' });
+    element.controlPoints = [
+      [0.2, 0.2],
+      [0.8, 0.2],
+      [0.5, 0.8],
+    ];
+    const handle = handles(element)[0]!;
+    // `slider` would promise aria-valuenow/min/max and is one-dimensional; a control
+    // point moves in two, so the position lives in the label instead.
+    expect(handle.getAttribute('role')).toBe('button');
+    expect(handle.getAttribute('aria-label')).toContain('x 0.200');
+    expect(handle.getAttribute('aria-label')).toContain('y 0.200');
+  });
+
   it('ignores edits when readonly', () => {
     const element = mount({ bounds: '0,0,1,1', readonly: '' });
     element.setAttribute('readonly', '');

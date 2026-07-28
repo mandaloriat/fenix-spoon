@@ -24,8 +24,15 @@ npm install @fenix-spoon/geometry-2d
 ```
 
 It is a custom element, so it drops into React, Vue, Svelte or plain HTML unchanged. Importing
-the package registers `<fs-geometry-2d>`; import from `@fenix-spoon/geometry-2d/dist/element.js`
-instead if you want to register it under a different tag, or not at all.
+the package registers `<fs-geometry-2d>`. To control registration — a different tag name, or
+none at all — import the `element` subpath, which exports the class and the registration
+helper without running it:
+
+```ts
+import { GeometryEditorElement, defineGeometryEditor } from '@fenix-spoon/geometry-2d/element';
+
+defineGeometryEditor('my-profile-editor');
+```
 
 ## Why SVG rather than canvas
 

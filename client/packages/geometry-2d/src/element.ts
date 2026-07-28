@@ -215,8 +215,15 @@ export class GeometryEditorElement extends HTMLElement {
     switch (name) {
       case 'bounds': {
         const parts = (value ?? '').split(',').map(Number);
-        if (parts.length === 4 && parts.every(Number.isFinite)) {
+        if (parts.length === 4 && parts.every(Number.isFinite) && parts[2]! > parts[0]!
+            && parts[3]! > parts[1]!) {
           this.#bounds = parts as [number, number, number, number];
+          // Points outside the new bounds would make `.value` fail protocol validation,
+          // and history snapshots taken under the old bounds could resurrect them — so
+          // re-clamp what we have and drop the history rather than keep it invalid.
+          this.#points = this.#points.map((p) => this.#clamp(p));
+          this.#undo = [];
+          this.#redo = [];
         }
         break;
       }
@@ -324,11 +331,16 @@ export class GeometryEditorElement extends HTMLElement {
       handle.dataset.index = String(index);
       if (!this.#readonly) {
         handle.setAttribute('tabindex', '0');
-        handle.setAttribute('role', 'slider');
+        // Not `slider`: that role promises aria-valuenow/min/max, and it is
+        // one-dimensional — a control point moves in two. `button` matches what the
+        // element actually is (an activatable thing), and the position lives in the
+        // label, which is what a screen reader reads out anyway.
+        handle.setAttribute('role', 'button');
         handle.setAttribute(
           'aria-label',
           `Control point ${index + 1} of ${this.#points.length}, ` +
-            `x ${point[0].toFixed(3)}, y ${point[1].toFixed(3)}`,
+            `x ${point[0].toFixed(3)}, y ${point[1].toFixed(3)}. ` +
+            'Arrow keys move, Enter inserts, Delete removes.',
         );
         handle.addEventListener('pointerdown', this.#onPointerDown);
         handle.addEventListener('keydown', this.#onHandleKeyDown);
@@ -378,10 +390,11 @@ export class GeometryEditorElement extends HTMLElement {
     event.preventDefault();
     this.#dragging = index;
     this.#dragMoved = false;
-    // Snapshot before the drag so one drag is one undo step.
+    // Snapshot before the drag so one drag is one undo step. The redo stack is *not*
+    // cleared here: a click that never moves is not an edit, and wiping redo on
+    // pointerdown would silently discard it before we know whether an edit happened.
     this.#undo.push({ points: this.#points.map((p) => [...p] as Point) });
     if (this.#undo.length > HISTORY_LIMIT) this.#undo.shift();
-    this.#redo = [];
     target.classList.add('dragging');
     target.focus?.();
     this.#svg.setPointerCapture?.(event.pointerId);
@@ -391,6 +404,7 @@ export class GeometryEditorElement extends HTMLElement {
     if (this.#dragging === null) return;
     const position = this.#svgPoint(event);
     if (!position) return;
+    if (!this.#dragMoved) this.#redo = []; // the drag is now a real edit
     this.#dragMoved = true;
     this.#points[this.#dragging] = this.#clamp(this.#fromPx(position));
     this.#render();

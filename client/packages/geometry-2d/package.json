@@ -10,6 +10,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./element": {
+      "types": "./dist/element.d.ts",
+      "default": "./dist/element.js"
+    },
+    "./spline": {
+      "types": "./dist/spline.d.ts",
+      "default": "./dist/spline.js"
     }
   },
   "files": [
