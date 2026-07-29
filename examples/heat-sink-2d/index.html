@@ -137,25 +137,45 @@ function stepFor(spec) {
   return span <= 5 ? 0.01 : span <= 200 ? 0.5 : 1;
 }
 
+// `default` is optional in JSON Schema — a required parameter simply has none. Nothing may
+// invent one, because every fabricated value is submitted as if the user had chosen it and
+// silently overrides whatever the server would have applied. Measured, with the defaults
+// stripped from this solver's schema: sliders took the midpoint of their bounds and sent
+// `resolution: 264`, `h: 5001`, `iterations: 20005`; blank number boxes read back as `0`,
+// which tripped `report_every`'s `minimum: 1` and 422'd the job; and `write_vtk` quietly
+// turned itself off. Plausible-looking invented numbers are worse than a loud failure.
+//
+// So a control with no default renders *unset*, and `read()` returns undefined for it. The
+// key is then omitted from the request, the server applies its own default, and a genuinely
+// required parameter fails with a message naming it instead of solving the wrong problem.
 function buildControl(name, spec) {
   const value = spec.default;
+  const unset = value === undefined;
 
   if (Array.isArray(spec.enum)) {
     const select = document.createElement('select');
-    select.replaceChildren(...spec.enum.map((v) => new Option(v, v, v === value, v === value)));
-    return { input: select, read: () => select.value };
+    const options = spec.enum.map((v) => new Option(v, v, v === value, v === value));
+    // A blank first entry is the only way a <select> can represent "not chosen".
+    if (unset) options.unshift(new Option('(server default)', '', true, true));
+    select.replaceChildren(...options);
+    return { input: select, read: () => select.value || undefined };
   }
 
   if (spec.type === 'boolean') {
     const input = Object.assign(document.createElement('input'), { type: 'checkbox', checked: !!value });
-    return { input, read: () => input.checked };
+    // Neither checked nor unchecked: a checkbox's third state is exactly "no opinion".
+    // Clicking it clears indeterminate, so the user can still make a choice.
+    input.indeterminate = unset;
+    return { input, read: () => (input.indeterminate ? undefined : input.checked) };
   }
 
   if (spec.type === 'integer' || spec.type === 'number') {
     const step = stepFor(spec);
     const { min, max } = bounds(spec, step);
-    // A slider needs both ends; with only one bound a number box is the honest control.
-    const slider = min != null && max != null;
+    // A slider needs both ends *and* a starting value — it has no way to show "unset", it
+    // always sits somewhere. With no default, a number box that can genuinely be empty is
+    // the only honest control, whatever the bounds say.
+    const slider = !unset && min != null && max != null;
     const input = document.createElement('input');
     // Order matters, and getting it wrong is silent. A range input defaults to max=100, so
     // assigning `value` first clamps any larger default to 100 — `resolution` (160) and
@@ -165,16 +185,19 @@ function buildControl(name, spec) {
     input.step = String(step);
     if (min != null) input.min = String(min);
     if (max != null) input.max = String(max);
-    input.value = String(value);
+    if (!unset) input.value = String(value);
+    else input.placeholder = 'server default';
     const out = document.createElement('output');
     const show = () => { out.textContent = input.value; };
     show();
     input.addEventListener('input', show);
-    return { input, suffix: out, read: () => Number(input.value) };
+    // `Number('')` is 0, not NaN, so an empty box would otherwise submit a confident zero.
+    return { input, suffix: out, read: () => (input.value === '' ? undefined : Number(input.value)) };
   }
 
   const input = Object.assign(document.createElement('input'), { type: 'text', value: value ?? '' });
-  return { input, read: () => input.value };
+  if (unset) input.placeholder = 'server default';
+  return { input, read: () => input.value || undefined };
 }
 
 // name -> read(), so submitting is just mapping over this.
@@ -226,7 +249,12 @@ function renderParamsForm(schema) {
 }
 
 function readParams() {
-  return Object.fromEntries([...readers].map(([name, read]) => [name, read()]));
+  // Drop the unset ones rather than sending them. `JSON.stringify` would omit an `undefined`
+  // value anyway, but filtering here makes the intent explicit and survives anyone who later
+  // sends this object by some other route.
+  return Object.fromEntries(
+    [...readers].map(([name, read]) => [name, read()]).filter(([, v]) => v !== undefined),
+  );
 }
 
 /* ------------------------------------------------------------------ *

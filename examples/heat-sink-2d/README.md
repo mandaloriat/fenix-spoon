@@ -59,6 +59,16 @@ Three things in it are less obvious than they look:
   bounds get nudged inward by one step.
 - **An unknown property type gets a text box, not nothing.** Skipping it would make the
   parameter unreachable with no indication why.
+- **`default` is optional in JSON Schema, and a control must not invent one.** Every value a
+  form puts in the request is submitted as though the user chose it, so a fabricated one
+  silently overrides whatever the server would have applied. Measured with this solver's
+  defaults stripped: sliders sat at the midpoint of their bounds and sent `resolution: 264`,
+  `h: 5001`, `iterations: 20005`; empty number boxes read back as `0` (`Number('')` is zero,
+  not `NaN`), which tripped `report_every`'s `minimum: 1` and failed the job with a 422; and
+  `write_vtk` quietly turned itself off. A control with no default now renders unset — an
+  empty number box, a blank `(server default)` option, an indeterminate checkbox — and is
+  omitted from the request, so the server's own default applies and a genuinely required
+  parameter fails with a message naming it.
 
 Promoting this to a real `<fs-params>` widget is the obvious follow-up; it is kept in the page
 for now so it can be read top to bottom.
