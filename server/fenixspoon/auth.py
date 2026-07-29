@@ -22,65 +22,20 @@ Non-browser clients should keep using the header, which is accepted on both tran
 import hmac
 import logging
 import os
-from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException, Request, WebSocket
 
+from .core.identity import (  # noqa: F401  (re-exported: these were always importable here)
+    ANONYMOUS,
+    Principal,
+    Quotas,
+    QuotaUsage,
+    check_quotas,
+    hour_ago,
+    parse_api_keys,
+)
+
 log = logging.getLogger(__name__)
-
-ANONYMOUS = "anonymous"
-
-
-@dataclass(frozen=True)
-class Quotas:
-    """Per-principal limits. ``0`` means unlimited, which is every default."""
-
-    concurrent_jobs: int = 0
-    jobs_per_hour: int = 0
-    artifact_bytes: int = 0
-
-    @classmethod
-    def from_env(cls) -> "Quotas":
-        return cls(
-            concurrent_jobs=int(os.environ.get("FENIXSPOON_MAX_CONCURRENT_JOBS", "0")),
-            jobs_per_hour=int(os.environ.get("FENIXSPOON_MAX_JOBS_PER_HOUR", "0")),
-            artifact_bytes=int(os.environ.get("FENIXSPOON_MAX_ARTIFACT_BYTES", "0")),
-        )
-
-
-@dataclass(frozen=True)
-class Principal:
-    """Who is asking. ``id`` is what job ownership and quotas are keyed on."""
-
-    id: str
-    quotas: Quotas
-
-
-def parse_api_keys(raw: str) -> dict[str, str]:
-    """``"alice:sk-a,bob:sk-b"`` → ``{"sk-a": "alice", "sk-b": "bob"}``.
-
-    Keyed by secret because that is the lookup direction. A bare entry without a colon
-    is its own principal name, so ``FENIXSPOON_API_KEYS=sk-shared`` works for one-off
-    deployments that do not care who is who.
-    """
-    keys: dict[str, str] = {}
-    for entry in raw.split(","):
-        entry = entry.strip()
-        if not entry:
-            continue
-        # Test the separator, not the secret: for "alice:" the secret is empty and the
-        # bare-entry branch would otherwise turn the typo into a working key "alice:".
-        name, separator, secret = entry.partition(":")
-        if not separator:
-            name = secret = entry
-        name, secret = name.strip(), secret.strip()
-        if not secret:
-            raise ValueError(f"empty API key for principal {name!r} in FENIXSPOON_API_KEYS")
-        if not name:
-            raise ValueError("empty principal name in FENIXSPOON_API_KEYS")
-        keys[secret] = name
-    return keys
 
 
 class Authenticator:
@@ -156,51 +111,6 @@ def principal_from_websocket(websocket: WebSocket) -> Principal | None:
         return auth.principal(presented_key(websocket.headers, websocket.query_params))
     except HTTPException:
         return None
-
-
-@dataclass
-class QuotaUsage:
-    """What a principal is currently using, for the error message as much as the check."""
-
-    concurrent_jobs: int
-    jobs_last_hour: int
-    artifact_bytes: int
-
-
-def check_quotas(principal: Principal, usage: QuotaUsage) -> None:
-    """Raise 429 if accepting one more job would put ``principal`` over a limit."""
-    quotas = principal.quotas
-    if quotas.concurrent_jobs and usage.concurrent_jobs >= quotas.concurrent_jobs:
-        raise HTTPException(
-            status_code=429,
-            detail=(
-                f"{usage.concurrent_jobs} of your jobs are already running, at this "
-                f"server's limit of {quotas.concurrent_jobs}. Wait for one to finish "
-                "or cancel it."
-            ),
-        )
-    if quotas.jobs_per_hour and usage.jobs_last_hour >= quotas.jobs_per_hour:
-        raise HTTPException(
-            status_code=429,
-            detail=(
-                f"you have submitted {usage.jobs_last_hour} jobs in the last hour, at "
-                f"this server's limit of {quotas.jobs_per_hour}."
-            ),
-            headers={"Retry-After": "3600"},
-        )
-    if quotas.artifact_bytes and usage.artifact_bytes >= quotas.artifact_bytes:
-        raise HTTPException(
-            status_code=429,
-            detail=(
-                f"your stored artifacts total {usage.artifact_bytes:,} bytes, at this "
-                f"server's limit of {quotas.artifact_bytes:,}. Old jobs are removed "
-                "after the retention period, or you can wait for the sweep."
-            ),
-        )
-
-
-def hour_ago() -> datetime:
-    return datetime.now(UTC) - timedelta(hours=1)
 
 
 def cors_origins(auth_required: bool) -> list[str]:

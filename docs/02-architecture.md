@@ -29,7 +29,7 @@ flowchart TB
     API --> JOBS --> REG --> adapters
 ```
 
-## Where this is going (M2.5, planned)
+## Where this is going (M2.5)
 
 The browser is an important client, not the only one. A machine that has FEniCSx and local agents
 should be able to use Fenix Spoon as a structured interface to its own compute environment,
@@ -54,23 +54,22 @@ flowchart TB
     adapters2 --> CORE --> ENG
 ```
 
-Half of that line already exists and was not built for this: `ExecutionBackend`, `EventBus`,
-`JobStore` and `Principal` are exactly the seams a second caller needs, and they were pulled out
-of the API layer so solves could cross a process boundary. What is still route-shaped is the
-*request* side — solver lookup, geometry-kind checking, params validation, budget and quota
-checks, artifact URLs, error mapping — which lives in `api.py` as `HTTPException`s and cannot be
-reached from anywhere else. The milestone that finishes the job is
-[M2.5](03-roadmap.md#m25-local-automation-and-agent-interface); the design specification is the
-[local agent interface](07-local-agent-interface.md). Nothing in it is implemented yet. The
-properties that layer is required to have:
+**The core now exists** (#42). `fenixspoon/core/` holds the capability catalog, the job
+operations, identity and quotas; `api.py` is an adapter that reads a request, calls one core
+method, and shapes the reply. The transports beside it — JSON-RPC, CLI, MCP — are not built yet,
+but the layer they attach to is. The properties it has, and must keep:
 
-- **Transport-neutral core.** Capability catalog, workspace, object store, job service, result
-  query service and study service are plain Python objects with typed inputs and outputs. They
-  raise domain errors, not `HTTPException`, and they never build URLs.
-- **HTTP is an adapter, not the domain.** `api.py` becomes a mapping from routes to core calls
-  and from domain errors to status codes. The `/api/v1` contract does not change; what changes is
-  that JSON-RPC, CLI, Python and MCP can reach the same operations without going through FastAPI
-  or a network port.
+- **Transport-neutral core** *(done)*. `FenixSpoonCore` raises domain errors, never
+  `HTTPException`, and never builds a URL — `result()` returns artifact *paths*, and the HTTP
+  adapter turns those into routes it serves. Guarded by a test that imports the core in a
+  subprocess and fails if FastAPI appears in `sys.modules`: the first version of this leaked
+  through `core.service` → `auth` → `fastapi`, which no other test could have caught, since they
+  all run with FastAPI already loaded. The fix split the identity *rule* (`core/identity.py`)
+  from its HTTP *binding* (`auth.py`).
+- **HTTP is an adapter, not the domain** *(done)*. Fourteen `raise HTTPException` sites became
+  one table in `http_errors.py`, so the status codes the wire protocol promises are visible in a
+  single place. Routes are now two or three lines each, and the `/api/v1` contract is unchanged —
+  the existing API suite passed the refactor without edits, which was the acceptance criterion.
 - **A local interface.** JSON-RPC 2.0 over stdio is the base local transport: the agent starts the
   process as a child, no port is opened, and long solves stay asynchronous jobs on the same
   execution backend. MCP is a thin adapter on top of the same operations, never a dependency of
@@ -89,6 +88,9 @@ properties that layer is required to have:
 - **No arbitrary execution.** The local interface exposes engineering operations and domain
   objects. It does not accept Python, UFL, shell commands or container images — see the security
   posture below.
+
+Everything above without *(done)* is still to build; the workspace, result-query and study
+services (#44, #46, #48) go into `core/` beside what is there now.
 
 ## Design principles
 
