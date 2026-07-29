@@ -77,7 +77,26 @@ def type_name(annotation) -> str:
     return str(annotation).replace("typing.", "")
 
 
-def render_model(model: type[BaseModel], title: str | None = None) -> str:
+def discriminated_members(annotated) -> tuple[set[type], str]:
+    """Members of a discriminated union, and the field that tags them.
+
+    Derived rather than hard-coded, so adding a geometry kind cannot leave the reference
+    describing its discriminator as optional.
+    """
+    args = get_args(annotated)
+    if not args:
+        return set(), ""
+    union, *metadata = args
+    for meta in metadata:
+        discriminator = getattr(meta, "discriminator", None)
+        if discriminator:
+            return set(get_args(union)), str(discriminator)
+    return set(), ""
+
+
+def render_model(
+    model: type[BaseModel], title: str | None = None, wire_required: str = ""
+) -> str:
     lines = [f"## `{title or model.__name__}`", ""]
     doc = (model.__doc__ or "").strip()
     if doc:
@@ -87,8 +106,14 @@ def render_model(model: type[BaseModel], title: str | None = None) -> str:
 
     lines += ["| Field | Type | Required | Default | Description |", "|---|---|---|---|---|"]
     for name, field in model.model_fields.items():
-        required = "yes" if field.is_required() else "no"
-        default = "" if field.is_required() else f"`{field.default!r}`"
+        # `is_required()` answers a Python question — can you construct this object
+        # without the argument — and for a discriminated union member that is the wrong
+        # question. Pydantic needs the tag present in the JSON to pick the member at all
+        # (`union_tag_not_found`), so the model's default can never apply on the wire and
+        # showing it would be describing a payload the server rejects.
+        tag_field = name == wire_required
+        required = "yes" if field.is_required() or tag_field else "no"
+        default = "" if field.is_required() or tag_field else f"`{field.default!r}`"
         if default == "`PydanticUndefined`":
             default = ""
         description = (field.description or "").replace("|", "\\|").replace("\n", " ")
@@ -103,7 +128,7 @@ def render_model(model: type[BaseModel], title: str | None = None) -> str:
 def build() -> str:
     # Imported here so `--help` works without the package installed.
     from fenixspoon.api import JobCreated, JobList, JobRequest
-    from fenixspoon.geometry import Domain2D, Polygon2D, Region2D, Regions2D
+    from fenixspoon.geometry import Domain2D, Geometry, Polygon2D, Region2D, Regions2D
     from fenixspoon.jobs import JobStatus
     from fenixspoon.protocol import (
         ArtifactRef,
@@ -123,10 +148,18 @@ def build() -> str:
         ("Discovery", [SolverInfo]),
     ]
 
+    # `Polygon2D` also has a defaulted `type`, but it is a plain nested model rather than
+    # a union member, so there its default really does apply. Only the tagged members are
+    # promoted.
+    members, discriminator = discriminated_members(Geometry)
+
     parts = [HEADER]
     for heading, models in sections:
         parts.append(f"\n# {heading}\n")
-        parts.extend(render_model(model) for model in models)
+        parts.extend(
+            render_model(model, wire_required=discriminator if model in members else "")
+            for model in models
+        )
     return "\n".join(parts).rstrip() + "\n"
 
 

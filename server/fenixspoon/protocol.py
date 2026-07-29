@@ -88,7 +88,7 @@ class ArtifactRef(BaseModel):
 
 
 class ResultEnvelope(BaseModel):
-    """What `GET /jobs/{id}/result` returns once a job is `done`."""
+    """What `GET /api/v1/jobs/{id}/result` returns once a job is `done`."""
 
     job_id: str = Field(description="The job this result belongs to.")
     kind: Literal["grid2d", "mesh2d"] = Field(

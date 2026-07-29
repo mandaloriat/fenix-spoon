@@ -37,7 +37,7 @@ CurrentPrincipal = Annotated[Principal, Depends(principal_from_request)]
 
 
 class JobRequest(BaseModel):
-    """What `POST /jobs` accepts."""
+    """What `POST /api/v1/jobs` accepts."""
 
     solver: str = Field(description="A `name` from `GET /solvers`.")
     geometry: Geometry = Field(
@@ -49,7 +49,7 @@ class JobRequest(BaseModel):
 
 
 class JobCreated(BaseModel):
-    """The 202 from `POST /jobs`. The job has been accepted, not finished."""
+    """The 202 from `POST /api/v1/jobs`. The job has been accepted, not finished."""
 
     job_id: str = Field(description="Use it to poll status, stream events and fetch the result.")
     status: str = Field(description="Always `queued` at this point.")

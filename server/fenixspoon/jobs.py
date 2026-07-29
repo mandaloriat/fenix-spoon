@@ -168,7 +168,7 @@ class Job:
 
 
 class JobStatus(BaseModel):
-    """A job's current state, as `GET /jobs/{id}` returns it."""
+    """A job's current state, as `GET /api/v1/jobs/{id}` returns it."""
 
     job_id: str = Field(description="Identifier assigned at submit.")
     solver: str = Field(description="Which solver is running it.")

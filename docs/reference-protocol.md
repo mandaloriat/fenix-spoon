@@ -32,7 +32,7 @@ A rectangular computational domain with a polygonal obstacle (hole) inside it.
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `type` | `'domain2d'` | no | `'domain2d'` |  |
+| `type` | `'domain2d'` | yes |  |  |
 | `bounds` | `tuple[float, float, float, float]` | no | `(-2.0, -1.5, 4.0, 1.5)` | Outer rectangle as [xmin, ymin, xmax, ymax], in metres. |
 | `obstacle` | `Polygon2D` | yes |  | The hole cut out of the domain. Its points must lie strictly inside `bounds`. |
 
@@ -52,7 +52,7 @@ A rectangular domain filled with material regions over a background material.
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `type` | `'regions2d'` | no | `'regions2d'` |  |
+| `type` | `'regions2d'` | yes |  |  |
 | `bounds` | `tuple[float, float, float, float]` | no | `(-0.1, -0.1, 0.1, 0.1)` | Outer rectangle as [xmin, ymin, xmax, ymax], in metres. |
 | `regions` | `list[Region2D]` | yes |  | Material regions in painter's order: where two nest, the later one wins. Partially overlapping outlines are rejected. |
 | `background` | `dict[str, float]` | no | `{}` | Material outside every region (typically air) |
@@ -62,7 +62,7 @@ A rectangular domain filled with material regions over a background material.
 
 ## `JobRequest`
 
-What `POST /jobs` accepts.
+What `POST /api/v1/jobs` accepts.
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
@@ -72,7 +72,7 @@ What `POST /jobs` accepts.
 
 ## `JobCreated`
 
-The 202 from `POST /jobs`. The job has been accepted, not finished.
+The 202 from `POST /api/v1/jobs`. The job has been accepted, not finished.
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
@@ -81,7 +81,7 @@ The 202 from `POST /jobs`. The job has been accepted, not finished.
 
 ## `JobStatus`
 
-A job's current state, as `GET /jobs/{id}` returns it.
+A job's current state, as `GET /api/v1/jobs/{id}` returns it.
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
@@ -133,7 +133,7 @@ A job's lifecycle transition. The stream ends after a terminal one.
 
 ## `ResultEnvelope`
 
-What `GET /jobs/{id}/result` returns once a job is `done`.
+What `GET /api/v1/jobs/{id}/result` returns once a job is `done`.
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|

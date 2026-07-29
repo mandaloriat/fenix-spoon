@@ -46,6 +46,34 @@ def test_discriminator_values_are_shown_not_just_the_word_literal():
     assert "`'regions2d'`" in page
 
 
+def _row(page: str, model: str, field: str) -> str:
+    section = page.split(f"## `{model}`")[1].split("## `")[0]
+    return next(line for line in section.splitlines() if line.startswith(f"| `{field}` |"))
+
+
+def test_union_discriminators_are_required_on_the_wire():
+    """`is_required()` answers a Python question; the table answers a JSON one.
+
+    Pydantic needs the tag present to pick a union member at all — omitting it fails
+    with `union_tag_not_found` however the member declares its default. Showing that
+    default would document a payload the server rejects.
+    """
+    page = build()
+    for model in ("Domain2D", "Regions2D"):
+        row = _row(page, model, "type")
+        assert "| yes |" in row, row
+        assert "polygon2d" not in row and "| `'" not in row.split("| yes |")[1], row
+
+
+def test_a_defaulted_type_outside_a_union_stays_optional():
+    """The counter-case, so the fix above cannot become "mark every `type` required".
+
+    `Polygon2D` is nested, not tagged: its default genuinely applies on the wire.
+    """
+    row = _row(build(), "Polygon2D", "type")
+    assert "| no |" in row and "`'polygon2d'`" in row
+
+
 @pytest.mark.parametrize(
     ("annotation", "expected"),
     [
