@@ -222,3 +222,41 @@ def test_status_lookup_walks_the_mro():
 
     assert status_for(PickierJobNotFound()) == 404
     assert status_for(errors.CoreError("something new")) == FALLBACK_STATUS
+
+
+def test_the_error_handler_re_raises_what_it_cannot_render():
+    """It must not paper over a wrong registration, and must not rely on `assert`.
+
+    `assert` is stripped under `python -O`, so a handler bound to the wrong type would have
+    failed on `.detail` with an `AttributeError` saying nothing about the real problem.
+    Re-raising gives the framework's default handler the original exception instead.
+    """
+    from fenixspoon.http_errors import core_error_handler
+
+    boom = ValueError("not a domain error")
+    with pytest.raises(ValueError, match="not a domain error"):
+        asyncio.run(core_error_handler(None, boom))
+
+    # …and it still renders a real one.
+    response = asyncio.run(core_error_handler(None, errors.JobNotFound()))
+    assert response.status_code == 404
+
+
+def test_the_handler_narrowing_survives_optimised_python():
+    """The specific regression: `python -O` removes asserts, so the check must not be one."""
+    code = (
+        "import asyncio, sys;"
+        "from fenixspoon.http_errors import core_error_handler;"
+        "\ntry:\n"
+        "    asyncio.run(core_error_handler(None, ValueError('x')))\n"
+        "except ValueError:\n"
+        "    sys.exit(0)\n"
+        "sys.exit(1)\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-O", "-c", code],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, f"under -O the handler did not re-raise\n{result.stderr}"

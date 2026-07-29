@@ -48,7 +48,16 @@ async def core_error_handler(request: Request, exc: Exception) -> JSONResponse:
     `Retry-After` only when the core said waiting helps.
     """
     del request
-    assert isinstance(exc, errors.CoreError)
+    # Not an `assert`: those vanish under `python -O`, and the next line would then fail
+    # with `AttributeError: 'ValueError' object has no attribute 'detail'` — a traceback
+    # that says nothing about the real problem, which is a handler registered for a type it
+    # cannot render. Re-raising hands the exception back to the framework's default
+    # handler, so it becomes an honest 500 with the original traceback intact.
+    #
+    # The signature says `Exception` because that is what FastAPI's handler protocol
+    # requires; this is where it gets narrowed.
+    if not isinstance(exc, errors.CoreError):
+        raise exc
     detail = exc.errors if isinstance(exc, errors.InvalidParams) else exc.detail
     headers = {}
     if isinstance(exc, errors.QuotaExceeded) and exc.retry_after is not None:
