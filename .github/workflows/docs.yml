@@ -43,6 +43,13 @@ jobs:
         run: mkdocs build
 
       - uses: actions/configure-pages@v5
+        with:
+          # Turn Pages on if it is not already, rather than failing with "Get Pages site
+          # failed" until somebody flips a switch in Settings. The first run on main did
+          # exactly that: it regenerated the reference and built the site, then fell over
+          # at the last step. A workflow that needs an undocumented manual prerequisite is
+          # a workflow that is broken for whoever clones this next.
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
