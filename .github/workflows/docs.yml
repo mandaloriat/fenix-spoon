@@ -42,14 +42,17 @@ jobs:
       - name: Build
         run: mkdocs build
 
+      # Requires Pages to be enabled with "GitHub Actions" as the source, once, by hand:
+      # Settings → Pages → Build and deployment → Source. Until then this step fails with
+      # "Get Pages site failed".
+      #
+      # The action's `enablement: true` looks like it removes that step and does not:
+      # "This option requires a token other than `GITHUB_TOKEN` to be provided" — a PAT
+      # with `repo` scope, or a GitHub App with `administration:write`. Trading a one-time
+      # click for a long-lived credential in repository secrets is a bad deal, so the
+      # click stays, documented in CONTRIBUTING.md rather than in a pull request nobody
+      # will find later.
       - uses: actions/configure-pages@v5
-        with:
-          # Turn Pages on if it is not already, rather than failing with "Get Pages site
-          # failed" until somebody flips a switch in Settings. The first run on main did
-          # exactly that: it regenerated the reference and built the site, then fell over
-          # at the last step. A workflow that needs an undocumented manual prerequisite is
-          # a workflow that is broken for whoever clones this next.
-          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site

@@ -36,6 +36,19 @@ docker compose up --build
 - New solvers implement the `Solver` protocol in `server/fenixspoon/solvers/base.py` and register
   themselves in the registry; see `mock_laplace.py` for a template.
 
+## Repository setup that CI cannot do itself
+
+**GitHub Pages, once per fork.** The `Docs` workflow deploys the site on every merge to
+`main`, but it cannot turn Pages on: `actions/configure-pages` will only do that given a
+token other than `GITHUB_TOKEN` — a PAT with `repo` scope, or a GitHub App with
+`administration:write`. A long-lived credential in repository secrets is a worse trade
+than one click, so the click stays:
+
+> Settings → Pages → Build and deployment → Source → **GitHub Actions**
+
+Until that is set, the workflow builds the site correctly and then fails on the last step
+with `Get Pages site failed`. Everything else in CI is self-contained.
+
 ## Code style
 
 - Python: `ruff` (configured in `server/pyproject.toml`), type hints on public APIs.
