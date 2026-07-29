@@ -312,6 +312,7 @@ describe('vector fields and glyphs', () => {
       vector_fields: { velocity: Array(25).fill([vx, vy]) as [number, number][] },
       mask: Array(25).fill(0),
     },
+    stats: {},
     artifacts: [],
   });
 
@@ -349,6 +350,7 @@ describe('vector fields and glyphs', () => {
         vector_fields: { velocity: Array(1600).fill([1, 0]) as [number, number][] },
         mask: Array(1600).fill(0),
       },
+      stats: {},
       artifacts: [],
     };
     const coarse = glyphSamples(uniform(1, 0), 'velocity', 4);
