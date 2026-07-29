@@ -14,7 +14,7 @@
  * `checkProtocolCompatibility` is the check; the shared fixture corpus asserts this
  * constant matches the server's `PROTOCOL_VERSION`, so the two cannot drift apart.
  */
-export const PROTOCOL_VERSION = '1.0';
+export const PROTOCOL_VERSION = '1.1';
 
 /** What `GET /api/v1/version` returns. The one endpoint that never requires a key. */
 export interface ProtocolVersion {
@@ -214,6 +214,8 @@ export interface Grid2DData {
   /** `[ny, nx]` */
   shape: [number, number];
   fields: Record<string, number[]>;
+  /** Name to one `[x, y]` pair per grid point, indexed like `fields`. Added in protocol 1.1. */
+  vector_fields?: Record<string, [number, number][]>;
   /** 1 inside the obstacle. */
   mask: number[];
 }
@@ -224,6 +226,8 @@ export interface Mesh2DData {
   points: [number, number][];
   triangles: [number, number, number][];
   point_fields: Record<string, number[]>;
+  /** Name to one `[x, y]` pair per node, in `points` order. Added in protocol 1.1. */
+  point_vector_fields?: Record<string, [number, number][]>;
   cell_fields?: Record<string, number[]>;
 }
 

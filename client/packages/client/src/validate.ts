@@ -243,6 +243,39 @@ function requireNumberArray(value: unknown, what: string): number[] {
   return value.map((entry, i) => requireNumber(entry, `${what}[${i}]`));
 }
 
+
+/**
+ * Vector fields: a map of name to `[x, y]` pairs, one per sample. Mirrors the server's
+ * check exactly — the shared corpus asserts both sides reject the same payloads, and this
+ * function exists because updating the *types* alone left the SDK accepting three fixtures
+ * the server refuses.
+ */
+function requireVectorFields(
+  value: unknown,
+  expected: number,
+  label: string,
+): Record<string, [number, number][]> {
+  if (value === undefined) return {};
+  if (!isRecord(value)) fail(`${label} must be an object`);
+  const out: Record<string, [number, number][]> = {};
+  for (const [name, vectors] of Object.entries(value)) {
+    if (!Array.isArray(vectors)) fail(`${label} ${name} must be an array`);
+    if (vectors.length !== expected) {
+      fail(`${label} ${name} has ${vectors.length} entries, expected ${expected}`);
+    }
+    out[name] = vectors.map((vector, i) => {
+      if (!Array.isArray(vector) || vector.length !== 2) {
+        fail(`${label} ${name}[${i}] must be [x, y]`);
+      }
+      return [
+        requireNumber(vector[0], `${label} ${name}[${i}] x`),
+        requireNumber(vector[1], `${label} ${name}[${i}] y`),
+      ] as [number, number];
+    });
+  }
+  return out;
+}
+
 export function validateJobResult(value: unknown): JobResult {
   if (!isRecord(value)) fail('result must be an object');
   if (typeof value.job_id !== 'string') fail('result needs a job_id');
@@ -266,6 +299,7 @@ export function validateJobResult(value: unknown): JobResult {
       }
       fields[name] = parsed;
     }
+    const vectorFields = requireVectorFields(data.vector_fields, expected, 'vector field');
     const mask = requireNumberArray(data.mask, 'mask');
     if (mask.length !== expected) {
       fail(`mask has ${mask.length} entries, expected ny*nx=${expected}`);
@@ -273,7 +307,7 @@ export function validateJobResult(value: unknown): JobResult {
     return {
       job_id: value.job_id,
       kind: 'grid2d',
-      data: { bounds, shape: [ny, nx], fields, mask },
+      data: { bounds, shape: [ny, nx], fields, vector_fields: vectorFields, mask },
       stats,
       artifacts,
     };
@@ -312,10 +346,21 @@ export function validateJobResult(value: unknown): JobResult {
       }
       pointFields[name] = parsed;
     }
+    const pointVectorFields = requireVectorFields(
+      data.point_vector_fields,
+      points.length,
+      'point vector field',
+    );
     return {
       job_id: value.job_id,
       kind: 'mesh2d',
-      data: { bounds, points, triangles, point_fields: pointFields },
+      data: {
+        bounds,
+        points,
+        triangles,
+        point_fields: pointFields,
+        point_vector_fields: pointVectorFields,
+      },
       stats,
       artifacts,
     };

@@ -152,6 +152,7 @@ Fields sampled on a regular grid. Arrays are row-major, y increasing upward.
 | `bounds` | `tuple[float, float, float, float]` | yes |  | Area the grid covers, as [xmin, ymin, xmax, ymax]. |
 | `shape` | `tuple[int, int]` | yes |  | Grid size as [ny, nx], rows before columns. |
 | `fields` | `dict[str, list[float]]` | yes |  | Field name to ny*nx values, indexed `[iy * nx + ix]`. |
+| `vector_fields` | `dict[str, list[tuple[float, float]]]` | no | `{}` | Field name to ny*nx `[x, y]` pairs, indexed like `fields`. Separate from `fields` so a vector is one named thing rather than two conventions apart. |
 | `mask` | `list[int]` | yes |  | One entry per grid point, 1 inside the obstacle. Same indexing as a field. |
 
 ## `Mesh2DData`
@@ -164,6 +165,7 @@ An unstructured triangle mesh with one value per node per field.
 | `points` | `list[tuple[float, float]]` | yes |  | Node coordinates as [x, y] pairs. |
 | `triangles` | `list[tuple[int, int, int]]` | yes |  | Each triangle as three indices into `points`. |
 | `point_fields` | `dict[str, list[float]]` | yes |  | Field name to one value per node, in `points` order. |
+| `point_vector_fields` | `dict[str, list[tuple[float, float]]]` | no | `{}` | Field name to one `[x, y]` pair per node, in `points` order. |
 
 ## `ArtifactRef`
 

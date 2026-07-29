@@ -28,7 +28,7 @@ from .solvers.base import ProgressEvent  # noqa: F401  (re-export for consumers)
 #: repeating it on each event and result would be per-message overhead for something one
 #: call answers — see `GET /api/v1/version`, and `docs/04-wire-protocol.md` for the
 #: reasoning and the bump procedure.
-PROTOCOL_VERSION = "1.0"
+PROTOCOL_VERSION = "1.1"
 
 
 class ProtocolVersion(BaseModel):
@@ -78,6 +78,13 @@ class Grid2DData(BaseModel):
     fields: dict[str, list[float]] = Field(
         description="Field name to ny*nx values, indexed `[iy * nx + ix]`."
     )
+    vector_fields: dict[str, list[tuple[float, float]]] = Field(
+        default={},
+        description=(
+            "Field name to ny*nx `[x, y]` pairs, indexed like `fields`. Separate from "
+            "`fields` so a vector is one named thing rather than two conventions apart."
+        ),
+    )
     mask: list[int] = Field(
         description="One entry per grid point, 1 inside the obstacle. Same indexing as a field."
     )
@@ -91,6 +98,9 @@ class Grid2DData(BaseModel):
         for name, values in self.fields.items():
             if len(values) != n:
                 raise ValueError(f"field {name!r} has {len(values)} entries, expected {n}")
+        for name, vectors in self.vector_fields.items():
+            if len(vectors) != n:
+                raise ValueError(f"vector field {name!r} has {len(vectors)} entries, expected {n}")
         return self
 
 
@@ -107,6 +117,10 @@ class Mesh2DData(BaseModel):
     point_fields: dict[str, list[float]] = Field(
         description="Field name to one value per node, in `points` order."
     )
+    point_vector_fields: dict[str, list[tuple[float, float]]] = Field(
+        default={},
+        description="Field name to one `[x, y]` pair per node, in `points` order.",
+    )
 
     @model_validator(mode="after")
     def _check(self) -> "Mesh2DData":
@@ -117,6 +131,11 @@ class Mesh2DData(BaseModel):
         for name, values in self.point_fields.items():
             if len(values) != n:
                 raise ValueError(f"point field {name!r} has {len(values)} entries, expected {n}")
+        for name, vectors in self.point_vector_fields.items():
+            if len(vectors) != n:
+                raise ValueError(
+                    f"point vector field {name!r} has {len(vectors)} entries, expected {n}"
+                )
         return self
 
 

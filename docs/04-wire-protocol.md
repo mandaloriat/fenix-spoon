@@ -8,13 +8,13 @@ path version.
 
 ## Versioning
 
-The protocol is versioned `MAJOR.MINOR`, currently **1.0**, and a server reports what it
+The protocol is versioned `MAJOR.MINOR`, currently **1.1**, and a server reports what it
 speaks:
 
 ### `GET /api/v1/version`
 
 ```json
-{ "protocol": "1.0", "implementation": "0.1.0", "api_path": "/api/v1" }
+{ "protocol": "1.1", "implementation": "0.1.0", "api_path": "/api/v1" }
 ```
 
 **The one route that never requires an API key.** A client needs to know whether it can talk
@@ -314,6 +314,38 @@ ran. Two consequences a client should expect:
 - Timestamps are RFC 3339 UTC.
 - CORS is open in dev images; production deployments configure allowed origins explicitly (M3).
 
+## Vector fields
+
+*Added in protocol 1.1 — additive, so it shares `/api/v1` with 1.0 and a 1.0 client is
+unaffected.*
+
+Both result kinds carry vectors in a map of their own, indexed exactly like the scalar one:
+
+| kind | scalars | vectors |
+|---|---|---|
+| `grid2d` | `fields` — name → `ny*nx` numbers | `vector_fields` — name → `ny*nx` `[x, y]` pairs |
+| `mesh2d` | `point_fields` — name → one per node | `point_vector_fields` — name → one `[x, y]` per node |
+
+```json
+"vector_fields": { "velocity": [[1.0, 0.0], [0.9, 0.1], "..."] }
+```
+
+**Why a separate map rather than `u` and `v` in `fields`.** Two scalars named by convention
+are not a vector: a viewer cannot know they pair, `result.query` cannot ask for "maximum
+speed" over them, and every solver would invent its own naming. One named entry makes the
+vector a thing the protocol knows about.
+
+**Magnitude is shipped as well, not instead.** `mock.laplace2d` sends both `velocity` and
+`speed`. That is redundant on the wire and deliberate: the viewer colours by magnitude on
+every frame, and recomputing it over ~170k points in JavaScript to save one field is the
+wrong trade. A client that wants only direction can ignore `speed`.
+
+**Drawing them.** `<fs-viewer vectors="velocity">` overlays arrow glyphs on whatever scalar
+is being coloured. Glyph density comes from the `glyphs` attribute — roughly how many arrows
+span the width — and **not** from the data's resolution: one arrow per grid point is
+unreadable at 512×341 and sparse at 16×16, and the same field would look like a different
+physical situation at two mesh sizes.
+
 ## Planned extensions to the domain contract
 
 Not implemented; recorded here so the models grow compatibly instead of being duplicated in a
@@ -337,8 +369,6 @@ second protocol. Each is driven by
   requestable levels, so a caller can ask for a summary without the arrays. The HTTP binding is
   likely a query parameter on the result endpoint; it must not change the default payload the
   browser SDK already relies on.
-- **A protocol version on the wire**, per the note at the top of this page
-  ([#58](https://github.com/mandaloriat/fenix-spoon/issues/58)).
 
 Until these land, the result envelope is exactly what is documented above: `job_id`, `kind`,
 `data`, `stats`, `artifacts`.

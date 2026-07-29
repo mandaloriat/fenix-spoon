@@ -188,3 +188,109 @@ export function isoLevels(min: number, max: number, count: number): number[] {
   for (let i = 1; i <= count; i += 1) levels.push(min + ((max - min) * i) / (count + 1));
   return levels;
 }
+
+// --------------------------------------------------------------- vector fields
+
+export interface Glyph {
+  /** Arrow tail, in domain coordinates. */
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  /** Magnitude, so a caller can colour or scale by it without recomputing. */
+  magnitude: number;
+}
+
+export function resultVectorFieldNames(result: JobResult): string[] {
+  const map =
+    result.kind === 'grid2d' ? result.data.vector_fields : result.data.point_vector_fields;
+  return Object.keys(map ?? {});
+}
+
+export function resultVectorValues(
+  result: JobResult,
+  field: string,
+): [number, number][] | undefined {
+  const map =
+    result.kind === 'grid2d' ? result.data.vector_fields : result.data.point_vector_fields;
+  return map?.[field];
+}
+
+/** Domain coordinates of sample `i`, for either result kind. */
+function samplePoint(result: JobResult, index: number): [number, number] {
+  if (result.kind !== 'grid2d') return result.data.points[index]!;
+  const [ny, nx] = result.data.shape;
+  const [xmin, ymin, xmax, ymax] = result.data.bounds;
+  const iy = Math.floor(index / nx);
+  const ix = index % nx;
+  // nx or ny of 1 would divide by zero; a degenerate axis collapses to its minimum.
+  return [
+    nx > 1 ? xmin + ((xmax - xmin) * ix) / (nx - 1) : xmin,
+    ny > 1 ? ymin + ((ymax - ymin) * iy) / (ny - 1) : ymin,
+  ];
+}
+
+/**
+ * Resample a vector field onto a coarse lattice for drawing.
+ *
+ * **Glyph density must not follow the data's resolution.** One arrow per grid point is
+ * unreadable at 512x341 and sparse at 16x16, and the same field would look like a
+ * different physical situation at two mesh sizes. So the lattice is chosen from
+ * `across` — roughly how many arrows to span the domain's width — and every sample
+ * falling in a lattice cell is averaged into one arrow at that cell's centre.
+ *
+ * Averaging rather than nearest-sample is deliberate: on an unstructured mesh, node
+ * density varies, and picking one node per cell would let a locally refined region
+ * dominate the direction shown. Masked samples are excluded entirely, so arrows stop at
+ * a hole's edge instead of being dragged toward zero by the interior.
+ */
+export function glyphSamples(result: JobResult, field: string, across = 24): Glyph[] {
+  const vectors = resultVectorValues(result, field);
+  if (!vectors || across < 1) return [];
+  const [xmin, ymin, xmax, ymax] = resultBounds(result);
+  const width = xmax - xmin;
+  const height = ymax - ymin;
+  if (!(width > 0) || !(height > 0)) return [];
+
+  const cell = width / across;
+  const rows = Math.max(1, Math.round(height / cell));
+  const mask = resultMask(result);
+
+  // Sum vectors per lattice cell, then divide — one pass, no per-cell searching.
+  const sumX = new Float64Array(across * rows);
+  const sumY = new Float64Array(across * rows);
+  const count = new Int32Array(across * rows);
+
+  for (let i = 0; i < vectors.length; i += 1) {
+    if (mask?.[i]) continue;
+    const [vx, vy] = vectors[i]!;
+    const [x, y] = samplePoint(result, i);
+    const cx = Math.min(across - 1, Math.max(0, Math.floor(((x - xmin) / width) * across)));
+    const cy = Math.min(rows - 1, Math.max(0, Math.floor(((y - ymin) / height) * rows)));
+    const slot = cy * across + cx;
+    sumX[slot]! += vx;
+    sumY[slot]! += vy;
+    count[slot]! += 1;
+  }
+
+  const glyphs: Glyph[] = [];
+  for (let cy = 0; cy < rows; cy += 1) {
+    for (let cx = 0; cx < across; cx += 1) {
+      const slot = cy * across + cx;
+      const n = count[slot]!;
+      if (!n) continue; // no samples here — a hole, or outside an irregular mesh
+      const vx = sumX[slot]! / n;
+      const vy = sumY[slot]! / n;
+      const magnitude = Math.hypot(vx, vy);
+      if (!(magnitude > 0)) continue; // a zero vector has no direction to draw
+      glyphs.push({
+        x: xmin + ((cx + 0.5) / across) * width,
+        y: ymin + ((cy + 0.5) / rows) * height,
+        vx,
+        vy,
+        magnitude,
+      });
+    }
+  }
+  return glyphs;
+}
