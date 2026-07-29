@@ -1,33 +1,35 @@
-"""REST + WebSocket routes implementing the wire protocol (docs/04-wire-protocol.md)."""
+"""REST + WebSocket routes implementing the wire protocol (docs/04-wire-protocol.md).
 
-import json
+An **adapter** over :class:`~fenixspoon.core.FenixSpoonCore` (roadmap M2.5, issue #42): each
+route reads the request, calls one core method, and shapes the reply. Validation,
+authorization and the job lifecycle live in the core, and failures come back as domain
+errors that :mod:`fenixspoon.http_errors` turns into status codes — so there is no
+`raise HTTPException` here for anything a non-HTTP caller could also hit.
+
+Two things stay in this file on purpose, because they *are* HTTP: the `401` challenge with
+`WWW-Authenticate` (an authentication scheme, not an application rule) and every `url` in a
+payload, since only this transport can say where its own routes live.
+"""
+
 from typing import Annotated, Any
 
 from fastapi import (
     APIRouter,
     Depends,
-    HTTPException,
     Query,
     Request,
     WebSocket,
     WebSocketDisconnect,
 )
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 
 from . import __version__
-from .auth import (
-    Principal,
-    QuotaUsage,
-    check_quotas,
-    hour_ago,
-    principal_from_request,
-    principal_from_websocket,
-)
+from .auth import Principal, principal_from_request, principal_from_websocket
+from .core import CoreError, FenixSpoonCore
 from .geometry import Geometry
-from .jobs import JobManager, JobStatus
+from .jobs import JobStatus
 from .protocol import PROTOCOL_VERSION, ProtocolVersion
-from .solvers import available_solvers, get_solver
 from .solvers.base import SolverInfo
 
 router = APIRouter(prefix="/api/v1")
@@ -66,8 +68,8 @@ class JobList(BaseModel):
     offset: int = Field(description="Offset that was applied.")
 
 
-def _manager(request: Request) -> JobManager:
-    return request.app.state.jobs
+def _core(request: Request) -> FenixSpoonCore:
+    return request.app.state.core
 
 
 @router.get("/version", response_model=ProtocolVersion)
@@ -87,10 +89,11 @@ def protocol_version() -> ProtocolVersion:
 
 @router.get("/solvers", response_model=list[SolverInfo])
 def list_solvers(
+    request: Request,
     principal: CurrentPrincipal,  # noqa: ARG001 - present to gate the route
 ) -> list[SolverInfo]:
     """Which solvers this server has. Behind auth: it describes what the server can run."""
-    return available_solvers()
+    return _core(request).capabilities()
 
 
 @router.post("/jobs", response_model=JobCreated, status_code=202)
@@ -99,42 +102,7 @@ async def create_job(
     request: Request,
     principal: CurrentPrincipal,
 ) -> JobCreated:
-    solver_cls = get_solver(req.solver)
-    if solver_cls is None:
-        raise HTTPException(status_code=404, detail=f"unknown solver: {req.solver!r}")
-    if req.geometry.type not in solver_cls.geometry_types:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"solver {req.solver!r} accepts geometry types "
-                f"{solver_cls.geometry_types}, got {req.geometry.type!r}"
-            ),
-        )
-    try:
-        params = solver_cls.Params.model_validate(req.params)
-    except ValidationError as exc:
-        raise HTTPException(status_code=422, detail=json.loads(exc.json())) from exc
-
-    # Refuse work that would exhaust the box *before* accepting it: a clear rejection
-    # beats a job killed halfway through by the wall-clock timeout.
-    manager = _manager(request)
-    estimate = solver_cls.estimate_cells(req.geometry, params)
-    if estimate is not None and manager.max_cells and estimate > manager.max_cells:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"job would use about {estimate:,} cells, over this server's limit of "
-                f"{manager.max_cells:,}. Lower the resolution or mesh size, or raise "
-                "FENIXSPOON_MAX_CELLS."
-            ),
-        )
-
-    # Quotas last: an over-budget or malformed request should hear about *that* rather
-    # than about a quota it also happens to be over.
-    active, recent, artifact_bytes = manager.store.usage(principal.id, hour_ago())
-    check_quotas(principal, QuotaUsage(active, recent, artifact_bytes))
-
-    job = await manager.submit(solver_cls, req.geometry, params, owner=principal.id)
+    job = await _core(request).submit(req.solver, req.geometry, req.params, principal)
     return JobCreated(job_id=job.id, status=job.status)
 
 
@@ -146,7 +114,7 @@ def list_jobs(
     offset: int = Query(default=0, ge=0),
 ) -> JobList:
     """This principal's job history, newest first. Survives restarts when persisted."""
-    jobs, total = _manager(request).list_jobs(limit=limit, offset=offset, owner=principal.id)
+    jobs, total = _core(request).history(principal, limit=limit, offset=offset)
     return JobList(
         jobs=[JobStatus.from_job(job) for job in jobs],
         total=total,
@@ -161,10 +129,7 @@ def job_status(
     request: Request,
     principal: CurrentPrincipal,
 ) -> JobStatus:
-    job = _manager(request).get(job_id, owner=principal.id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="job not found")
-    return JobStatus.from_job(job)
+    return JobStatus.from_job(_core(request).job(job_id, principal))
 
 
 @router.post("/jobs/{job_id}/cancel", response_model=JobStatus, status_code=202)
@@ -173,14 +138,7 @@ async def cancel_job(
     request: Request,
     principal: CurrentPrincipal,
 ) -> JobStatus:
-    job = _manager(request).get(job_id, owner=principal.id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="job not found")
-    if not await _manager(request).cancel(job):
-        raise HTTPException(
-            status_code=409, detail=f"job already finished (status: {job.status})"
-        )
-    return JobStatus.from_job(job)
+    return JobStatus.from_job(await _core(request).cancel(job_id, principal))
 
 
 @router.get("/jobs/{job_id}/result")
@@ -189,22 +147,22 @@ def job_result(
     request: Request,
     principal: CurrentPrincipal,
 ) -> dict[str, Any]:
-    job = _manager(request).get(job_id, owner=principal.id, with_result=True)
-    if job is None:
-        raise HTTPException(status_code=404, detail="job not found")
-    if job.status in ("failed", "cancelled"):
-        detail = f"job {job.status}" + (f": {job.error}" if job.error else "")
-        raise HTTPException(status_code=409, detail=detail)
-    if job.status != "done" or job.result is None:
-        raise HTTPException(status_code=409, detail=f"job not finished (status: {job.status})")
+    result = _core(request).result(job_id, principal)
     return {
-        "job_id": job.id,
-        "kind": job.result.kind,
-        "data": job.result.data,
-        "stats": job.result.stats,
+        "job_id": result.job_id,
+        "kind": result.kind,
+        "data": result.data,
+        "stats": result.stats,
+        # The one place a URL is built. The core hands back a path; only this transport
+        # knows that the file is reachable at a route it serves.
         "artifacts": [
-            {**entry, "url": f"/api/v1/jobs/{job.id}/artifacts/{entry['name']}"}
-            for entry in job.artifacts
+            {
+                "name": a.name,
+                "content_type": a.content_type,
+                "size": a.size,
+                "url": f"{router.prefix}/jobs/{result.job_id}/artifacts/{a.name}",
+            }
+            for a in result.artifacts
         ],
     }
 
@@ -216,25 +174,15 @@ def job_artifact(
     request: Request,
     principal: CurrentPrincipal,
 ) -> FileResponse:
-    job = _manager(request).get(job_id, owner=principal.id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="job not found")
-    # Only names registered by the solver are servable — this, plus the bare-filename
-    # rule enforced at registration, prevents any path traversal.
-    entry = next((a for a in job.artifacts if a["name"] == name), None)
-    if entry is None or job.artifact_dir is None:
-        raise HTTPException(status_code=404, detail="artifact not found")
-    path = job.artifact_dir / name
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="artifact file missing")
-    return FileResponse(path, media_type=entry["content_type"], filename=name)
+    artifact = _core(request).artifact(job_id, name, principal)
+    return FileResponse(artifact.path, media_type=artifact.content_type, filename=name)
 
 
 @router.websocket("/jobs/{job_id}/events")
 async def job_events(websocket: WebSocket, job_id: str) -> None:
     """Progress stream. Authenticate with ``?api_key=`` — a browser cannot put a header
     on a WebSocket handshake — or with the usual header from a non-browser client."""
-    manager: JobManager = websocket.app.state.jobs
+    core: FenixSpoonCore = websocket.app.state.core
     principal = principal_from_websocket(websocket)
     if principal is None:
         # Closing *before* accept refuses the handshake itself: the ASGI server turns
@@ -243,14 +191,18 @@ async def job_events(websocket: WebSocket, job_id: str) -> None:
         # apparent success, which is worse than an outright refusal.
         await websocket.close(code=1008)
         return
-    job = manager.get(job_id, owner=principal.id)
-    await websocket.accept()
-    if job is None:
-        await websocket.send_json({"type": "error", "error": "job not found"})
+    # A WebSocket cannot use the HTTP error handler — the handshake is already decided by
+    # the time this runs — so it reports the domain error in-band instead.
+    try:
+        job = core.job(job_id, principal)
+    except CoreError as exc:
+        await websocket.accept()
+        await websocket.send_json({"type": "error", "error": exc.detail})
         await websocket.close(code=4404)
         return
+    await websocket.accept()
     try:
-        async for event in manager.subscribe(job):
+        async for event in core.events(job):
             await websocket.send_json(event)
         await websocket.close()
     except WebSocketDisconnect:

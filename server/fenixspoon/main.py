@@ -15,6 +15,8 @@ from fastapi.staticfiles import StaticFiles
 from . import __version__
 from .api import router
 from .auth import Authenticator, cors_origins
+from .core import CoreError, FenixSpoonCore
+from .http_errors import core_error_handler
 from .jobs import PURGE_INTERVAL_SECONDS, JobManager
 
 log = logging.getLogger(__name__)
@@ -108,6 +110,12 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     app.state.jobs = JobManager()
+    # The routes talk to the core, not to the manager. `app.state.jobs` stays because the
+    # lifespan owns retention and reconciliation, which are process concerns rather than
+    # request ones.
+    app.state.core = FenixSpoonCore(app.state.jobs)
+    # One handler for every domain error, so status codes live in one table.
+    app.add_exception_handler(CoreError, core_error_handler)
     # Replaceable wholesale: an OIDC deployment assigns its own object here.
     app.state.auth = Authenticator()
     if app.state.auth.required:

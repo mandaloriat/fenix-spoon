@@ -83,13 +83,13 @@ duplicate — the `JobStore`, the `ExecutionBackend`, the `EventBus` and the `Pr
 the seams a second caller needs. The design specification is
 [docs/07-local-agent-interface.md](07-local-agent-interface.md), which this milestone implements.
 
-- [ ] **Transport-neutral application core.** M3 already lifted execution, persistence and event
-      delivery out of the API layer. What is still route-shaped is the *request* logic: solver
-      lookup, geometry-kind checking, params validation, cell-budget and quota checks, artifact-URL
-      construction and error mapping all live in `api.py` as `HTTPException`s. Extract that into an
-      application layer — capability catalog, workspace service, object store, job service, result
-      query service, study service — and make `api.py` an adapter over it, with the HTTP behavior,
-      paths and status codes unchanged. (#42)
+- [x] **Transport-neutral application core.** `fenixspoon/core/` holds the capability catalog,
+      job operations, identity and quotas; `api.py` is an adapter, and the fourteen
+      `HTTPException`s became one status table. The `/api/v1` contract is unchanged — the existing
+      API suite passed without edits. A test imports the core in a subprocess and fails if FastAPI
+      is reachable, which caught a real leak (`core.service` → `auth` → `fastapi`) that no
+      in-process test could see. The workspace, result-query and study services land with #44,
+      #46 and #48. (#42)
 - [ ] **Progressive capability discovery.** `environment.inspect`, `capability.list`,
       `capability.describe` with section selection (geometries, params, metrics, artifacts, cost
       estimation, sweep / gradient / MPI support, environment requirements). Full JSON Schemas are
