@@ -13,7 +13,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from .auth import (
     Principal,
@@ -37,23 +37,31 @@ CurrentPrincipal = Annotated[Principal, Depends(principal_from_request)]
 
 
 class JobRequest(BaseModel):
-    solver: str
-    geometry: Geometry
-    params: dict[str, Any] = {}
+    """What `POST /jobs` accepts."""
+
+    solver: str = Field(description="A `name` from `GET /solvers`.")
+    geometry: Geometry = Field(
+        description="Geometry to solve on; its `type` must be one the solver accepts."
+    )
+    params: dict[str, Any] = Field(
+        default={}, description="Solver parameters, validated against that solver's schema."
+    )
 
 
 class JobCreated(BaseModel):
-    job_id: str
-    status: str
+    """The 202 from `POST /jobs`. The job has been accepted, not finished."""
+
+    job_id: str = Field(description="Use it to poll status, stream events and fetch the result.")
+    status: str = Field(description="Always `queued` at this point.")
 
 
 class JobList(BaseModel):
     """One page of job history, newest first."""
 
-    jobs: list[JobStatus]
-    total: int
-    limit: int
-    offset: int
+    jobs: list[JobStatus] = Field(description="This page of jobs, newest first.")
+    total: int = Field(description="Total stored jobs for this principal, not just this page.")
+    limit: int = Field(description="Page size that was applied.")
+    offset: int = Field(description="Offset that was applied.")
 
 
 def _manager(request: Request) -> JobManager:

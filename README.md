@@ -4,6 +4,11 @@
 
 **A Swiss-army toolkit for building web-based engineering applications powered by [FEniCSx](https://fenicsproject.org/).**
 
+📖 **[Documentation](https://mandaloriat.github.io/fenix-spoon/)** — get started by
+[embedding the widgets](https://mandaloriat.github.io/fenix-spoon/start-embed-widgets/),
+[deploying the server](https://mandaloriat.github.io/fenix-spoon/start-deploy-server/), or
+[writing a solver adapter](https://mandaloriat.github.io/fenix-spoon/start-write-a-solver/).
+
 Fenix Spoon is an open-source (MIT) toolkit that packages everything you need to put a finite-element
 solver behind a web page: a ready-to-deploy simulation server, a clean HTTP/WebSocket protocol for
 submitting jobs and streaming results, and embeddable browser widgets for geometry input and field
@@ -153,12 +158,16 @@ serialization formats), is in [`docs/02-architecture.md`](docs/02-architecture.m
 
 ## Documentation
 
+The [documentation site](https://mandaloriat.github.io/fenix-spoon/) is built from these
+files; `make docs-serve` previews it locally.
+
 1. [State of the art](docs/01-state-of-the-art.md) — what exists today, and the gap this project fills
 2. [Architecture](docs/02-architecture.md) — components, choices, trade-offs
 3. [Roadmap](docs/03-roadmap.md) — milestones M0 → M5
 4. [Wire protocol](docs/04-wire-protocol.md) — the JSON contract between client and server
 5. [Deployment](docs/05-deployment.md) — API keys, quotas, resource limits, CORS, reverse proxy
 6. [Load test](docs/06-load-test.md) — the tested envelope, and how to reproduce it
+7. [Protocol reference](docs/reference-protocol.md) — every model, generated from the code that validates it
 
 ## Contributing
 

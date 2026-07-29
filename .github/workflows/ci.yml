@@ -66,6 +66,27 @@ jobs:
       - name: Test (FEniCSx adapter)
         run: pytest server/tests -m fenics -v
 
+  # The protocol reference is generated from the pydantic models and committed. This job
+  # is what makes "the docs cannot drift from the code" true rather than aspirational:
+  # change a field without regenerating and the build goes red, with the diff to prove it.
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install -e "./server[docs]"
+      - name: Protocol reference is up to date with the models
+        run: |
+          python server/tools/generate_protocol_reference.py --check \
+            || { git --no-pager diff -- docs/reference-protocol.md; exit 1; }
+      # `strict: true` in mkdocs.yml, so a broken internal link fails here. A docs site
+      # whose links 404 is worse than no docs site.
+      - name: Build the site
+        run: mkdocs build
+
   # The distributed job backend. These tests skip themselves without a reachable Redis,
   # so without this job the entire worker path — pub/sub, the queue, the worker entry
   # point — would be covered by tests that never run.
