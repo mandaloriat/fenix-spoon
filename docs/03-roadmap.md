@@ -78,7 +78,13 @@ Goal: multi-user deployments are safe and boring.
       fails instead of hanging its client. *Postgres and S3 are left to the interface: an
       untested backend for a database nobody has run against would be pretend infrastructure.
       A Postgres store implements the same six methods.*
-- [ ] Auth hooks (API keys / OIDC middleware), per-user quotas, wall-clock and memory limits (#14)
+- [x] Auth hooks (API keys / OIDC middleware), per-user quotas, wall-clock and memory limits (#14)
+      — API keys with anonymous still the dev default, per-principal job isolation and quotas
+      (concurrent, per hour, artifact bytes), CORS that stops defaulting to `*` once keys are
+      configured, and [a deployment recipe](05-deployment.md). *No per-job memory ceiling: solves
+      run on threads, and a memory limit is a property of a process. The cell budget is the proxy
+      and the container limit is the backstop until the worker backend (#12) makes each solve its
+      own process.*
 - [ ] Helm chart / compose profiles for API + workers + Redis (#15)
 - [ ] Load test: N concurrent solves with progress streaming (#16)
 

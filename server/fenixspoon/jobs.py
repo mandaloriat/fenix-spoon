@@ -88,6 +88,7 @@ class Job:
     id: str
     solver_name: str
     status: str = "queued"  # queued | running | done | failed | cancelled
+    owner: str = "anonymous"
     error: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     finished_at: datetime | None = None
@@ -103,6 +104,7 @@ class Job:
             id=self.id,
             solver=self.solver_name,
             status=self.status,
+            owner=self.owner,
             error=self.error,
             created_at=self.created_at,
             finished_at=self.finished_at,
@@ -117,6 +119,7 @@ class Job:
             id=record.id,
             solver_name=record.solver,
             status=record.status,
+            owner=record.owner,
             error=record.error,
             created_at=record.created_at,
             finished_at=record.finished_at,
@@ -163,31 +166,42 @@ class JobManager:
         self.job_ttl = job_ttl if job_ttl is not None else _default_ttl()
         self.store = store if store is not None else _default_store(self._data_dir)
 
-    def get(self, job_id: str) -> Job | None:
-        """A live job if this process owns one, otherwise whatever the store remembers."""
-        job = self._jobs.get(job_id)
-        if job is not None:
-            return job
-        record = self.store.get(job_id)
-        if record is None:
-            return None
-        return Job.from_record(record, self._data_dir / record.id)
+    def get(self, job_id: str, owner: str | None = None) -> Job | None:
+        """A live job if this process owns one, otherwise whatever the store remembers.
 
-    def list_jobs(self, limit: int = 50, offset: int = 0) -> tuple[list[Job], int]:
+        ``owner`` scopes the lookup to one principal: a job belonging to somebody else
+        comes back as None, so the caller answers 404. Not 403 — telling a stranger that
+        a job id exists is itself a leak, and the ids are only 48 bits of randomness.
+        """
+        job = self._jobs.get(job_id)
+        if job is None:
+            record = self.store.get(job_id)
+            job = Job.from_record(record, self._data_dir / record.id) if record else None
+        if job is None or (owner is not None and job.owner != owner):
+            return None
+        return job
+
+    def list_jobs(
+        self, limit: int = 50, offset: int = 0, owner: str | None = None
+    ) -> tuple[list[Job], int]:
         """Newest-first page of job history, plus the total for pagination."""
-        records = self.store.list_jobs(limit=limit, offset=offset)
+        records = self.store.list_jobs(limit=limit, offset=offset, owner=owner)
         jobs = []
         for record in records:
             # A live job is authoritative: its status may have moved on since the last
             # write, and it carries the in-memory result.
             live = self._jobs.get(record.id)
             jobs.append(live or Job.from_record(record, self._data_dir / record.id))
-        return jobs, self.store.count()
+        return jobs, self.store.count(owner=owner)
 
     async def submit(
-        self, solver_cls: type[Solver], geometry: Domain2D, params: BaseModel
+        self,
+        solver_cls: type[Solver],
+        geometry: Domain2D,
+        params: BaseModel,
+        owner: str = "anonymous",
     ) -> Job:
-        job = Job(id=f"j-{uuid.uuid4().hex[:12]}", solver_name=solver_cls.name)
+        job = Job(id=f"j-{uuid.uuid4().hex[:12]}", solver_name=solver_cls.name, owner=owner)
         job.artifact_dir = self._data_dir / job.id
         self._jobs[job.id] = job
         self.store.put(job.to_record())

@@ -4,6 +4,27 @@ The contract between clients and a Fenix Spoon server. JSON everywhere; all endp
 `/api/v1`. The pydantic models in `server/fenixspoon/geometry.py` and `solvers/base.py` are the
 source of truth; this document is the human-readable view. Breaking changes bump the path version.
 
+## Authentication
+
+Optional and off by default: with no keys configured every caller is the principal
+`anonymous` and no header is needed. When a server sets `FENIXSPOON_API_KEYS`, every route
+requires a key:
+
+```
+Authorization: Bearer <key>          # or:  X-API-Key: <key>
+```
+
+Missing or wrong is `401` with `WWW-Authenticate: Bearer`. **The event-stream WebSocket takes
+the key as `?api_key=<key>` instead** — a browser cannot set headers on a WebSocket handshake.
+An unauthenticated stream is refused at the handshake, which reaches a browser as an HTTP `403`
+and an `onerror` rather than an open socket. The header still works there for non-browser
+clients.
+
+Jobs belong to the principal that created them. Another principal's job id is a `404` on every
+endpoint, not a `403`. Exceeding a quota (`concurrent jobs`, `jobs/hour`, `artifact bytes`) is a
+`429` with a prose `detail`, and `Retry-After` where a wait actually helps. See
+[deployment](05-deployment.md).
+
 ## Discovery
 
 ### `GET /api/v1/solvers`

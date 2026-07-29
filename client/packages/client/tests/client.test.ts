@@ -243,6 +243,51 @@ describe('FenixSpoonClient', () => {
     ]);
   });
 
+  it('sends the API key as a header on HTTP and a query param on the socket', async () => {
+    // Two transports, two mechanisms, because a browser cannot put a header on a
+    // WebSocket handshake. Both must carry the key or half the client is locked out.
+    let seenAuth: string | null = null;
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      seenAuth = new Headers(init?.headers).get('Authorization');
+      return new Response(JSON.stringify({ job_id: 'j-1', status: 'queued' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+    FakeSocket.instances.length = 0;
+    const client = new FenixSpoonClient('http://server', {
+      apiKey: 'sk-secret',
+      fetch: fetchImpl as unknown as typeof globalThis.fetch,
+      WebSocket: FakeSocket as unknown as typeof globalThis.WebSocket,
+    });
+
+    await client.status('j-1');
+    expect(seenAuth).toBe('Bearer sk-secret');
+
+    const controller = new AbortController();
+    const stream = client.events('j-1', { signal: controller.signal });
+    const pending = stream.next(); // an async generator opens nothing until pulled
+    await Promise.resolve();
+    expect(FakeSocket.instances.at(-1)?.url).toContain('api_key=sk-secret');
+    controller.abort();
+    await pending.catch(() => undefined);
+  });
+
+  it('does not overwrite an Authorization header the caller set explicitly', async () => {
+    let seenAuth: string | null = null;
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      seenAuth = new Headers(init?.headers).get('Authorization');
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+    const client = new FenixSpoonClient('http://server', {
+      apiKey: 'sk-secret',
+      fetchOptions: { headers: { Authorization: 'Bearer from-caller' } },
+      fetch: fetchImpl as unknown as typeof globalThis.fetch,
+    });
+    await client.status('j-1');
+    expect(seenAuth).toBe('Bearer from-caller');
+  });
+
   it('wait() throws JobFailedError carrying the server error', async () => {
     class Socket extends FakeSocket {
       script() {

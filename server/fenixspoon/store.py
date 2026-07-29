@@ -40,12 +40,17 @@ class JobRecord:
     id: str
     solver: str
     status: str
+    owner: str = "anonymous"
     error: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     finished_at: datetime | None = None
     result: SolverResult | None = None
     artifacts: list[dict[str, Any]] = field(default_factory=list)
     events: list[dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def artifact_bytes(self) -> int:
+        return sum(int(entry.get("size", 0)) for entry in self.artifacts)
 
 
 class JobStore(ABC):
@@ -64,17 +69,31 @@ class JobStore(ABC):
         """Load a job with its full event log, or None if it is unknown or purged."""
 
     @abstractmethod
-    def list_jobs(self, limit: int = 50, offset: int = 0) -> list[JobRecord]:
-        """Newest first, without event logs — this is for a history page, not replay."""
+    def list_jobs(
+        self, limit: int = 50, offset: int = 0, owner: str | None = None
+    ) -> list[JobRecord]:
+        """Newest first, without event logs — this is for a history page, not replay.
+
+        ``owner`` restricts the page to one principal; ``None`` spans every principal.
+        """
 
     @abstractmethod
-    def count(self) -> int:
-        """Total stored jobs, for pagination."""
+    def count(self, owner: str | None = None) -> int:
+        """Total stored jobs, for pagination. Scoped to ``owner`` when given."""
 
     @abstractmethod
     def purge_before(self, cutoff: datetime) -> list[str]:
         """Delete jobs created before ``cutoff``; return the ids removed so the caller
         can clean up their artifact directories."""
+
+    @abstractmethod
+    def usage(self, owner: str, since: datetime) -> tuple[int, int, int]:
+        """``(active jobs, jobs created since, artifact bytes)`` for one principal.
+
+        One method rather than three because quota enforcement needs all of it on every
+        submit, and a backend with a real query planner should answer it in one round
+        trip rather than three.
+        """
 
     def unfinished_ids(self) -> list[str]:
         """Jobs left ``queued``/``running`` — after a restart, nothing is solving them."""
@@ -99,6 +118,7 @@ class MemoryJobStore(JobStore):
             id=record.id,
             solver=record.solver,
             status=record.status,
+            owner=record.owner,
             error=record.error,
             created_at=record.created_at,
             finished_at=record.finished_at,
@@ -115,12 +135,17 @@ class MemoryJobStore(JobStore):
     def get(self, job_id: str) -> JobRecord | None:
         return self._records.get(job_id)
 
-    def list_jobs(self, limit: int = 50, offset: int = 0) -> list[JobRecord]:
-        ordered = sorted(self._records.values(), key=lambda r: r.created_at, reverse=True)
+    def list_jobs(
+        self, limit: int = 50, offset: int = 0, owner: str | None = None
+    ) -> list[JobRecord]:
+        matching = [r for r in self._records.values() if owner is None or r.owner == owner]
+        ordered = sorted(matching, key=lambda r: r.created_at, reverse=True)
         return ordered[offset : offset + limit]
 
-    def count(self) -> int:
-        return len(self._records)
+    def count(self, owner: str | None = None) -> int:
+        if owner is None:
+            return len(self._records)
+        return sum(1 for r in self._records.values() if r.owner == owner)
 
     def purge_before(self, cutoff: datetime) -> list[str]:
         doomed = [r.id for r in self._records.values() if r.created_at < cutoff]
@@ -128,26 +153,49 @@ class MemoryJobStore(JobStore):
             del self._records[job_id]
         return doomed
 
+    def usage(self, owner: str, since: datetime) -> tuple[int, int, int]:
+        mine = [r for r in self._records.values() if r.owner == owner]
+        active = sum(1 for r in mine if r.status in ("queued", "running"))
+        recent = sum(1 for r in mine if r.created_at >= since)
+        return active, recent, sum(r.artifact_bytes for r in mine)
 
-_SCHEMA = """
+
+# Opening a database runs these three in order: tables, then column migrations, then
+# indexes. The order is load-bearing — an index over a column that a migration is about
+# to add cannot be created before the migration runs.
+_TABLES = """
 CREATE TABLE IF NOT EXISTS jobs (
-    id          TEXT PRIMARY KEY,
-    solver      TEXT NOT NULL,
-    status      TEXT NOT NULL,
-    error       TEXT,
-    created_at  TEXT NOT NULL,
-    finished_at TEXT,
-    result_kind TEXT,
-    stats       TEXT,
-    artifacts   TEXT NOT NULL DEFAULT '[]'
+    id             TEXT PRIMARY KEY,
+    solver         TEXT NOT NULL,
+    status         TEXT NOT NULL,
+    error          TEXT,
+    created_at     TEXT NOT NULL,
+    finished_at    TEXT,
+    result_kind    TEXT,
+    stats          TEXT,
+    artifacts      TEXT NOT NULL DEFAULT '[]',
+    owner          TEXT NOT NULL DEFAULT 'anonymous',
+    artifact_bytes INTEGER NOT NULL DEFAULT 0
 );
-CREATE INDEX IF NOT EXISTS jobs_created_at ON jobs (created_at DESC);
 CREATE TABLE IF NOT EXISTS events (
     job_id  TEXT NOT NULL,
     seq     INTEGER NOT NULL,
     payload TEXT NOT NULL,
     PRIMARY KEY (job_id, seq)
 );
+"""
+
+# Columns added after a release. ``CREATE TABLE IF NOT EXISTS`` does nothing to a table
+# that already exists, so a database written by an older server needs them added
+# explicitly — otherwise the first query after an upgrade is an OperationalError.
+_MIGRATIONS = {
+    "owner": "ALTER TABLE jobs ADD COLUMN owner TEXT NOT NULL DEFAULT 'anonymous'",
+    "artifact_bytes": "ALTER TABLE jobs ADD COLUMN artifact_bytes INTEGER NOT NULL DEFAULT 0",
+}
+
+_INDEXES = """
+CREATE INDEX IF NOT EXISTS jobs_created_at ON jobs (created_at DESC);
+CREATE INDEX IF NOT EXISTS jobs_owner ON jobs (owner, created_at DESC);
 """
 
 
@@ -170,7 +218,12 @@ class SqliteJobStore(JobStore):
         self._db.row_factory = sqlite3.Row
         with self._lock:
             self._db.execute("PRAGMA journal_mode=WAL")
-            self._db.executescript(_SCHEMA)
+            self._db.executescript(_TABLES)
+            present = {row["name"] for row in self._db.execute("PRAGMA table_info(jobs)")}
+            for column, statement in _MIGRATIONS.items():
+                if column not in present:
+                    self._db.execute(statement)
+            self._db.executescript(_INDEXES)
             self._db.commit()
 
     def close(self) -> None:
@@ -188,12 +241,13 @@ class SqliteJobStore(JobStore):
         with self._lock:
             self._db.execute(
                 """INSERT INTO jobs (id, solver, status, error, created_at, finished_at,
-                                     result_kind, stats, artifacts)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                     result_kind, stats, artifacts, owner, artifact_bytes)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(id) DO UPDATE SET
                        status=excluded.status, error=excluded.error,
                        finished_at=excluded.finished_at, result_kind=excluded.result_kind,
-                       stats=excluded.stats, artifacts=excluded.artifacts""",
+                       stats=excluded.stats, artifacts=excluded.artifacts,
+                       artifact_bytes=excluded.artifact_bytes""",
                 (
                     record.id,
                     record.solver,
@@ -204,6 +258,8 @@ class SqliteJobStore(JobStore):
                     record.result.kind if record.result else None,
                     json.dumps(record.result.stats) if record.result else None,
                     json.dumps(record.artifacts),
+                    record.owner,
+                    record.artifact_bytes,
                 ),
             )
             self._db.commit()
@@ -236,6 +292,7 @@ class SqliteJobStore(JobStore):
             id=row["id"],
             solver=row["solver"],
             status=row["status"],
+            owner=row["owner"],
             error=row["error"],
             created_at=datetime.fromisoformat(row["created_at"]),
             finished_at=(
@@ -259,17 +316,23 @@ class SqliteJobStore(JobStore):
             ]
         return self._record(row, events)
 
-    def list_jobs(self, limit: int = 50, offset: int = 0) -> list[JobRecord]:
+    def list_jobs(
+        self, limit: int = 50, offset: int = 0, owner: str | None = None
+    ) -> list[JobRecord]:
+        where, params = ("WHERE owner = ?", [owner]) if owner is not None else ("", [])
         with self._lock:
             rows = self._db.execute(
-                "SELECT * FROM jobs ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
-                (limit, offset),
+                f"SELECT * FROM jobs {where} ORDER BY created_at DESC, id DESC "
+                "LIMIT ? OFFSET ?",
+                (*params, limit, offset),
             ).fetchall()
         return [self._record(row, []) for row in rows]
 
-    def count(self) -> int:
+    def count(self, owner: str | None = None) -> int:
+        where, params = ("WHERE owner = ?", [owner]) if owner is not None else ("", [])
         with self._lock:
-            return int(self._db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0])
+            row = self._db.execute(f"SELECT COUNT(*) FROM jobs {where}", params).fetchone()
+        return int(row[0])
 
     def purge_before(self, cutoff: datetime) -> list[str]:
         with self._lock:
@@ -283,6 +346,18 @@ class SqliteJobStore(JobStore):
                 self._db.execute(f"DELETE FROM jobs WHERE id IN ({marks})", doomed)
                 self._db.commit()
         return doomed
+
+    def usage(self, owner: str, since: datetime) -> tuple[int, int, int]:
+        with self._lock:
+            row = self._db.execute(
+                """SELECT
+                       COALESCE(SUM(status IN ('queued', 'running')), 0) AS active,
+                       COALESCE(SUM(created_at >= ?), 0)                AS recent,
+                       COALESCE(SUM(artifact_bytes), 0)                 AS bytes
+                   FROM jobs WHERE owner = ?""",
+                (since.isoformat(), owner),
+            ).fetchone()
+        return int(row["active"]), int(row["recent"]), int(row["bytes"])
 
     def unfinished_ids(self) -> list[str]:
         with self._lock:

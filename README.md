@@ -88,12 +88,19 @@ The server is configured from the environment; the defaults are meant for a lapt
 | `FENIXSPOON_JOB_TIMEOUT` | `600` | Wall-clock seconds a solve may run; `0` disables. Cooperative — the worker is asked to stop |
 | `FENIXSPOON_MAX_CELLS` | `2000000` | Cell budget for a single job; `0` disables. Checked at submit from the solver's own estimate, so an over-sized job is refused with an explanation instead of being killed halfway through |
 | `FENIXSPOON_JOB_TTL` | `604800` (7 days) | How long a finished job's record, result and artifacts are kept; `0` keeps them forever. Swept hourly and at startup |
+| `FENIXSPOON_API_KEYS` | unset (anonymous) | `"alice:secret,bob:secret"`. Set it and every route requires a key; each principal sees only its own jobs |
+| `FENIXSPOON_CORS_ORIGINS` | `*`, or nothing when keys are set | Comma-separated allowed origins. Same-origin pages (including these demos) never need it |
+| `FENIXSPOON_MAX_CONCURRENT_JOBS`<br>`FENIXSPOON_MAX_JOBS_PER_HOUR`<br>`FENIXSPOON_MAX_ARTIFACT_BYTES` | `0` (unlimited) | Per-principal quotas, refused at submit with a `429` |
 
 Every finished job reports what it actually cost in the result's `stats` (`cells`, `dofs`,
 `iterations`, `seconds` — whichever the adapter knows), which is what the caps should be set from.
 
 Job history survives restarts: `GET /api/v1/jobs` pages through it, and a job that was mid-solve
 when the process died comes back `failed` rather than hanging a client that polls it forever.
+
+Locking a server to a team is one block of environment variables — see
+[docs/05-deployment.md](docs/05-deployment.md), which also covers OIDC, reverse-proxy
+WebSocket settings, and why there is no per-job memory ceiling yet.
 
 ## Architecture at a glance
 
@@ -133,6 +140,7 @@ serialization formats), is in [`docs/02-architecture.md`](docs/02-architecture.m
 2. [Architecture](docs/02-architecture.md) — components, choices, trade-offs
 3. [Roadmap](docs/03-roadmap.md) — milestones M0 → M5
 4. [Wire protocol](docs/04-wire-protocol.md) — the JSON contract between client and server
+5. [Deployment](docs/05-deployment.md) — API keys, quotas, resource limits, CORS, reverse proxy
 
 ## Contributing
 

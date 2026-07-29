@@ -47,7 +47,15 @@ export class JobFailedError extends Error {
 }
 
 export interface ClientOptions {
-  /** Passed to every `fetch` — use it for auth headers or credentials. */
+  /**
+   * API key for a server that requires one. Sent as `Authorization: Bearer` on HTTP
+   * requests and as `?api_key=` on the event stream — a browser cannot put a header on
+   * a WebSocket handshake, so the query string is the only way a page can authenticate
+   * it. That places the key in a URL, where server logs may keep it: use per-user keys
+   * you can revoke, not one shared secret.
+   */
+  apiKey?: string;
+  /** Passed to every `fetch` — use it for extra headers or credentials. */
   fetchOptions?: RequestInit;
   /** Injectable for tests / non-browser runtimes. Defaults to global `fetch`. */
   fetch?: typeof globalThis.fetch;
@@ -104,6 +112,7 @@ export class FenixSpoonClient {
   private wsUrl(path: string): string {
     const absolute = new URL(this.url(path), globalThis.location?.href ?? 'http://localhost');
     absolute.protocol = absolute.protocol === 'https:' ? 'wss:' : 'ws:';
+    if (this.options.apiKey) absolute.searchParams.set('api_key', this.options.apiKey);
     return absolute.toString();
   }
 
@@ -113,6 +122,10 @@ export class FenixSpoonClient {
     // caller's auth headers.
     const headers = new Headers(this.options.fetchOptions?.headers);
     new Headers(init?.headers).forEach((value, key) => headers.set(key, value));
+    // Set last but only if absent, so an explicit Authorization in fetchOptions still wins.
+    if (this.options.apiKey && !headers.has('Authorization')) {
+      headers.set('Authorization', `Bearer ${this.options.apiKey}`);
+    }
 
     const response = await this.fetchImpl(this.url(path), {
       ...this.options.fetchOptions,

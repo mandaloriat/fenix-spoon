@@ -103,6 +103,22 @@ added by deploying a new adapter server-side. If arbitrary-UFL mode ever becomes
 be opt-in and sandboxed (gVisor/firejail + resource limits), and that is explicitly out of scope
 until M5.
 
+Around that core sit the guardrails a multi-user deployment needs: a submit-time cell budget, a
+cooperative wall-clock timeout, optional API-key auth with per-principal job isolation, and
+per-principal quotas. All are off or unlimited by default, because the dev experience this
+project exists to enable — clone, run, open a browser — must not require configuring an identity
+provider. [Deployment](05-deployment.md) is the recipe for turning them on.
+
+Identity is one replaceable object. `app.state.auth` resolves a presented credential to a
+`Principal`; API keys are the implementation shipped, and OIDC or a trusted-proxy header is a
+subclass. Everything downstream keys off `Principal.id`, so job ownership and quotas work
+unchanged whatever produces it.
+
+One limit is deliberately absent: a per-job memory ceiling. Solves run on threads in the API
+process and a memory limit is a property of a process, so the honest enforcement points today
+are the cell budget and the container's own limit. Per-job ceilings arrive with the worker
+backend, where each solve is a process.
+
 ## Package layout (server)
 
 ```
@@ -111,6 +127,7 @@ server/fenixspoon/
 ├── api.py             # /api/v1 routes: solvers, jobs, events WS, results
 ├── jobs.py            # JobManager: submit/status/events/result, retention, reconciliation
 ├── store.py           # JobStore: durable job metadata, event log and result payloads
+├── auth.py            # Principal resolution (API keys), quotas, CORS policy
 ├── geometry.py        # pydantic models for the geometry schema (protocol source of truth)
 └── solvers/
     ├── base.py        # Solver protocol, ProgressEvent, SolverResult

@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import __version__
 from .api import router
+from .auth import Authenticator, cors_origins
 from .jobs import PURGE_INTERVAL_SECONDS, JobManager
 
 log = logging.getLogger(__name__)
@@ -80,11 +81,15 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     app.state.jobs = JobManager()
-    # Dev default: open CORS so widgets on any origin can talk to the server.
-    # Production deployments must restrict origins (roadmap M3).
+    # Replaceable wholesale: an OIDC deployment assigns its own object here.
+    app.state.auth = Authenticator()
+    if app.state.auth.required:
+        log.info("API key authentication is enabled")
+    # Open in dev so a widget on any origin can talk to a local server; a server with
+    # keys configured defaults to same-origin only. See auth.cors_origins.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=cors_origins(app.state.auth.required),
         allow_methods=["*"],
         allow_headers=["*"],
     )
