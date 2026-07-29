@@ -1,0 +1,60 @@
+name: Docs
+
+# Publishes the mkdocs site to GitHub Pages. Only on main: pull requests get the build
+# and the staleness check from ci.yml, which is what catches problems — deploying a
+# preview per PR would add moving parts for a site that is a dozen pages.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One deploy at a time, and never cancel one in flight: a half-finished Pages deployment
+# is a broken site, unlike a cancelled test run.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install -e "./server[docs]"
+
+      - name: Regenerate the protocol reference
+        # Belt and braces: ci.yml already fails a PR that leaves this stale, but the
+        # published site should be generated from the models on main regardless of how
+        # a commit got there.
+        run: python server/tools/generate_protocol_reference.py
+
+      - name: Build
+        run: mkdocs build
+
+      # Requires Pages to be enabled with "GitHub Actions" as the source, once, by hand:
+      # Settings → Pages → Build and deployment → Source. Until then this step fails with
+      # "Get Pages site failed".
+      #
+      # The action's `enablement: true` looks like it removes that step and does not:
+      # "This option requires a token other than `GITHUB_TOKEN` to be provided" — a PAT
+      # with `repo` scope, or a GitHub App with `administration:write`. Trading a one-time
+      # click for a long-lived credential in repository secrets is a bad deal, so the
+      # click stays, documented in CONTRIBUTING.md rather than in a pull request nobody
+      # will find later.
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4

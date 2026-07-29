@@ -9,10 +9,10 @@ is tracked as a GitHub issue, and each milestone has a tracking issue with the s
 [M4](https://github.com/mandaloriat/fenix-spoon/issues/29) ·
 [M5](https://github.com/mandaloriat/fenix-spoon/issues/30)
 
-M0–M2 build the browser path: geometry in, job out, field rendered. M2.5 turns the same core into
-something a *local* process — a script, a CLI, an agent — can drive without a web application.
-M3 takes the web path to production. The two are independent: M2.5 is single-user and in-process,
-M3 is multi-user and distributed.
+M0–M2 build the browser path: geometry in, job out, field rendered. M3 takes that path to
+production. M2.5 is a different axis: the same core, reachable from a *local* process — a script,
+a CLI, an agent — without a web application. Its number records a dependency, not a date: it sits
+on the M2 core and needs nothing from M3, but it was planned after M3 had landed.
 
 ## M0 — Kickstart (this repository state) ✅
 
@@ -26,7 +26,7 @@ Goal: a working vertical slice with zero heavy dependencies, plus the planning d
 - [x] Test suite green without FEniCSx; CI workflow
 - [x] Docker scaffolding (dolfinx base image + compose)
 
-## M1 — Real FEniCSx path
+## M1 — Real FEniCSx path ✅
 
 Goal: the demo runs on an unstructured FEniCSx solve inside Docker, same UX.
 
@@ -42,8 +42,10 @@ Goal: the demo runs on an unstructured FEniCSx solve inside Docker, same UX.
       `mock.magnetostatics2d` and `dolfinx.magnetostatics2d`, and `examples/solenoid-2d/`.
       *Axisymmetric (A-φ) formulation deferred: the planar cut is what the demo needs, and
       axisymmetry belongs with a dedicated `axisymmetric2d` geometry kind.*
-- [ ] Mesh-size/quality parameters exposed through solver params, with server-side caps (#6)
-      — *partially done: wall-clock timeout + cancellation shipped; cell-count caps pending.*
+- [x] Mesh-size/quality parameters exposed through solver params, with server-side caps (#6)
+      — wall-clock timeout, cancellation, and a submit-time cell budget (`FENIXSPOON_MAX_CELLS`)
+      refusing over-sized jobs with an actionable 422 before they start. Every solve reports
+      what it cost (`stats`: cells, dofs, iterations, seconds), surfaced in both demos.
 
 ## M2 — Embeddable client widgets ✅
 
@@ -74,35 +76,46 @@ Goal: *a local agent can inspect the installed engineering capabilities, create 
 submit a simulation, query compact metrics and diagnostics, and retrieve artifacts without starting
 a web application or receiving full field payloads in its context.*
 
-Scope in one line: everything needed to drive Fenix Spoon from a process on the same machine —
-single user, in-process jobs, local workspace, compact answers. Nothing here needs a queue, a
-broker, or auth; those stay in M3. The design specification is
-[docs/05-local-agent-interface.md](05-local-agent-interface.md), which this milestone implements.
+Everything needed to drive Fenix Spoon from a process on the same machine — single user,
+in-process jobs, local workspace, compact answers. It requires nothing that M3 added: no Redis, no
+API keys, no worker containers, no shared volume. What M3 built it should *reuse* rather than
+duplicate — the `JobStore`, the `ExecutionBackend`, the `EventBus` and the `Principal` are already
+the seams a second caller needs. The design specification is
+[docs/07-local-agent-interface.md](07-local-agent-interface.md), which this milestone implements.
 
-- [ ] **Transport-neutral application core.** Extract from the FastAPI routes a reusable
-      application layer — capability catalog, workspace service, object store, job service,
-      result query service, study service — and make `api.py` an adapter over it. The HTTP API
-      keeps its current behavior, paths and status codes; only the layering moves. (#42)
+- [ ] **Transport-neutral application core.** M3 already lifted execution, persistence and event
+      delivery out of the API layer. What is still route-shaped is the *request* logic: solver
+      lookup, geometry-kind checking, params validation, cell-budget and quota checks, artifact-URL
+      construction and error mapping all live in `api.py` as `HTTPException`s. Extract that into an
+      application layer — capability catalog, workspace service, object store, job service, result
+      query service, study service — and make `api.py` an adapter over it, with the HTTP behavior,
+      paths and status codes unchanged. (#42)
 - [ ] **Progressive capability discovery.** `environment.inspect`, `capability.list`,
-      `capability.describe` with section selection (geometries, params, metrics, artifacts, sweep
-      / gradient / MPI support, environment requirements). Full JSON Schemas are fetched by
-      reference or on request, never dumped on every call. (#43)
+      `capability.describe` with section selection (geometries, params, metrics, artifacts, cost
+      estimation, sweep / gradient / MPI support, environment requirements). Full JSON Schemas are
+      fetched by reference or on request, never dumped on every call — `GET /solvers` returns every
+      schema for every solver today, which is right for a form generator and wrong for a caller
+      that only wants to know what is installed. (#43)
 - [ ] **Local workspace and object references.** An inspectable, reopenable workspace holding
       `geometry`, `material`, `boundary_condition`, `load_case`, `design`, `study`, `result` and
       `artifact` objects under stable identifiers (`geometry:g-42`, `design:d-18`, `study:s-9`,
       `result:r-105`). Iterations reference objects instead of resending geometry; incremental
-      edits go through a standard patch mechanism (JSON Patch is the leading candidate). (#44)
+      edits go through a standard patch mechanism (JSON Patch is the leading candidate). Jobs,
+      results and artifacts are already durable in the `JobStore` — the workspace extends that
+      store, it does not open a second one beside it. (#44)
 - [ ] **JSON-RPC 2.0 over stdio.** A local transport with no mandatory network port: the agent
       spawns `fenix-spoon rpc --stdio` as a child process and speaks structured messages over its
       pipes — documented framing, typed compact errors, long solves as asynchronous jobs, working
       identically against mock solvers and real FEniCSx. This is the base local transport; MCP
       is layered on it, not the other way round. (#45)
 - [ ] **Compact results: metrics, diagnostics and selective field queries.** Separate the response
-      levels `status` / `metrics` / `diagnostics` / `fields` / `artifacts`. Agents get scalar
+      levels `status` / `metrics` / `diagnostics` / `fields` / `artifacts`. Diagnostics already
+      half exist as the result's `stats` (cells, dofs, iterations, seconds) — formalize that rather
+      than inventing a parallel channel, and add the part that is missing: declared scalar
       engineering metrics (mass, maximum displacement, maximum stress, safety factor, strain
-      energy, force, inductance, peak temperature) and solve diagnostics by default; full fields
-      travel as artifacts by reference, with selective queries for max, min, mean, integral,
-      point value, region value, section, decimated sampling and hotspot location. (#46)
+      energy, force, inductance, peak temperature). Full fields travel as artifacts by reference,
+      with selective queries for max, min, mean, integral, point value, region value, section,
+      decimated sampling and hotspot location. (#46)
 - [ ] **Content-addressed cache and provenance.** Deterministic hashing of geometry, solver,
       parameters and environment; local result cache; deduplication of equivalent jobs; full
       provenance on every result and an explicit design → study → job → result relation. The cache
@@ -130,31 +143,70 @@ broker, or auth; those stay in M3. The design specification is
 discover the available potential-flow capability, create an airfoil design in a workspace, submit
 a solve (mock or FEniCSx), receive progress, query compact field metrics, retrieve the VTK
 artifact by reference, patch one geometry parameter, and run a second solve that reuses the
-unchanged objects and reports what it took from cache. The solenoid is an equally acceptable
-subject. The milestone is *not* done when JSON-RPC merely answers — it is done when that
-iterative loop runs end to end.
+unchanged objects and reports what it took from cache. The solenoid and the heat sink are equally
+acceptable subjects. The milestone is *not* done when JSON-RPC merely answers — it is done when
+that iterative loop runs end to end.
 
 ## M3 — Production job execution
 
 Goal: multi-user deployments are safe and boring.
 
-Scope note: M3 is the *multi-user, distributed* milestone — queue, separate workers, Redis,
+Scope note: M3 is the *multi-user, distributed* axis — queue, separate workers, Redis,
 server-side persistence, authentication, per-user quotas, object storage, deployment and load
-testing. M2.5 deliberately depends on none of it, and must not grow a second parallel job system:
-the job service it extracts is the same interface the Celery/arq backend implements below.
+testing. M2.5 requires none of it at runtime and must not grow a second job system beside the
+`ExecutionBackend` and `JobStore` this milestone built.
 
-- [ ] Pluggable job backend: Celery or arq implementation (Redis), worker containers with
-      dolfinx (#12)
-- [ ] Job persistence (SQLite/Postgres) and artifact storage (filesystem/S3-compatible) (#13)
-- [ ] Auth hooks (API keys / OIDC middleware), per-user quotas, wall-clock and memory limits (#14)
-- [ ] Helm chart / compose profiles for API + workers + Redis (#15)
-- [ ] Load test: N concurrent solves with progress streaming (#16)
+- [x] Pluggable job backend: Celery or arq implementation (Redis), worker containers with
+      dolfinx (#12) — an `ExecutionBackend` with an in-process pool (the default) and an
+      arq/Redis backend, an `EventBus` with in-process and Redis pub/sub implementations,
+      a worker entry point, cross-process cancellation, and a compose override for
+      API + Redis + N workers. *arq over Celery: async-native, and used purely as a
+      dispatcher so the job store stays the single source of truth — reasoning in
+      [architecture](02-architecture.md) and [backends.py](https://github.com/mandaloriat/fenix-spoon/blob/main/server/fenixspoon/backends.py).
+      Not done: heartbeats, so a job whose worker is killed stays `running` until the
+      retention sweep. Postgres would let several API replicas share state; SQLite on a
+      shared volume already supports API + N workers.*
+- [x] Job persistence (SQLite/Postgres) and artifact storage (filesystem/S3-compatible) (#13)
+      — a `JobStore` interface with SQLite (default) and in-memory backends: metadata and the
+      event log in the database, result payloads and artifacts on disk under the data
+      directory. Adds `GET /jobs` history with pagination, a configurable retention sweep
+      (`FENIXSPOON_JOB_TTL`), and startup reconciliation so a job orphaned by a dead process
+      fails instead of hanging its client. *Postgres and S3 are left to the interface: an
+      untested backend for a database nobody has run against would be pretend infrastructure.
+      A Postgres store implements the same six methods.*
+- [x] Auth hooks (API keys / OIDC middleware), per-user quotas, wall-clock and memory limits (#14)
+      — API keys with anonymous still the dev default, per-principal job isolation and quotas
+      (concurrent, per hour, artifact bytes), CORS that stops defaulting to `*` once keys are
+      configured, and [a deployment recipe](05-deployment.md). *No per-job memory ceiling: solves
+      run on threads, and a memory limit is a property of a process. The cell budget is the proxy
+      and the container limit is the backstop until the worker backend (#12) makes each solve its
+      own process.*
+- [ ] Helm chart / compose profiles for API + workers + Redis (#15) — *partially done: the
+      compose side ships as `docker-compose.workers.yml` (an override rather than a profile,
+      because a profile cannot change the API's environment, and the API must switch backend
+      and event bus together), and GHCR publishing builds both image variants with a startup
+      smoke test. The Helm chart is deliberately not written: Helm is not installable in the
+      environment this was developed in, so it could not be linted, let alone installed —
+      and an untested deployment recipe reads as supported when it is not.*
+- [x] Load test: N concurrent solves with progress streaming (#16) — `make loadtest` plus
+      [documented results](06-load-test.md). 50 concurrent clients and 100 live WebSockets
+      with zero failures and zero dropped streams. It found the concurrency knob nobody had
+      set: solves ran on asyncio's shared default executor, so they competed for threads
+      with everything else the server hands off. They now get a bounded pool of their own
+      (`FENIXSPOON_MAX_WORKERS`), and the measurements show why the default is the core
+      count — FEniCSx parallelizes, the pure-Python mock solvers get *slower* with it.
 
 ## M4 — Gallery and docs site
 
 Goal: adoption. People find, run, and copy examples.
 
-- [ ] Docs site (mkdocs-material) with protocol reference generated from pydantic models (#17)
+- [x] Docs site (mkdocs-material) with protocol reference generated from pydantic models (#17)
+      — published to GitHub Pages on merge, with per-audience getting-started paths (embed
+      the widgets / deploy the server / write a solver adapter). The protocol reference is
+      generated into the repository and CI fails on a stale page, so a field description
+      cannot change without the docs changing in the same commit. Writing the generator
+      exposed 54 model fields with no description at all; filling them in improved the
+      OpenAPI page at `/docs` as much as the site.
 - [ ] Example gallery: airfoil potential flow → incompressible Navier–Stokes; solenoid
       magnetostatics; heat sink; each as a copy-paste-able app (#18)
 - [ ] "Deploy to Fly.io/Render/self-host" one-clickish guides (#19)
@@ -167,11 +219,11 @@ vocabulary introduced in M2.5, M2.5 provides the abstraction and M5 provides the
 
 - [ ] Parameter sweeps and design-of-experiments API (N jobs, one submission) (#21) — *builds on
       the M2.5 study abstraction rather than introducing a second one: DOE designs, fan-out
-      through the M3 job backend, and the HTTP surface for sweeps.*
+      through the execution backend, and the HTTP surface for sweeps.*
 - [ ] Optimization loop hooks (dolfinx-adjoint / scipy.optimize driving the geometry params) (#22)
       — *stays here: M2.5 explicitly does not ship an optimizer, and where the study service ends
       and an optimization service begins is an open question (see
-      [docs/05-local-agent-interface.md](05-local-agent-interface.md)).*
+      [docs/07-local-agent-interface.md](07-local-agent-interface.md)).*
 - [ ] Offline/degraded mode: scikit-fem under Pyodide behind the same JS SDK interface (#23)
 - [ ] Sandboxed arbitrary-UFL mode (explicitly opt-in; see security posture in architecture
       doc) (#24)
@@ -186,4 +238,4 @@ vocabulary introduced in M2.5, M2.5 provides the abstraction and M5 provides the
 - Arbitrary execution on behalf of a client or an agent: no `run_python`, `execute_shell`,
   `run_ufl`, `install_package` or `start_container` operation, on any transport. Sandboxed
   arbitrary UFL remains a separate, opt-in M5 experiment (#24). The full list of local-interface
-  non-goals is in [docs/05-local-agent-interface.md](05-local-agent-interface.md).
+  non-goals is in [docs/07-local-agent-interface.md](07-local-agent-interface.md).

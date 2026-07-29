@@ -37,6 +37,7 @@ const GRID: Grid2DResult = {
     },
     mask: [0, 0, 0, 0, 1, 0, 0, 0, 0],
   },
+  stats: {},
   artifacts: [],
 };
 
@@ -64,6 +65,7 @@ const MESH: Mesh2DResult = {
     ],
     point_fields: { psi: [0, 0, 1, 1] },
   },
+  stats: {},
   artifacts: [],
 };
 

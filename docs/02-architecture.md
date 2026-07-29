@@ -3,7 +3,7 @@
 Fenix Spoon is three loosely-coupled layers joined by one contract (the
 [wire protocol](04-wire-protocol.md)).
 
-## Today (M2)
+## Today
 
 ```mermaid
 flowchart TB
@@ -18,7 +18,7 @@ flowchart TB
     end
     subgraph server["Server layer (Python package `fenixspoon`)"]
         API["FastAPI app<br/>REST + WS + OpenAPI"]
-        JOBS["Job manager<br/>(in-process asyncio → Celery/arq at scale)"]
+        JOBS["Job manager<br/>(thread pool, or arq workers over Redis)"]
         REG["Solver registry"]
         subgraph adapters["Solver adapters"]
             MOCK["mock.laplace2d<br/>(NumPy, always available)"]
@@ -37,8 +37,8 @@ through typed calls and compact answers. That turns the project from "a toolkit 
 FEniCSx behind a web app" into **a queryable runtime and protocol for building, running and
 automating FEniCSx-based engineering simulation workflows**.
 
-Structurally that is one change: HTTP stops being the domain and becomes one adapter among
-several, over a core that knows nothing about transports.
+Structurally it is one change: HTTP stops being the domain and becomes one adapter among several,
+over a core that knows nothing about transports.
 
 ```text
 Browser / SDK ─────┐
@@ -57,9 +57,14 @@ MCP hosts ─────────┘
               FEniCSx / mock solvers
 ```
 
-Nothing below the adapter line is implemented yet — today the equivalent logic lives inside
-`api.py`. The milestone that builds it is [M2.5](03-roadmap.md#m25--local-automation-and-agent-interface)
-and the design specification is the [local agent interface](05-local-agent-interface.md). The
+Half of that line already exists and was not built for this: `ExecutionBackend`, `EventBus`,
+`JobStore` and `Principal` are exactly the seams a second caller needs, and they were pulled out
+of the API layer so solves could cross a process boundary. What is still route-shaped is the
+*request* side — solver lookup, geometry-kind checking, params validation, budget and quota
+checks, artifact URLs, error mapping — which lives in `api.py` as `HTTPException`s and cannot be
+reached from anywhere else. The milestone that finishes the job is
+[M2.5](03-roadmap.md); the design specification is the
+[local agent interface](07-local-agent-interface.md). Nothing in it is implemented yet. The
 properties that layer is required to have:
 
 - **Transport-neutral core.** Capability catalog, workspace, object store, job service, result
@@ -70,18 +75,20 @@ properties that layer is required to have:
   that JSON-RPC, CLI, Python and MCP can reach the same operations without going through FastAPI
   or a network port.
 - **A local interface.** JSON-RPC 2.0 over stdio is the base local transport: the agent starts the
-  process as a child, no port is opened, and long solves stay asynchronous jobs. MCP is a thin
-  adapter on top of the same operations, never a dependency of the core.
+  process as a child, no port is opened, and long solves stay asynchronous jobs on the same
+  execution backend. MCP is a thin adapter on top of the same operations, never a dependency of
+  the core.
 - **Progressive discovery.** Capabilities are described in sections on request (geometries,
   params, metrics, artifacts, environment requirements) rather than as one payload containing
   every schema. Extended schemas are fetched by reference.
-- **Object references.** Geometries, materials, designs, studies and results live in a local
-  workspace under stable identifiers, so an iteration sends a patch and an id instead of a whole
-  geometry — and a second run can reuse what did not change.
+- **Object references.** Geometries, materials, designs, studies and results live in a workspace
+  under stable identifiers, so an iteration sends a patch and an id instead of a whole geometry —
+  and a second run can reuse what did not change. That workspace extends the existing `JobStore`
+  rather than becoming a second store.
 - **Compact results.** `status`, `metrics`, `diagnostics`, `fields` and `artifacts` are distinct
-  response levels. The default answer to "how did the solve go" is scalars and diagnostics; nodal
-  arrays are artifacts retrieved by reference or queried selectively (max, integral, value at a
-  point, section, hotspots).
+  response levels. The default answer to "how did the solve go" is scalars and diagnostics — the
+  result's `stats` are already the beginning of that — while nodal arrays are artifacts retrieved
+  by reference or queried selectively (max, integral, value at a point, section, hotspots).
 - **No arbitrary execution.** The local interface exposes engineering operations and domain
   objects. It does not accept Python, UFL, shell commands or container images — see the security
   posture below.
@@ -121,16 +128,57 @@ the same protocol.
   infrastructure, fine for demos and single-user tools. Progress callbacks are marshalled from the
   worker thread onto the event loop and fanned out to WebSocket subscribers; events are replayed to
   late subscribers.
-- **M2.5:** the manager surface (submit / get / cancel / subscribe) is lifted into a job *service*
-  in the transport-neutral core, so a local process can drive jobs without an HTTP server, and
-  results gain a content-addressed identity that lets an equivalent resubmission hit a local
-  cache instead of recomputing. Execution stays in-process; this is a layering change, not a
-  second job system.
-- **M3:** pluggable backend with a Celery (or arq) implementation for multi-user deployments —
-  worker containers with dolfinx, Redis broker, job persistence, resource limits (mesh size caps,
-  wall-clock timeouts), and auth. The job-manager interface is written so this swap doesn't touch
-  the API layer — and, after M2.5, so that the queued backend implements the same job-service
-  interface every transport already speaks.
+- **M3 (landed):** resource limits, job persistence, API-key auth and per-principal quotas, and
+  a pluggable execution backend. `FENIXSPOON_REDIS_URL` switches solving from a bounded thread
+  pool in the API process to worker containers draining an arq queue; the API layer is unchanged
+  either way, which is what the job-manager interface was shaped for.
+- **M2.5 (planned):** the same backends, driven from somewhere other than a route. Submitting a
+  job stops being something only a FastAPI handler can do, and results gain a content-addressed
+  identity so an equivalent resubmission hits a local cache instead of recomputing. No new
+  execution path — a layering change on the existing one.
+
+  [Load testing](06-load-test.md) made the case concretely: one API process handles 50 concurrent
+  clients without dropping a stream, but every in-process solve shares the interpreter with the
+  event loop, so a Python-heavy solver's throughput *falls* as concurrency rises. Workers remove
+  that ceiling, make a per-job memory limit expressible at last, and let the API scale separately
+  from the solving.
+
+### Distributed execution: three things cross the boundary, and only three
+The API and its workers share a job store and a Redis, nothing else. What moves between them:
+
+1. **The job**, as JSON on an arq queue — geometry and params, revalidated worker-side against
+   the solver's own schema so a version skew fails at validation rather than reaching a solver
+   as nonsense.
+2. **Progress**, over Redis pub/sub. Pub/sub is lossy by design, which is fine because it is only
+   the live edge: a subscriber attaches to the channel first, then replays the durable log from
+   the store, and reconciles the overlap by sequence number. Neither path has to be reliable
+   alone.
+3. **Cancellation**, as a Redis flag the running solve polls. Still cooperative — nothing kills a
+   solve mid-iteration — so the semantics match the in-process backend exactly.
+
+Everything else (results, artifacts, status, history) goes through the store, which is why the
+data directory has to be one shared volume. Redis holds no state worth keeping: lose it and
+queued work is lost, but nothing that already happened is.
+
+The honest gap is worker death. Nothing heartbeats, so a job whose worker is SIGKILLed stays
+`running` until retention removes it — and the API deliberately does *not* fail running jobs on
+startup in this mode, because in a healthy deployment those jobs really are still being solved.
+
+### Persistence: live state in memory, everything else in a store
+Subscriber queues, the cancel event and the running future cannot be serialized, so they stay in
+the process. Everything a client can still ask for afterwards — metadata, the event log, the
+result payload, the artifact list — goes to a `JobStore`. SQLite is the default backend and the
+data directory is the durable unit: metadata and events in `jobs.db`, result payloads and
+artifacts in `<data-dir>/<job-id>/`. Mount that directory and a restarted server answers for
+jobs the previous one ran.
+
+Result payloads live on disk rather than in the database on purpose: a 512×341 grid is several
+megabytes of JSON, the data directory is already the durable-storage contract for artifacts, and
+keeping them together makes one job's bytes one directory you can copy, delete or mount.
+
+Restarting introduces a state the in-process manager never had: a job the store believes is
+`running` that nothing is solving. Startup reconciliation fails those explicitly — a status
+stream that can never terminate is worse than a job that admits it was lost.
 
 ### Geometry: parametric JSON, meshed server-side
 Clients send parametric descriptions (v0: `polygon2d` obstacle in a rectangular domain; later:
@@ -146,8 +194,9 @@ the server stateless between jobs.
 
 ### Deployment: one Docker image
 `server/Dockerfile` builds `FROM dolfinx/dolfinx:stable` (overridable via `BASE_IMAGE` build arg to
-a plain `python:3.12-slim` for mock-only deployments). `docker-compose.yml` runs the API; M3 adds
-worker + Redis services.
+a plain `python:3.12-slim` for mock-only deployments). One image serves both roles — which one a
+container is depends on its command, not its build. `docker-compose.yml` runs the API alone;
+`docker-compose.workers.yml` layers on Redis and N worker containers.
 
 ## Security posture (why solvers are declarative)
 
@@ -158,15 +207,33 @@ added by deploying a new adapter server-side. If arbitrary-UFL mode ever becomes
 be opt-in and sandboxed (gVisor/firejail + resource limits), and that is explicitly out of scope
 until M5.
 
-**The same rule holds for the local agent interface.** It is tempting to hand an agent
-`run_python(code)` or `execute_shell(command)` and call it a day — on a local machine the agent
-often *can* run a shell anyway, so it feels free. It isn't: an interface made of arbitrary
+Around that core sit the guardrails a multi-user deployment needs: a submit-time cell budget, a
+cooperative wall-clock timeout, optional API-key auth with per-principal job isolation, and
+per-principal quotas. All are off or unlimited by default, because the dev experience this
+project exists to enable — clone, run, open a browser — must not require configuring an identity
+provider. [Deployment](05-deployment.md) is the recipe for turning them on.
+
+Identity is one replaceable object. `app.state.auth` resolves a presented credential to a
+`Principal`; API keys are the implementation shipped, and OIDC or a trusted-proxy header is a
+subclass. Everything downstream keys off `Principal.id`, so job ownership and quotas work
+unchanged whatever produces it — including a future local transport, which authenticates by being
+able to start the process and resolves to a principal like any other caller rather than bypassing
+ownership.
+
+**The declarative rule holds for the local agent interface too** (M2.5). It is tempting to hand an
+agent `run_python(code)` or `execute_shell(command)` and call it a day — on a local machine the
+agent often *can* run a shell anyway, so it feels free. It isn't: an interface made of arbitrary
 execution has no schema to discover, no validation, no cache identity, no provenance, and cannot
-later be exposed over a network without becoming remote code execution. Fenix Spoon's local
-interface therefore exposes the same declarative vocabulary as the HTTP API — named capabilities,
-typed parameters, domain objects, engineering operations — and no `run_python`, `execute_shell`,
-`run_ufl`, `install_package` or `start_container`. Agents translate human intent into typed
-requests; the core validates and executes defined engineering operations.
+later be exposed over a network without becoming remote code execution. The local interface
+therefore exposes the same vocabulary as the HTTP API — named capabilities, typed parameters,
+domain objects, engineering operations — and no `run_python`, `execute_shell`, `run_ufl`,
+`install_package` or `start_container`. Agents translate human intent into typed requests; the
+core validates and executes defined engineering operations.
+
+One limit is deliberately absent: a per-job memory ceiling. Solves run on threads in the API
+process and a memory limit is a property of a process, so the honest enforcement points today
+are the cell budget and the container's own limit. Per-job ceilings arrive with the worker
+backend, where each solve is a process.
 
 ## Package layout (server)
 
@@ -174,7 +241,14 @@ requests; the core validates and executes defined engineering operations.
 server/fenixspoon/
 ├── main.py            # app factory, CORS, static demo mount
 ├── api.py             # /api/v1 routes: solvers, jobs, events WS, results
-├── jobs.py            # JobManager: submit/status/events/result
+├── jobs.py            # JobManager: submit/status/events/result, retention, reconciliation
+├── store.py           # JobStore: durable job metadata, event log and result payloads
+├── execution.py       # run_solve: the one solve path, shared by pool and worker
+├── backends.py        # ExecutionBackend: in-process pool, or arq over Redis
+├── events.py          # EventBus: in-process fan-out
+├── redis_bus.py       # EventBus over Redis pub/sub, for the worker deployment
+├── worker.py          # arq entry point: `arq fenixspoon.worker.WorkerSettings`
+├── auth.py            # Principal resolution (API keys), quotas, CORS policy
 ├── geometry.py        # pydantic models for the geometry schema (protocol source of truth)
 └── solvers/
     ├── base.py        # Solver protocol, ProgressEvent, SolverResult
@@ -183,10 +257,10 @@ server/fenixspoon/
     └── dolfinx_poisson.py # FEniCSx + Gmsh adapter (registers only if dolfinx imports)
 ```
 
-Of these, `geometry.py`, `protocol.py` and `solvers/` are already transport-neutral — they know
-nothing about FastAPI. What is still entangled lives in `api.py`: solver lookup, geometry-kind
-checking, params validation, artifact-URL construction and error mapping are expressed as route
-bodies and `HTTPException`s, so no other caller can reuse them. M2.5 moves that logic into a
-`core/` package (capability catalog, workspace, object store, job service, result queries,
+`geometry.py`, `solvers/`, and the M3 modules (`store.py`, `backends.py`, `events.py`,
+`execution.py`, `auth.py`) know nothing about FastAPI. `api.py` is where the remaining coupling
+sits: request validation, budget and quota checks, artifact URLs and error mapping are expressed
+as route bodies and `HTTPException`s, so no other caller can reuse them. M2.5 moves that logic
+into a `core/` package (capability catalog, workspace, object store, job service, result queries,
 studies) and leaves `api.py` as the HTTP adapter over it; the local transports live beside it as
 peers rather than as clients of the web server.

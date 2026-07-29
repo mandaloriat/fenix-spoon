@@ -31,7 +31,16 @@ class Polygon2D(BaseModel):
     """
 
     type: Literal["polygon2d"] = "polygon2d"
-    points: Annotated[list[Point2D], Field(min_length=3)]
+    points: Annotated[
+        list[Point2D],
+        Field(
+            min_length=3,
+            description=(
+                "Outline vertices in order, as [x, y] pairs. The closing edge is implicit; "
+                "do not repeat the first point."
+            ),
+        ),
+    ]
 
     @model_validator(mode="after")
     def _check_simple(self) -> "Polygon2D":
@@ -69,9 +78,14 @@ class Domain2D(BaseModel):
 
     type: Literal["domain2d"] = "domain2d"
     bounds: tuple[float, float, float, float] = Field(
-        default=(-2.0, -1.5, 4.0, 1.5), description="[xmin, ymin, xmax, ymax]"
+        default=(-2.0, -1.5, 4.0, 1.5),
+        description="Outer rectangle as [xmin, ymin, xmax, ymax], in metres.",
     )
-    obstacle: Polygon2D
+    obstacle: Polygon2D = Field(
+        description=(
+            "The hole cut out of the domain. Its points must lie strictly inside `bounds`."
+        )
+    )
 
     @model_validator(mode="after")
     def _check(self) -> "Domain2D":
@@ -89,9 +103,17 @@ class Region2D(BaseModel):
     ignored by solvers, so a payload can carry properties several solvers care about.
     """
 
-    name: str = Field(min_length=1)
-    shape: Polygon2D
-    material: dict[str, float] = {}
+    name: str = Field(
+        min_length=1, description="Unique within one geometry; used to label results."
+    )
+    shape: Polygon2D = Field(description="The region outline, strictly inside `bounds`.")
+    material: dict[str, float] = Field(
+        default={},
+        description=(
+            "Solver-interpreted scalar properties, e.g. `mu_r` and `current_density` for "
+            "magnetostatics. Keys a solver does not recognise are ignored."
+        ),
+    )
 
 
 class Regions2D(BaseModel):
@@ -109,9 +131,19 @@ class Regions2D(BaseModel):
 
     type: Literal["regions2d"] = "regions2d"
     bounds: tuple[float, float, float, float] = Field(
-        default=(-0.1, -0.1, 0.1, 0.1), description="[xmin, ymin, xmax, ymax]"
+        default=(-0.1, -0.1, 0.1, 0.1),
+        description="Outer rectangle as [xmin, ymin, xmax, ymax], in metres.",
     )
-    regions: Annotated[list[Region2D], Field(min_length=1)]
+    regions: Annotated[
+        list[Region2D],
+        Field(
+            min_length=1,
+            description=(
+                "Material regions in painter's order: where two nest, the later one wins. "
+                "Partially overlapping outlines are rejected."
+            ),
+        ),
+    ]
     background: dict[str, float] = Field(
         default={}, description="Material outside every region (typically air)"
     )

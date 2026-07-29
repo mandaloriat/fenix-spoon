@@ -26,7 +26,12 @@ from pydantic import BaseModel, Field
 
 from ..geometry import Regions2D
 from .base import ProgressEvent, Solver, SolverContext, SolverResult
-from .mock_laplace import grid_to_mesh2d, polygon_mask, write_vtk_structured_points
+from .mock_laplace import (
+    _grid_shape,
+    grid_to_mesh2d,
+    polygon_mask,
+    write_vtk_structured_points,
+)
 from .registry import register
 
 MU0 = 4.0e-7 * np.pi
@@ -69,17 +74,16 @@ class MockMagnetostatics2D(Solver):
             default=True, description="Attach the solution as a legacy-VTK artifact"
         )
 
+    @classmethod
+    def estimate_cells(cls, geometry: Regions2D, params: "MockMagnetostatics2D.Params") -> int:
+        ny, nx = _grid_shape(geometry.bounds, params.resolution)
+        return ny * nx
+
     def solve(
         self, geometry: Regions2D, params: "MockMagnetostatics2D.Params", ctx: SolverContext
     ) -> SolverResult:
         xmin, ymin, xmax, ymax = geometry.bounds
-        lx, ly = xmax - xmin, ymax - ymin
-        if lx >= ly:
-            nx = params.resolution
-            ny = max(8, round(params.resolution * ly / lx))
-        else:
-            ny = params.resolution
-            nx = max(8, round(params.resolution * lx / ly))
+        ny, nx = _grid_shape(geometry.bounds, params.resolution)
 
         x = np.linspace(xmin, xmax, nx)
         y = np.linspace(ymin, ymax, ny)
@@ -127,6 +131,7 @@ class MockMagnetostatics2D(Solver):
         b_mag = np.hypot(bx, by)
 
         fields = {"A": a_pot, "B": b_mag, "mu_r": mu_r}
+        stats = {"cells": float(nx * ny), "iterations": float(it)}
         if params.write_vtk:
             write_vtk_structured_points(ctx.artifact("solution.vtk"), x, y, fields)
 
@@ -134,6 +139,7 @@ class MockMagnetostatics2D(Solver):
             no_hole = np.zeros((ny, nx), dtype=bool)
             return SolverResult(
                 kind="mesh2d",
+                stats=stats,
                 data={
                     "bounds": [xmin, ymin, xmax, ymax],
                     **grid_to_mesh2d(x, y, no_hole, fields),
@@ -142,6 +148,7 @@ class MockMagnetostatics2D(Solver):
 
         return SolverResult(
             kind="grid2d",
+            stats=stats,
             data={
                 "bounds": [xmin, ymin, xmax, ymax],
                 "shape": [ny, nx],

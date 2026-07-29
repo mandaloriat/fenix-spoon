@@ -13,7 +13,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, ClassVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..geometry import Geometry
 
@@ -26,27 +26,41 @@ class ProgressEvent(BaseModel):
     """One tick of solver progress, streamed to WebSocket subscribers."""
 
     type: str = "progress"
-    iteration: int
-    total: int | None = None
-    residual: float | None = None
-    message: str | None = None
+    iteration: int = Field(description="How far the solve has got, in solver-defined units.")
+    total: int | None = Field(
+        default=None, description="Expected final `iteration`, when the solver can predict it."
+    )
+    residual: float | None = Field(
+        default=None, description="Convergence measure for iterative solvers; null otherwise."
+    )
+    message: str | None = Field(
+        default=None, description="Human-readable stage, e.g. `meshing with Gmsh`."
+    )
 
 
 class SolverResult(BaseModel):
     """Result envelope. ``kind`` selects the schema of ``data`` (see docs/04-wire-protocol.md)."""
 
-    kind: str  # "grid2d" | "mesh2d"
-    data: dict[str, Any]
+    kind: str = Field(description='Result schema selector: `"grid2d"` or `"mesh2d"`.')
+    data: dict[str, Any] = Field(description="The field data, shaped according to `kind`.")
+    stats: dict[str, float] = {}
+    """What the solve actually cost: ``cells``, ``dofs``, and whatever else the adapter
+    knows. The job manager adds ``seconds``. Reported so a user can see why a job was
+    slow, and so an operator can pick a sensible cap."""
 
 
 class SolverInfo(BaseModel):
     """What ``GET /api/v1/solvers`` returns per solver."""
 
-    name: str
-    title: str
-    description: str
-    geometry_types: list[str]
-    params_schema: dict[str, Any]
+    name: str = Field(description="Identifier to pass as `solver` when submitting a job.")
+    title: str = Field(description="Short human-readable name for a picker.")
+    description: str = Field(description="What this solver computes, and how.")
+    geometry_types: list[str] = Field(
+        description="Geometry `type` values this solver accepts, e.g. `[\"domain2d\"]`."
+    )
+    params_schema: dict[str, Any] = Field(
+        description="JSON Schema for this solver's `params`; build a form from it."
+    )
 
 
 class SolverContext:
@@ -136,6 +150,18 @@ class Solver(ABC):
             geometry_types=cls.geometry_types,
             params_schema=cls.Params.model_json_schema(),
         )
+
+    @classmethod
+    def estimate_cells(cls, geometry: Geometry, params: "Solver.Params") -> int | None:
+        """Roughly how many cells this job will use, for the server-side cap.
+
+        Called *before* the job is accepted, so it must be cheap — no meshing. Return
+        ``None`` when the adapter genuinely cannot say; the job is then admitted and the
+        wall-clock timeout remains the backstop. A deliberate over-estimate is safer
+        than an under-estimate: the point is refusing work that would exhaust the box,
+        and a job rejected with a clear message beats one killed halfway through.
+        """
+        return None
 
     @abstractmethod
     def solve(

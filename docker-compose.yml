@@ -1,5 +1,16 @@
+# The simple deployment: one container that serves the API and runs the solves.
+#
+#   docker compose up
+#
+# For the multi-user shape — API dispatching to worker containers — layer the override:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.workers.yml up
+#
 services:
   api:
+    # Or skip the build entirely:
+    #   image: ghcr.io/mandaloriat/fenix-spoon:latest        # FEniCSx runtime
+    #   image: ghcr.io/mandaloriat/fenix-spoon:latest-slim   # mock solvers, ~100 MB
     build:
       context: .
       dockerfile: server/Dockerfile
@@ -8,4 +19,15 @@ services:
       #   BASE_IMAGE: python:3.12-slim
     ports:
       - "8000:8000"
-    # M3 adds: worker + redis services, artifact volume, resource limits.
+    environment:
+      # Job records, result payloads and artifacts all live here. Without the volume
+      # below, persistence works and then evaporates with the container.
+      FENIXSPOON_DATA_DIR: /data
+      # Every other knob is documented in the README's "Server configuration" table.
+      # FENIXSPOON_MAX_CELLS: "2000000"
+      # FENIXSPOON_JOB_TTL: "604800"
+    volumes:
+      - fenixspoon-data:/data
+
+volumes:
+  fenixspoon-data:

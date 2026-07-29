@@ -8,7 +8,9 @@ COPY server/ /app/server/
 COPY examples/ /app/examples/
 COPY protocol/ /app/protocol/
 
-RUN pip install --no-cache-dir /app/server
+# The `redis` extra is installed unconditionally: the same image runs as the API and as
+# the worker, and which one it is depends on the command, not the build.
+RUN pip install --no-cache-dir "/app/server[redis]"
 
 EXPOSE 8000
 CMD ["uvicorn", "fenixspoon.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -18,6 +18,16 @@ from .base import ProgressEvent, Solver, SolverContext, SolverResult
 from .registry import register
 
 
+def _grid_shape(bounds, resolution: int) -> tuple[int, int]:
+    """Grid shape (ny, nx) for a resolution along the longer edge — shared by the
+    solver and its cost estimate so the two cannot disagree."""
+    xmin, ymin, xmax, ymax = bounds
+    lx, ly = xmax - xmin, ymax - ymin
+    if lx >= ly:
+        return max(8, round(resolution * ly / lx)), resolution
+    return resolution, max(8, round(resolution * lx / ly))
+
+
 def polygon_mask(points: np.ndarray, xx: np.ndarray, yy: np.ndarray) -> np.ndarray:
     """Vectorized even-odd rule (PNPOLY): True where grid points fall inside the polygon."""
     inside = np.zeros(xx.shape, dtype=bool)
@@ -112,17 +122,16 @@ class MockLaplace2D(Solver):
             default=True, description="Attach the solution as a legacy-VTK artifact"
         )
 
+    @classmethod
+    def estimate_cells(cls, geometry: Domain2D, params: "MockLaplace2D.Params") -> int:
+        ny, nx = _grid_shape(geometry.bounds, params.resolution)
+        return ny * nx
+
     def solve(
         self, geometry: Domain2D, params: "MockLaplace2D.Params", ctx: SolverContext
     ) -> SolverResult:
         xmin, ymin, xmax, ymax = geometry.bounds
-        lx, ly = xmax - xmin, ymax - ymin
-        if lx >= ly:
-            nx = params.resolution
-            ny = max(8, round(params.resolution * ly / lx))
-        else:
-            ny = params.resolution
-            nx = max(8, round(params.resolution * lx / ly))
+        ny, nx = _grid_shape(geometry.bounds, params.resolution)
 
         x = np.linspace(xmin, xmax, nx)
         y = np.linspace(ymin, ymax, ny)
@@ -170,9 +179,11 @@ class MockLaplace2D(Solver):
                 ctx.artifact("solution.vtk"), x, y, {"psi": psi, "speed": speed}
             )
 
+        stats = {"cells": float(nx * ny), "iterations": float(it)}
         if params.output == "mesh2d":
             return SolverResult(
                 kind="mesh2d",
+                stats=stats,
                 data={
                     "bounds": [xmin, ymin, xmax, ymax],
                     **grid_to_mesh2d(x, y, mask, {"psi": psi, "speed": speed}),
@@ -181,6 +192,7 @@ class MockLaplace2D(Solver):
 
         return SolverResult(
             kind="grid2d",
+            stats=stats,
             data={
                 "bounds": [xmin, ymin, xmax, ymax],
                 "shape": [ny, nx],

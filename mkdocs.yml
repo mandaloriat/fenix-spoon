@@ -1,0 +1,65 @@
+site_name: Fenix Spoon
+site_description: A Swiss-army toolkit for building web-based engineering applications powered by FEniCSx
+site_url: https://mandaloriat.github.io/fenix-spoon/
+repo_url: https://github.com/mandaloriat/fenix-spoon
+repo_name: mandaloriat/fenix-spoon
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - content.action.edit
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+# The architecture doc draws its diagrams in mermaid; material renders them natively
+# through the superfences custom fence above, so nothing extra is needed at build time.
+
+nav:
+  - Home: index.md
+  - Get started:
+      - Embed the widgets: start-embed-widgets.md
+      - Deploy the server: start-deploy-server.md
+      - Write a solver adapter: start-write-a-solver.md
+  - Reference:
+      - Wire protocol: 04-wire-protocol.md
+      - Protocol models: reference-protocol.md
+      - Deployment: 05-deployment.md
+      - Load test: 06-load-test.md
+  - Background:
+      - Architecture: 02-architecture.md
+      - State of the art: 01-state-of-the-art.md
+      - Roadmap: 03-roadmap.md
+      - Local agent interface (draft): 07-local-agent-interface.md
+
+# Every warning is an error: a broken internal link in the docs is a bug like any other,
+# and the whole point of this site is that following it gets you somewhere.
+strict: true
