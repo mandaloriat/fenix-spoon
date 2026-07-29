@@ -67,6 +67,11 @@ becomes its tooltip. Add a parameter to a solver adapter and a control appears h
 anyone editing HTML. That is the argument for `params_schema` being part of the protocol rather
 than being documentation.
 
+Both a NumPy solver and a FEniCSx one back this page. `mock.heat2d` relaxes on a Cartesian
+raster; `dolfinx.heat2d` solves P1 elements on a Gmsh mesh of the solid. They are checked
+against each other rather than only against themselves — an energy balance proves a scheme is
+internally consistent, which is not the same as being right.
+
 **The background is not always a region.** `regions2d` carries a `background` material, and
 `mock.magnetostatics2d` solves it as another material. `mock.heat2d` does the opposite: the
 region set *is* the solid, everything else is fluid, and the fluid enters only as a convective

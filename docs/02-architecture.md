@@ -287,7 +287,8 @@ server/fenixspoon/
     ├── mock_magnetostatics.py  # NumPy magnetostatics over `regions2d`
     ├── mock_heat.py            # NumPy conduction with convective surfaces
     ├── dolfinx_poisson.py        # FEniCSx + Gmsh potential flow
-    └── dolfinx_magnetostatics.py # FEniCSx + Gmsh magnetostatics
+    ├── dolfinx_magnetostatics.py # FEniCSx + Gmsh magnetostatics
+    └── dolfinx_heat.py           # FEniCSx + Gmsh conduction (meshes the solid only)
 ```
 
 The FEniCSx adapters register only when dolfinx imports, so the same codebase runs in a plain
