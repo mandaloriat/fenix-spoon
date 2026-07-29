@@ -18,9 +18,10 @@ installation, no desktop tooling, just a browser talking to a FEniCSx server.
 > field viewer — are published from `client/`, and the airfoil demo is built from them.
 > Pure-NumPy mock solvers mirror every FEniCSx one, so the full loop (edit geometry → submit →
 > stream progress → render field) runs without installing FEniCSx at all. Jobs now persist
-> across restarts, API keys and per-user quotas are available, and the stack is
-> [load-tested](docs/06-load-test.md) at 50 concurrent clients. What remains for M3 is the
-> out-of-process worker backend — see the [roadmap](docs/03-roadmap.md).
+> across restarts, API keys and per-user quotas are available, solves can run in worker
+> containers behind a Redis queue, and the stack is [load-tested](docs/06-load-test.md) at
+> 50 concurrent clients. What remains for M3 is deployment packaging — see the
+> [roadmap](docs/03-roadmap.md).
 
 ## Why
 
@@ -42,7 +43,8 @@ see the [state-of-the-art survey](docs/01-state-of-the-art.md). Fenix Spoon is t
 | **JS/TS SDK** — `@fenix-spoon/client`: typed protocol client with progress streaming, reconnection and runtime validators | [`client/packages/client/`](client/packages/client/) | ✅ working |
 | **Geometry editor widget** — `<fs-geometry-2d>`: SVG-based parametric profile editor, keyboard-operable, emits protocol JSON | [`client/packages/geometry-2d/`](client/packages/geometry-2d/) | ✅ working |
 | **Field viewer widget** — `<fs-viewer>`: canvas renderer for `grid2d`/`mesh2d` with colormaps, contours and a hover probe | [`client/packages/viewer/`](client/packages/viewer/) | ✅ working |
-| **Docker deployment** — one image with dolfinx + server, `docker compose up` | [`Dockerfile`](server/Dockerfile), [`docker-compose.yml`](docker-compose.yml) | ✅ scaffolded |
+| **Docker deployment** — one image with dolfinx + server, `docker compose up`; a worker override for API + Redis + N solver containers | [`Dockerfile`](server/Dockerfile), [`docker-compose.yml`](docker-compose.yml), [`docker-compose.workers.yml`](docker-compose.workers.yml) | ✅ working |
+| **Distributed job execution** — `ExecutionBackend` with an in-process pool and an arq/Redis backend; progress crosses processes over pub/sub | [`backends.py`](server/fenixspoon/backends.py), [`worker.py`](server/fenixspoon/worker.py) | ✅ working |
 
 ## Quickstart (no FEniCSx required)
 
@@ -69,6 +71,13 @@ With Docker (full FEniCSx runtime):
 docker compose up --build
 ```
 
+For the multi-user shape — the API dispatching to worker containers rather than solving
+itself — layer the worker override:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.workers.yml up --scale worker=4
+```
+
 Without Docker, a conda environment works too (this is also how the FEniCSx test suite runs):
 
 ```bash
@@ -88,7 +97,8 @@ The server is configured from the environment; the defaults are meant for a lapt
 | `FENIXSPOON_DATA_DIR` | `<tmp>/fenixspoon-jobs` | Where per-job artifacts, result payloads and the job database live. **Mount this** if job history should outlive the container |
 | `FENIXSPOON_STORE` | `sqlite` | `sqlite` persists jobs under the data directory; `memory` keeps them in the process and loses them on restart |
 | `FENIXSPOON_JOB_TIMEOUT` | `600` | Wall-clock seconds a solve may run; `0` disables. Cooperative — the worker is asked to stop |
-| `FENIXSPOON_MAX_WORKERS` | core count | How many solves run at once. Right for FEniCSx, which releases the GIL; lower it for Python-heavy solvers — see the [load test](docs/06-load-test.md) |
+| `FENIXSPOON_MAX_WORKERS` | core count | How many solves run at once *in-process*. Right for FEniCSx, which releases the GIL; lower it for Python-heavy solvers — see the [load test](docs/06-load-test.md) |
+| `FENIXSPOON_REDIS_URL` | unset | Set it and the API stops solving: jobs go to a Redis queue that worker containers drain, and progress comes back over pub/sub. See [deployment](docs/05-deployment.md) |
 | `FENIXSPOON_MAX_CELLS` | `2000000` | Cell budget for a single job; `0` disables. Checked at submit from the solver's own estimate, so an over-sized job is refused with an explanation instead of being killed halfway through |
 | `FENIXSPOON_JOB_TTL` | `604800` (7 days) | How long a finished job's record, result and artifacts are kept; `0` keeps them forever. Swept hourly and at startup |
 | `FENIXSPOON_API_KEYS` | unset (anonymous) | `"alice:secret,bob:secret"`. Set it and every route requires a key; each principal sees only its own jobs |

@@ -22,8 +22,10 @@ same six methods; an S3 artifact backend belongs behind ``SolverContext.artifact
 """
 
 import json
+import logging
 import sqlite3
 import threading
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -213,7 +215,14 @@ class SqliteJobStore(JobStore):
     A single guarded connection rather than one per call: writes here are frequent
     (every progress event) and short, and the lock keeps the connection usable from the
     event loop and from a worker thread hop without ``check_same_thread`` surprises.
+
+    **Several processes may open the same file.** That is the worker deployment: an API
+    and N workers on one mounted data directory. WAL makes concurrent readers and one
+    writer safe, and ``busy_timeout`` makes a second writer wait rather than fail.
     """
+
+    #: How long a statement waits for another process's write lock before giving up.
+    BUSY_TIMEOUT_MS = 10_000
 
     def __init__(self, path: Path, result_dir: Path | None = None) -> None:
         self.path = path
@@ -225,7 +234,8 @@ class SqliteJobStore(JobStore):
         self._db = sqlite3.connect(path, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         with self._lock:
-            self._db.execute("PRAGMA journal_mode=WAL")
+            self._db.execute(f"PRAGMA busy_timeout={self.BUSY_TIMEOUT_MS}")
+            self._enable_wal()
             self._db.executescript(_TABLES)
             present = {row["name"] for row in self._db.execute("PRAGMA table_info(jobs)")}
             for column, statement in _MIGRATIONS.items():
@@ -233,6 +243,31 @@ class SqliteJobStore(JobStore):
                     self._db.execute(statement)
             self._db.executescript(_INDEXES)
             self._db.commit()
+
+    def _enable_wal(self) -> None:
+        """Switch the file to WAL, tolerating another process doing it at the same moment.
+
+        Changing the journal mode takes a brief exclusive lock, and SQLite does *not*
+        run the busy handler for it — two processes starting together will have one of
+        them see SQLITE_BUSY. Since the only thing that matters is that the file ends up
+        in WAL, checking first and re-reading after a failure is enough: whoever lost
+        the race finds the winner's result already in place.
+        """
+        for attempt in range(5):
+            mode = self._db.execute("PRAGMA journal_mode").fetchone()[0]
+            if str(mode).lower() == "wal":
+                return
+            try:
+                self._db.execute("PRAGMA journal_mode=WAL")
+                return
+            except sqlite3.OperationalError:
+                time.sleep(0.05 * (attempt + 1))
+        # Still not WAL: usable, just with coarser locking. Say so rather than crash —
+        # a single-process deployment does not care, and crashing here would take down
+        # a worker for a performance property.
+        logging.getLogger(__name__).warning(
+            "could not enable WAL on %s; concurrent access will be slower", self.path
+        )
 
     def close(self) -> None:
         with self._lock:

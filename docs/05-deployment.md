@@ -106,14 +106,61 @@ its time in PETSc and Gmsh, which release the GIL, so it parallelizes and the co
 right. A pure-Python solver does not, and over-subscribing it *lowers* throughput —
 measurably, see the [load test](06-load-test.md).
 
-**There is no per-job memory ceiling, and adding one here would be dishonest.** Solves run
-on threads inside the API process, and a memory limit is a property of a process — `RLIMIT_AS`
-applies to all of them at once, so "cap this job at 2 GB" is not something this backend can
-express. Two things actually bound memory today: the cell budget, which is a proxy for the
-solve's footprint, and the container's own limit (`mem_limit` in compose, `resources.limits`
-in Kubernetes), which is the real backstop. A genuine per-job ceiling arrives with the
-out-of-process worker backend (#12), where each solve is a process that can be limited and
-killed on its own.
+**A per-job memory ceiling needs the worker backend.** With in-process solving there is
+nothing to limit: solves run on threads, and a memory limit is a property of a process —
+`RLIMIT_AS` applies to all of them at once, so "cap this job at 2 GB" cannot be expressed.
+What bounds memory there is the cell budget, a proxy for the solve's footprint, and the
+container's own limit.
+
+Run workers and it becomes real: one solve per container means `mem_limit: 2g` in compose
+(or `resources.limits` in Kubernetes) *is* the per-job ceiling, and the kernel enforces it
+whatever the solver does.
+
+## Running solves in worker containers
+
+By default the API solves in its own process. That is right for a laptop and wrong for a
+shared server: a heavy solve competes with the event loop for the interpreter, so the API
+gets slower to answer exactly when it is busiest — measurably, see the
+[load test](06-load-test.md).
+
+Setting `FENIXSPOON_REDIS_URL` moves solving out:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.workers.yml up --scale worker=4
+```
+
+The API then dispatches to a Redis queue and does no solving at all. Workers write
+results and artifacts to the shared data directory and publish progress over Redis
+pub/sub, which the API relays to the WebSocket — so live progress works exactly as
+before, from a process the browser never talks to.
+
+| Variable | Where | What it does |
+|---|---|---|
+| `FENIXSPOON_REDIS_URL` | API and worker | Unset: the API solves in-process. Set: it dispatches, and its event bus becomes Redis. **One variable drives both**, so a half-distributed deployment — dispatching jobs but listening on an in-process bus, whose only symptom is a progress bar that never moves — is not reachable by misconfiguration |
+| `FENIXSPOON_WORKER_CONCURRENCY` | worker | Solves per worker container (default 1). Keep it at 1 and scale containers, so a memory limit applies to one job |
+
+Three things to get right:
+
+- **The data directory must be the same volume** for the API and every worker. Workers
+  write `result.json` and artifacts there; the API serves them. Redis carries only the
+  queue and live events, and needs no persistence — job state is in the store.
+- **Deploy the API and workers together.** A worker without a solver the API advertises
+  fails that job immediately with `this worker has no solver named …` rather than
+  hanging it, but that is damage control, not a supported configuration.
+- **A worker killed mid-solve leaves its job `running`.** Nothing in the queue notices —
+  that is what an out-of-process backend costs. The API deliberately does *not* fail
+  running jobs on startup in this mode, because the workers are still going; a job whose
+  worker died is stuck until the retention sweep removes it. Heartbeats are the real
+  answer and are not implemented.
+
+Cancellation crosses the boundary through a Redis flag the running solve polls, so it
+stays cooperative: a solve stops at its next check point, typically within a second.
+
+`arq` is the queue, not Celery. Celery is synchronous-first in an application that is
+asyncio throughout, it wants to own job state that the store already owns, and its
+dependency tree is larger than this server. arq is used here purely as a dispatcher with
+`max_tries=1` and its results ignored, so there is exactly one source of truth. A
+deployment that must run Celery implements `ExecutionBackend` against it.
 
 ## Durability
 

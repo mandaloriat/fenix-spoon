@@ -1,3 +1,11 @@
+# The simple deployment: one container that serves the API and runs the solves.
+#
+#   docker compose up
+#
+# For the multi-user shape — API dispatching to worker containers — layer the override:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.workers.yml up
+#
 services:
   api:
     build:
@@ -17,7 +25,6 @@ services:
       # FENIXSPOON_JOB_TTL: "604800"
     volumes:
       - fenixspoon-data:/data
-    # M3 adds: worker + redis services, resource limits.
 
 volumes:
   fenixspoon-data:

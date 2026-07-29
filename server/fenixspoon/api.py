@@ -143,7 +143,7 @@ def job_status(
 
 
 @router.post("/jobs/{job_id}/cancel", response_model=JobStatus, status_code=202)
-def cancel_job(
+async def cancel_job(
     job_id: str,
     request: Request,
     principal: CurrentPrincipal,
@@ -151,7 +151,7 @@ def cancel_job(
     job = _manager(request).get(job_id, owner=principal.id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
-    if not _manager(request).cancel(job):
+    if not await _manager(request).cancel(job):
         raise HTTPException(
             status_code=409, detail=f"job already finished (status: {job.status})"
         )

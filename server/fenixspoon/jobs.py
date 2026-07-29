@@ -27,15 +27,12 @@ Configuration (environment):
   (default 604800 = 7 days; 0 keeps them forever).
 """
 
-import asyncio
 import os
 import shutil
 import tempfile
 import threading
-import time
 import uuid
 from collections.abc import AsyncIterator
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -43,9 +40,10 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from .backends import ExecutionBackend, default_backend
 from .events import EventBus, InProcessEventBus
 from .geometry import Domain2D
-from .solvers.base import JobCancelled, ProgressEvent, Solver, SolverContext, SolverResult
+from .solvers.base import Solver, SolverResult
 from .store import JobRecord, JobStore, MemoryJobStore, SqliteJobStore
 
 TERMINAL = ("done", "failed", "cancelled")
@@ -90,6 +88,22 @@ def _default_workers() -> int:
     return max(1, os.cpu_count() or 1)
 
 
+def _default_bus() -> EventBus:
+    """Redis when workers are configured, in-process otherwise.
+
+    These two settings have to agree: a Redis backend publishes progress from another
+    process, and an in-process bus in the API would never hear it. Deriving both from
+    the same variable is what stops a deployment from being half-distributed — a
+    misconfiguration whose only symptom is a progress bar that never moves.
+    """
+    url = os.environ.get("FENIXSPOON_REDIS_URL")
+    if not url:
+        return InProcessEventBus()
+    from .redis_bus import RedisEventBus
+
+    return RedisEventBus(url)
+
+
 def _default_store(data_dir: Path) -> JobStore:
     kind = os.environ.get("FENIXSPOON_STORE", "sqlite").lower()
     if kind == "memory":
@@ -126,6 +140,14 @@ class Job:
             result=self.result,
             artifacts=self.artifacts,
         )
+
+    def absorb(self, record: JobRecord) -> None:
+        """Copy an execution outcome back onto this live cache entry."""
+        self.status = record.status
+        self.error = record.error
+        self.finished_at = record.finished_at
+        self.result = record.result
+        self.artifacts = record.artifacts
 
     @classmethod
     def from_record(cls, record: JobRecord, artifact_dir: Path | None) -> "Job":
@@ -175,6 +197,7 @@ class JobManager:
         job_ttl: float | None = None,
         max_workers: int | None = None,
         bus: EventBus | None = None,
+        backend: ExecutionBackend | None = None,
     ) -> None:
         self._jobs: dict[str, Job] = {}
         self._data_dir = data_dir if data_dir is not None else _default_data_dir()
@@ -182,18 +205,11 @@ class JobManager:
         self.max_cells = max_cells if max_cells is not None else _default_max_cells()
         self.job_ttl = job_ttl if job_ttl is not None else _default_ttl()
         self.store = store if store is not None else _default_store(self._data_dir)
-        self.bus = bus if bus is not None else InProcessEventBus()
+        self.bus = bus if bus is not None else _default_bus()
         self.max_workers = max_workers if max_workers is not None else _default_workers()
-        # Its own pool, not asyncio's default executor: solves must not compete for
-        # threads with everything else the server hands off (static files, artifact
-        # reads), and a bounded pool is what keeps an unbounded submit rate from
-        # translating into unbounded concurrent solves.
-        self._executor = ThreadPoolExecutor(
-            max_workers=self.max_workers, thread_name_prefix="fenixspoon-solve"
+        self.backend = backend if backend is not None else default_backend(
+            self.store, self.bus, self._data_dir, self._timeout, self.max_workers
         )
-        # asyncio keeps only a weak reference to a running task, so a fire-and-forget
-        # task can be collected mid-flight and silently drop its event. Hold them.
-        self._pending: set[asyncio.Task] = set()
 
     def get(self, job_id: str, owner: str | None = None) -> Job | None:
         """A live job if this process owns one, otherwise whatever the store remembers.
@@ -232,18 +248,25 @@ class JobManager:
     ) -> Job:
         job = Job(id=f"j-{uuid.uuid4().hex[:12]}", solver_name=solver_cls.name, owner=owner)
         job.artifact_dir = self._data_dir / job.id
-        self._jobs[job.id] = job
-        self.store.put(job.to_record())
-        task = asyncio.create_task(self._run(job, solver_cls, geometry, params))
-        self._pending.add(task)
-        task.add_done_callback(self._pending.discard)
+        record = job.to_record()
+        self.store.put(record)
+        if self.backend.runs_locally:
+            # Cache it only when this process is the one running it. A remote backend
+            # never calls back, so a cached Job would stay `queued` forever while the
+            # store — the only thing both processes share — said `done`.
+            self._jobs[job.id] = job
+        await self.backend.start(record, solver_cls, geometry, params, on_finish=job.absorb)
         return job
 
-    def cancel(self, job: Job) -> bool:
-        """Request cooperative cancellation. Returns False if the job already ended."""
+    async def cancel(self, job: Job) -> bool:
+        """Request cooperative cancellation. Returns False if the job already ended.
+
+        Cooperative in both backends: in-process it sets an event the solver checks, and
+        with workers it sets a Redis flag the worker polls. Neither kills anything.
+        """
         if job.status in TERMINAL:
             return False
-        job.cancel_event.set()
+        await self.backend.cancel(job.id)
         return True
 
     def reconcile(self) -> list[str]:
@@ -252,9 +275,14 @@ class JobManager:
         Without this a client polling a job from a previous process lifetime waits for a
         terminal status that can never arrive.
         """
+        if not self.backend.runs_locally:
+            # Workers kept solving while the API was down; failing their jobs here would
+            # be the API lying about work that is still happening.
+            return []
         stranded = []
+        active = self.backend.active_ids()
         for job_id in self.store.unfinished_ids():
-            if job_id in self._jobs:
+            if job_id in active:
                 continue
             record = self.store.get(job_id)
             if record is None:
@@ -279,61 +307,6 @@ class JobManager:
             self._jobs.pop(job_id, None)
             shutil.rmtree(self._data_dir / job_id, ignore_errors=True)
         return purged
-
-    async def _run(
-        self, job: Job, solver_cls: type[Solver], geometry: Domain2D, params: BaseModel
-    ) -> None:
-        loop = asyncio.get_running_loop()
-        job.status = "running"
-        self.store.put(job.to_record())
-        await self._publish(job, {"type": "status", "status": "running"})
-
-        def on_progress(event: ProgressEvent) -> None:
-            # Called from the solver thread; hop onto the event loop to publish.
-            loop.call_soon_threadsafe(self._publish_soon, job, event.model_dump())
-
-        ctx = SolverContext(
-            progress_cb=on_progress,
-            cancel_event=job.cancel_event,
-            artifact_dir=job.artifact_dir,
-        )
-        started = time.monotonic()
-        try:
-            solver = solver_cls()
-            work = loop.run_in_executor(self._executor, solver.solve, geometry, params, ctx)
-            job.result = await asyncio.wait_for(work, self._timeout or None)
-            job.result.stats = {
-                **job.result.stats,
-                "seconds": round(time.monotonic() - started, 4),
-            }
-            job.artifacts = ctx.artifacts
-            job.status = "done"
-        except TimeoutError:
-            # The worker thread cannot be killed; ask it to stop and fail the job now.
-            job.cancel_event.set()
-            job.status = "failed"
-            job.error = f"job exceeded the wall-clock timeout ({self._timeout:g}s)"
-        except JobCancelled:
-            job.status = "cancelled"
-        except Exception as exc:  # solver bugs must fail the job, not the server
-            job.status = "failed"
-            job.error = f"{type(exc).__name__}: {exc}"
-        job.finished_at = datetime.now(UTC)
-        self.store.put(job.to_record())
-        await self._publish(job, {"type": "status", "status": job.status, "error": job.error})
-
-    async def _publish(self, job: Job, event: dict[str, Any]) -> None:
-        """Record an event, then hand it to the bus. Store first, always: the seq it
-        assigns is what a subscriber uses to reconcile replay with the live feed."""
-        job.events.append(event)
-        seq = self.store.add_event(job.id, event)
-        await self.bus.publish(job.id, seq, event)
-
-    def _publish_soon(self, job: Job, event: dict[str, Any]) -> None:
-        """``_publish`` for ``call_soon_threadsafe``, which cannot await."""
-        task = asyncio.get_running_loop().create_task(self._publish(job, event))
-        self._pending.add(task)
-        task.add_done_callback(self._pending.discard)
 
     async def subscribe(self, job: Job) -> AsyncIterator[dict[str, Any]]:
         """Yield all past events, then live ones, until a terminal status event.

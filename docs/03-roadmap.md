@@ -68,8 +68,16 @@ Goal: `npm install` two widgets and build the demo page in ten lines.
 
 Goal: multi-user deployments are safe and boring.
 
-- [ ] Pluggable job backend: Celery or arq implementation (Redis), worker containers with
-      dolfinx (#12)
+- [x] Pluggable job backend: Celery or arq implementation (Redis), worker containers with
+      dolfinx (#12) — an `ExecutionBackend` with an in-process pool (the default) and an
+      arq/Redis backend, an `EventBus` with in-process and Redis pub/sub implementations,
+      a worker entry point, cross-process cancellation, and a compose override for
+      API + Redis + N workers. *arq over Celery: async-native, and used purely as a
+      dispatcher so the job store stays the single source of truth — reasoning in
+      [architecture](02-architecture.md) and [backends.py](../server/fenixspoon/backends.py).
+      Not done: heartbeats, so a job whose worker is killed stays `running` until the
+      retention sweep. Postgres would let several API replicas share state; SQLite on a
+      shared volume already supports API + N workers.*
 - [x] Job persistence (SQLite/Postgres) and artifact storage (filesystem/S3-compatible) (#13)
       — a `JobStore` interface with SQLite (default) and in-memory backends: metadata and the
       event log in the database, result payloads and artifacts on disk under the data

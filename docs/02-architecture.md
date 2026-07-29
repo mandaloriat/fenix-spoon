@@ -16,7 +16,7 @@ flowchart TB
     end
     subgraph server["Server layer (Python package `fenixspoon`)"]
         API["FastAPI app<br/>REST + WS + OpenAPI"]
-        JOBS["Job manager<br/>(in-process asyncio → Celery/arq at scale)"]
+        JOBS["Job manager<br/>(thread pool, or arq workers over Redis)"]
         REG["Solver registry"]
         subgraph adapters["Solver adapters"]
             MOCK["mock.laplace2d<br/>(NumPy, always available)"]
@@ -56,18 +56,37 @@ the same protocol.
   infrastructure, fine for demos and single-user tools. Progress callbacks are marshalled from the
   worker thread onto the event loop and fanned out to WebSocket subscribers; events are replayed to
   late subscribers.
-- **M3 (mostly landed):** resource limits (submit-time cell budgets, wall-clock timeouts), job
-  persistence, API-key auth and per-principal quotas are in, and solves run on the job manager's
-  own bounded pool rather than asyncio's shared default executor. The remaining piece is a
-  pluggable execution backend — Celery or arq with worker containers and a Redis broker. The
-  job-manager interface is written so that swap doesn't touch the API layer.
+- **M3 (landed):** resource limits, job persistence, API-key auth and per-principal quotas, and
+  a pluggable execution backend. `FENIXSPOON_REDIS_URL` switches solving from a bounded thread
+  pool in the API process to worker containers draining an arq queue; the API layer is unchanged
+  either way, which is what the job-manager interface was shaped for.
 
-  [Load testing](06-load-test.md) makes the case for it concretely: one API process handles 50
-  concurrent clients without dropping a stream, but every solve shares the interpreter with the
-  event loop, so a Python-heavy solver's throughput *falls* as concurrency rises. Moving solves
-  into worker processes is what removes that ceiling — and it is also what makes a per-job
-  memory limit expressible, and what lets a second API replica stream progress for a job it did
-  not start.
+  [Load testing](06-load-test.md) made the case concretely: one API process handles 50 concurrent
+  clients without dropping a stream, but every in-process solve shares the interpreter with the
+  event loop, so a Python-heavy solver's throughput *falls* as concurrency rises. Workers remove
+  that ceiling, make a per-job memory limit expressible at last, and let the API scale separately
+  from the solving.
+
+### Distributed execution: three things cross the boundary, and only three
+The API and its workers share a job store and a Redis, nothing else. What moves between them:
+
+1. **The job**, as JSON on an arq queue — geometry and params, revalidated worker-side against
+   the solver's own schema so a version skew fails at validation rather than reaching a solver
+   as nonsense.
+2. **Progress**, over Redis pub/sub. Pub/sub is lossy by design, which is fine because it is only
+   the live edge: a subscriber attaches to the channel first, then replays the durable log from
+   the store, and reconciles the overlap by sequence number. Neither path has to be reliable
+   alone.
+3. **Cancellation**, as a Redis flag the running solve polls. Still cooperative — nothing kills a
+   solve mid-iteration — so the semantics match the in-process backend exactly.
+
+Everything else (results, artifacts, status, history) goes through the store, which is why the
+data directory has to be one shared volume. Redis holds no state worth keeping: lose it and
+queued work is lost, but nothing that already happened is.
+
+The honest gap is worker death. Nothing heartbeats, so a job whose worker is SIGKILLed stays
+`running` until retention removes it — and the API deliberately does *not* fail running jobs on
+startup in this mode, because in a healthy deployment those jobs really are still being solved.
 
 ### Persistence: live state in memory, everything else in a store
 Subscriber queues, the cancel event and the running future cannot be serialized, so they stay in
@@ -99,8 +118,9 @@ the server stateless between jobs.
 
 ### Deployment: one Docker image
 `server/Dockerfile` builds `FROM dolfinx/dolfinx:stable` (overridable via `BASE_IMAGE` build arg to
-a plain `python:3.12-slim` for mock-only deployments). `docker-compose.yml` runs the API; M3 adds
-worker + Redis services.
+a plain `python:3.12-slim` for mock-only deployments). One image serves both roles — which one a
+container is depends on its command, not its build. `docker-compose.yml` runs the API alone;
+`docker-compose.workers.yml` layers on Redis and N worker containers.
 
 ## Security posture (why solvers are declarative)
 
@@ -135,6 +155,11 @@ server/fenixspoon/
 ├── api.py             # /api/v1 routes: solvers, jobs, events WS, results
 ├── jobs.py            # JobManager: submit/status/events/result, retention, reconciliation
 ├── store.py           # JobStore: durable job metadata, event log and result payloads
+├── execution.py       # run_solve: the one solve path, shared by pool and worker
+├── backends.py        # ExecutionBackend: in-process pool, or arq over Redis
+├── events.py          # EventBus: in-process fan-out
+├── redis_bus.py       # EventBus over Redis pub/sub, for the worker deployment
+├── worker.py          # arq entry point: `arq fenixspoon.worker.WorkerSettings`
 ├── auth.py            # Principal resolution (API keys), quotas, CORS policy
 ├── geometry.py        # pydantic models for the geometry schema (protocol source of truth)
 └── solvers/
