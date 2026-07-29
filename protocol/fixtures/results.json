@@ -7,14 +7,50 @@
         "job_id": "j-abc123def456",
         "kind": "grid2d",
         "data": {
-          "bounds": [0.0, 0.0, 2.0, 1.0],
-          "shape": [2, 3],
-          "fields": { "psi": [0.0, 0.1, 0.2, 1.0, 1.1, 1.2], "speed": [0, 0, 0, 1, 1, 1] },
-          "mask": [0, 0, 0, 0, 1, 0]
+          "bounds": [
+            0.0,
+            0.0,
+            2.0,
+            1.0
+          ],
+          "shape": [
+            2,
+            3
+          ],
+          "fields": {
+            "psi": [
+              0.0,
+              0.1,
+              0.2,
+              1.0,
+              1.1,
+              1.2
+            ],
+            "speed": [
+              0,
+              0,
+              0,
+              1,
+              1,
+              1
+            ]
+          },
+          "mask": [
+            0,
+            0,
+            0,
+            0,
+            1,
+            0
+          ]
         },
         "artifacts": [
-          { "name": "solution.vtk", "content_type": "model/vnd.vtk", "size": 1234,
-            "url": "/api/v1/jobs/j-abc123def456/artifacts/solution.vtk" }
+          {
+            "name": "solution.vtk",
+            "content_type": "model/vnd.vtk",
+            "size": 1234,
+            "url": "/api/v1/jobs/j-abc123def456/artifacts/solution.vtk"
+          }
         ]
       }
     },
@@ -24,10 +60,50 @@
         "job_id": "j-abc123def456",
         "kind": "mesh2d",
         "data": {
-          "bounds": [0.0, 0.0, 1.0, 1.0],
-          "points": [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
-          "triangles": [[0, 1, 2], [0, 2, 3]],
-          "point_fields": { "psi": [0.0, 0.0, 1.0, 1.0] }
+          "bounds": [
+            0.0,
+            0.0,
+            1.0,
+            1.0
+          ],
+          "points": [
+            [
+              0.0,
+              0.0
+            ],
+            [
+              1.0,
+              0.0
+            ],
+            [
+              1.0,
+              1.0
+            ],
+            [
+              0.0,
+              1.0
+            ]
+          ],
+          "triangles": [
+            [
+              0,
+              1,
+              2
+            ],
+            [
+              0,
+              2,
+              3
+            ]
+          ],
+          "point_fields": {
+            "psi": [
+              0.0,
+              0.0,
+              1.0,
+              1.0
+            ]
+          }
         },
         "artifacts": []
       }
@@ -38,12 +114,205 @@
         "job_id": "j-abc123def456",
         "kind": "grid2d",
         "data": {
-          "bounds": [0.0, 0.0, 1.0, 1.0],
-          "shape": [1, 2],
-          "fields": { "psi": [0.0, 1.0] },
-          "mask": [0, 0]
+          "bounds": [
+            0.0,
+            0.0,
+            1.0,
+            1.0
+          ],
+          "shape": [
+            1,
+            2
+          ],
+          "fields": {
+            "psi": [
+              0.0,
+              1.0
+            ]
+          },
+          "mask": [
+            0,
+            0
+          ]
         },
-        "stats": { "cells": 2, "iterations": 50, "dofs": 2, "seconds": 0.0123 },
+        "stats": {
+          "cells": 2,
+          "iterations": 50,
+          "dofs": 2,
+          "seconds": 0.0123
+        },
+        "artifacts": []
+      }
+    },
+    {
+      "name": "grid2d with a vector field",
+      "$comment": "Protocol 1.1. `vector_fields` is indexed exactly like `fields`.",
+      "payload": {
+        "job_id": "j-vec-grid",
+        "kind": "grid2d",
+        "data": {
+          "bounds": [
+            0.0,
+            0.0,
+            1.0,
+            1.0
+          ],
+          "shape": [
+            2,
+            3
+          ],
+          "fields": {
+            "speed": [
+              1.0,
+              1.0,
+              1.0,
+              2.0,
+              2.0,
+              2.0
+            ]
+          },
+          "vector_fields": {
+            "velocity": [
+              [
+                1.0,
+                0.0
+              ],
+              [
+                1.0,
+                0.0
+              ],
+              [
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                2.0
+              ],
+              [
+                0.0,
+                2.0
+              ],
+              [
+                0.0,
+                2.0
+              ]
+            ]
+          },
+          "mask": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "artifacts": []
+      }
+    },
+    {
+      "name": "mesh2d with a nodal vector field",
+      "payload": {
+        "job_id": "j-vec-mesh",
+        "kind": "mesh2d",
+        "data": {
+          "bounds": [
+            0.0,
+            0.0,
+            1.0,
+            1.0
+          ],
+          "points": [
+            [
+              0.0,
+              0.0
+            ],
+            [
+              1.0,
+              0.0
+            ],
+            [
+              1.0,
+              1.0
+            ],
+            [
+              0.0,
+              1.0
+            ]
+          ],
+          "triangles": [
+            [
+              0,
+              1,
+              2
+            ],
+            [
+              0,
+              2,
+              3
+            ]
+          ],
+          "point_fields": {
+            "speed": [
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ]
+          },
+          "point_vector_fields": {
+            "velocity": [
+              [
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0
+              ],
+              [
+                -1.0,
+                0.0
+              ],
+              [
+                0.0,
+                -1.0
+              ]
+            ]
+          }
+        },
+        "artifacts": []
+      }
+    },
+    {
+      "name": "grid2d without vector fields stays valid",
+      "$comment": "The additive guarantee: a 1.0 payload must still parse under 1.1.",
+      "payload": {
+        "job_id": "j-scalar-only",
+        "kind": "grid2d",
+        "data": {
+          "bounds": [
+            0.0,
+            0.0,
+            1.0,
+            1.0
+          ],
+          "shape": [
+            1,
+            2
+          ],
+          "fields": {
+            "psi": [
+              0.0,
+              1.0
+            ]
+          },
+          "mask": [
+            0,
+            0
+          ]
+        },
         "artifacts": []
       }
     }
@@ -53,55 +322,339 @@
       "name": "grid2d field length mismatch",
       "reason": "fields must have ny*nx entries",
       "payload": {
-        "job_id": "j-x", "kind": "grid2d",
-        "data": { "bounds": [0, 0, 1, 1], "shape": [2, 3],
-                  "fields": { "psi": [1, 2, 3] }, "mask": [0, 0, 0, 0, 0, 0] }
+        "job_id": "j-x",
+        "kind": "grid2d",
+        "data": {
+          "bounds": [
+            0,
+            0,
+            1,
+            1
+          ],
+          "shape": [
+            2,
+            3
+          ],
+          "fields": {
+            "psi": [
+              1,
+              2,
+              3
+            ]
+          },
+          "mask": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
       }
     },
     {
       "name": "non-numeric stat value",
       "reason": "stats is a map of numbers; keys are free but values are not",
       "payload": {
-        "job_id": "j-x", "kind": "grid2d",
-        "data": { "bounds": [0, 0, 1, 1], "shape": [1, 2],
-                  "fields": { "psi": [0, 1] }, "mask": [0, 0] },
-        "stats": { "cells": "many" }
+        "job_id": "j-x",
+        "kind": "grid2d",
+        "data": {
+          "bounds": [
+            0,
+            0,
+            1,
+            1
+          ],
+          "shape": [
+            1,
+            2
+          ],
+          "fields": {
+            "psi": [
+              0,
+              1
+            ]
+          },
+          "mask": [
+            0,
+            0
+          ]
+        },
+        "stats": {
+          "cells": "many"
+        }
       }
     },
     {
       "name": "mesh2d dangling triangle index",
       "reason": "triangle indices must reference existing points",
       "payload": {
-        "job_id": "j-x", "kind": "mesh2d",
-        "data": { "bounds": [0, 0, 1, 1], "points": [[0, 0], [1, 0], [0, 1]],
-                  "triangles": [[0, 1, 7]], "point_fields": { "psi": [0, 0, 0] } }
+        "job_id": "j-x",
+        "kind": "mesh2d",
+        "data": {
+          "bounds": [
+            0,
+            0,
+            1,
+            1
+          ],
+          "points": [
+            [
+              0,
+              0
+            ],
+            [
+              1,
+              0
+            ],
+            [
+              0,
+              1
+            ]
+          ],
+          "triangles": [
+            [
+              0,
+              1,
+              7
+            ]
+          ],
+          "point_fields": {
+            "psi": [
+              0,
+              0,
+              0
+            ]
+          }
+        }
       }
     },
     {
       "name": "fractional grid shape",
       "reason": "shape is a pair of integers",
       "payload": {
-        "job_id": "j-x", "kind": "grid2d",
-        "data": { "bounds": [0, 0, 1, 1], "shape": [1.5, 4],
-                  "fields": { "psi": [1, 2, 3, 4, 5, 6] }, "mask": [0, 0, 0, 0, 0, 0] }
+        "job_id": "j-x",
+        "kind": "grid2d",
+        "data": {
+          "bounds": [
+            0,
+            0,
+            1,
+            1
+          ],
+          "shape": [
+            1.5,
+            4
+          ],
+          "fields": {
+            "psi": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6
+            ]
+          },
+          "mask": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
       }
     },
     {
       "name": "fractional artifact size",
       "reason": "artifact size is an integer byte count",
       "payload": {
-        "job_id": "j-x", "kind": "grid2d",
-        "data": { "bounds": [0, 0, 1, 1], "shape": [1, 2],
-                  "fields": { "psi": [1, 2] }, "mask": [0, 0] },
+        "job_id": "j-x",
+        "kind": "grid2d",
+        "data": {
+          "bounds": [
+            0,
+            0,
+            1,
+            1
+          ],
+          "shape": [
+            1,
+            2
+          ],
+          "fields": {
+            "psi": [
+              1,
+              2
+            ]
+          },
+          "mask": [
+            0,
+            0
+          ]
+        },
         "artifacts": [
-          { "name": "a.vtk", "content_type": "model/vnd.vtk", "size": 10.5, "url": "/a" }
+          {
+            "name": "a.vtk",
+            "content_type": "model/vnd.vtk",
+            "size": 10.5,
+            "url": "/a"
+          }
         ]
       }
     },
     {
       "name": "unknown result kind",
       "reason": "kind must be grid2d or mesh2d",
-      "payload": { "job_id": "j-x", "kind": "hologram", "data": {} }
+      "payload": {
+        "job_id": "j-x",
+        "kind": "hologram",
+        "data": {}
+      }
+    },
+    {
+      "name": "grid2d vector field length mismatch",
+      "reason": "a vector field must have ny*nx entries, like a scalar one",
+      "payload": {
+        "job_id": "j-bad-vec",
+        "kind": "grid2d",
+        "data": {
+          "bounds": [
+            0.0,
+            0.0,
+            1.0,
+            1.0
+          ],
+          "shape": [
+            2,
+            3
+          ],
+          "fields": {
+            "speed": [
+              1.0,
+              1.0,
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ]
+          },
+          "vector_fields": {
+            "velocity": [
+              [
+                1.0,
+                0.0
+              ],
+              [
+                1.0,
+                0.0
+              ]
+            ]
+          },
+          "mask": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "artifacts": []
+      }
+    },
+    {
+      "name": "grid2d vector entry is a scalar",
+      "reason": "each entry is an [x, y] pair; a bare number has no direction",
+      "payload": {
+        "job_id": "j-bad-vec2",
+        "kind": "grid2d",
+        "data": {
+          "bounds": [
+            0.0,
+            0.0,
+            1.0,
+            1.0
+          ],
+          "shape": [
+            1,
+            2
+          ],
+          "fields": {
+            "speed": [
+              1.0,
+              1.0
+            ]
+          },
+          "vector_fields": {
+            "velocity": [
+              1.0,
+              2.0
+            ]
+          },
+          "mask": [
+            0,
+            0
+          ]
+        },
+        "artifacts": []
+      }
+    },
+    {
+      "name": "mesh2d nodal vector field length mismatch",
+      "reason": "one [x, y] pair per node, in points order",
+      "payload": {
+        "job_id": "j-bad-vec3",
+        "kind": "mesh2d",
+        "data": {
+          "bounds": [
+            0.0,
+            0.0,
+            1.0,
+            1.0
+          ],
+          "points": [
+            [
+              0.0,
+              0.0
+            ],
+            [
+              1.0,
+              0.0
+            ],
+            [
+              1.0,
+              1.0
+            ]
+          ],
+          "triangles": [
+            [
+              0,
+              1,
+              2
+            ]
+          ],
+          "point_fields": {
+            "speed": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          },
+          "point_vector_fields": {
+            "velocity": [
+              [
+                1.0,
+                0.0
+              ]
+            ]
+          }
+        },
+        "artifacts": []
+      }
     }
   ]
 }

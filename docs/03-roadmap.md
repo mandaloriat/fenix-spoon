@@ -217,11 +217,12 @@ Goal: adoption. People find, run, and copy examples.
       copy-paste-able app, with a [gallery index](gallery.md) (#18) — *the heat sink ships two
       adapters, `mock.heat2d` and `dolfinx.heat2d`, cross-validated against each other, and its
       demo page builds its controls from `params_schema`.*
-- [ ] Vector fields on the wire and in the viewer (#62) — *split out of #18. Navier–Stokes was
-      blocked rather than unwritten: `fields` and `point_fields` are maps of name → scalar, so a
-      velocity cannot be expressed as one thing and the viewer has no glyphs. Both potential-flow
-      adapters already ship `|v|` for exactly this reason. Unblocks flux and current-density
-      rendering too, which three adapters currently flatten to a magnitude.*
+- [x] Vector fields on the wire and in the viewer (#62) — *protocol 1.1 adds `vector_fields` to
+      `grid2d` and `point_vector_fields` to `mesh2d`, indexed like the scalar maps, so a velocity
+      is one named thing rather than two conventions apart. `<fs-viewer vectors="velocity">` draws
+      arrow glyphs on a lattice sized by the `glyphs` attribute rather than by the data, because
+      one arrow per grid point is unreadable at 512×341 and sparse at 16×16. The first additive
+      bump under the rule #58 wrote down.*
 - [ ] "Deploy to Fly.io/Render/self-host" one-clickish guides (#19)
 - [x] A protocol version on the wire, a compatibility rule, and a bump procedure (#58) —
       `GET /api/v1/version`, the one route outside the auth gate, because a client has to

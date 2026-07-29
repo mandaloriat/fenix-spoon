@@ -18,8 +18,10 @@ import {
   contourSegments,
   isoLevels,
   probe,
+  glyphSamples,
   resultFieldNames,
   resultFieldValues,
+  resultVectorFieldNames,
 } from '../src/field.js';
 
 defineFieldViewer();
@@ -295,5 +297,85 @@ describe('<fs-viewer>', () => {
     expect(element.colormap).toBe('viridis');
     element.setAttribute('colormap', 'plasma');
     expect(element.colormap).toBe('plasma');
+  });
+});
+
+describe('vector fields and glyphs', () => {
+  // A 5x5 grid of uniform rightward flow, so every assertion has an obvious right answer.
+  const uniform = (vx: number, vy: number): Grid2DResult => ({
+    job_id: 'j-vec',
+    kind: 'grid2d',
+    data: {
+      bounds: [0, 0, 4, 4],
+      shape: [5, 5],
+      fields: { speed: Array(25).fill(Math.hypot(vx, vy)) },
+      vector_fields: { velocity: Array(25).fill([vx, vy]) as [number, number][] },
+      mask: Array(25).fill(0),
+    },
+    artifacts: [],
+  });
+
+  it('lists vector fields separately from scalars', () => {
+    expect(resultVectorFieldNames(uniform(1, 0))).toEqual(['velocity']);
+    expect(resultFieldNames(uniform(1, 0))).toEqual(['speed']);
+  });
+
+  it('reports none for a result from a pre-1.1 server', () => {
+    const old = uniform(1, 0);
+    delete (old.data as { vector_fields?: unknown }).vector_fields;
+    expect(resultVectorFieldNames(old)).toEqual([]);
+    expect(glyphSamples(old, 'velocity')).toEqual([]);
+  });
+
+  it('preserves direction and magnitude through the lattice average', () => {
+    const glyphs = glyphSamples(uniform(3, 4), 'velocity', 4);
+    expect(glyphs.length).toBeGreaterThan(0);
+    for (const g of glyphs) {
+      expect(g.vx).toBeCloseTo(3);
+      expect(g.vy).toBeCloseTo(4);
+      expect(g.magnitude).toBeCloseTo(5);
+    }
+  });
+
+  it('decouples glyph count from data resolution — the whole point', () => {
+    // The same physical field on a coarse and a fine grid must give the same arrows.
+    const fine: Grid2DResult = {
+      job_id: 'j-fine',
+      kind: 'grid2d',
+      data: {
+        bounds: [0, 0, 4, 4],
+        shape: [40, 40],
+        fields: { speed: Array(1600).fill(1) },
+        vector_fields: { velocity: Array(1600).fill([1, 0]) as [number, number][] },
+        mask: Array(1600).fill(0),
+      },
+      artifacts: [],
+    };
+    const coarse = glyphSamples(uniform(1, 0), 'velocity', 4);
+    expect(glyphSamples(fine, 'velocity', 4).length).toBe(coarse.length);
+  });
+
+  it('skips masked samples so arrows stop at a hole', () => {
+    const holed = uniform(1, 0);
+    // Mask the entire left half.
+    holed.data.mask = Array.from({ length: 25 }, (_, i) => (i % 5 < 2 ? 1 : 0));
+    const glyphs = glyphSamples(holed, 'velocity', 5);
+    expect(glyphs.length).toBeGreaterThan(0);
+    // No arrow may sit in the masked columns (x < 1.5 given bounds 0..4 over 5 points).
+    expect(glyphs.every((g) => g.x > 1.0)).toBe(true);
+  });
+
+  it('drops zero vectors rather than drawing a directionless arrow', () => {
+    expect(glyphSamples(uniform(0, 0), 'velocity', 4)).toEqual([]);
+  });
+
+  it('exposes vector fields on the element and takes the attribute', () => {
+    const el = document.createElement('fs-viewer') as FieldViewerElement;
+    document.body.append(el);
+    el.result = uniform(1, 0);
+    expect(el.vectorFields).toEqual(['velocity']);
+    el.setAttribute('vectors', 'velocity');
+    expect(el.vectors).toBe('velocity');
+    el.remove();
   });
 });

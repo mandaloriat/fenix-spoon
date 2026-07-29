@@ -45,7 +45,11 @@ def polygon_mask(points: np.ndarray, xx: np.ndarray, yy: np.ndarray) -> np.ndarr
 
 
 def grid_to_mesh2d(
-    x: np.ndarray, y: np.ndarray, mask: np.ndarray, fields: dict[str, np.ndarray]
+    x: np.ndarray,
+    y: np.ndarray,
+    mask: np.ndarray,
+    fields: dict[str, np.ndarray],
+    vector_fields: dict[str, np.ndarray] | None = None,
 ) -> dict:
     """Triangulate the unmasked part of a structured grid into a ``mesh2d`` payload.
 
@@ -72,11 +76,18 @@ def grid_to_mesh2d(
         [np.column_stack([a, b, d]), np.column_stack([a, d, c])], axis=0
     )
 
-    return {
+    payload = {
         "points": points.tolist(),
         "triangles": triangles.tolist(),
         "point_fields": {name: values[keep].ravel().tolist() for name, values in fields.items()},
     }
+    if vector_fields:
+        # A vector field is (ny, nx, 2), so `keep` selects rows of pairs rather than
+        # scalars — the trailing axis survives the mask untouched.
+        payload["point_vector_fields"] = {
+            name: values[keep].reshape(-1, 2).tolist() for name, values in vector_fields.items()
+        }
+    return payload
 
 
 def write_vtk_structured_points(
@@ -173,6 +184,14 @@ class MockLaplace2D(Solver):
         v = -np.gradient(psi, dx_, axis=1)
         speed = np.sqrt(u**2 + v**2)
         speed[mask] = 0.0
+        # The velocity itself, not just its magnitude. Direction is the whole reason to
+        # look at a flow field, and until protocol 1.1 there was nowhere to put it — the
+        # result kinds carried scalars only, so this adapter computed `u` and `v` and threw
+        # the pair away. Zeroed inside the obstacle for the same reason `speed` is: there
+        # is no flow there, and a stale gradient would draw arrows into the body.
+        u_out = np.where(mask, 0.0, u)
+        v_out = np.where(mask, 0.0, v)
+        velocity = np.stack([u_out, v_out], axis=-1)
 
         if params.write_vtk:
             write_vtk_structured_points(
@@ -186,7 +205,9 @@ class MockLaplace2D(Solver):
                 stats=stats,
                 data={
                     "bounds": [xmin, ymin, xmax, ymax],
-                    **grid_to_mesh2d(x, y, mask, {"psi": psi, "speed": speed}),
+                    **grid_to_mesh2d(
+                        x, y, mask, {"psi": psi, "speed": speed}, {"velocity": velocity}
+                    ),
                 },
             )
 
@@ -198,8 +219,14 @@ class MockLaplace2D(Solver):
                 "shape": [ny, nx],
                 "fields": {
                     "psi": psi.ravel().tolist(),
+                    # `speed` stays alongside `velocity` rather than being derived by every
+                    # client: the viewer colours by it on every frame, and recomputing a
+                    # magnitude over ~170k points in JS to save a field on the wire is the
+                    # wrong trade. Documented in the wire protocol so it is a decision, not
+                    # an accident.
                     "speed": speed.ravel().tolist(),
                 },
+                "vector_fields": {"velocity": velocity.reshape(-1, 2).tolist()},
                 "mask": mask.astype(np.uint8).ravel().tolist(),
             },
         )

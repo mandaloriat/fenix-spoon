@@ -1,6 +1,6 @@
 {
-  "$comment": "The protocol version both sides must agree on, plus conformance cases for the `GET /api/v1/version` payload. `protocol_version` is the assertion that matters: server/tests/test_protocol_fixtures.py checks it against fenixspoon.protocol.PROTOCOL_VERSION and the SDK's conformance suite checks it against PROTOCOL_VERSION in @fenix-spoon/client, so bumping one side without the other fails CI on the other. When a second protocol version exists, this file gains a `superseded` list and the corpus can hold cases for both.",
-  "protocol_version": "1.0",
+  "$comment": "The protocol version both sides must agree on, plus conformance cases for the `GET /api/v1/version` payload. `protocol_version` is the assertion that matters: server/tests/test_protocol_fixtures.py checks it against fenixspoon.protocol.PROTOCOL_VERSION and the SDK's conformance suite checks it against PROTOCOL_VERSION in @fenix-spoon/client, so bumping one side without the other fails CI on the other. 1.1 added vector fields to both result kinds \u2014 additive, so it shares /api/v1 with 1.0. When a MAJOR arrives, this file gains a `superseded` list and the corpus holds cases for both.",
+  "protocol_version": "1.1",
   "valid": [
     {
       "name": "version payload",

@@ -58,6 +58,7 @@ the packages, not from this page.</p>
   <button id="cancel" hidden>Cancel ✕</button>
   <label><input type="checkbox" id="auto" checked> auto-run on edit</label>
   <label>field <select id="field"></select></label>
+  <label><input type="checkbox" id="glyphs"> velocity arrows</label>
   <label>solver <select id="solver"></select></label>
   <label><input type="checkbox" id="spline" checked> spline mode</label>
   <progress id="prog" value="0" max="1" hidden></progress>
@@ -112,6 +113,9 @@ async function run() {
 
     viewer.result = result;
     syncFieldOptions();
+    const glyphToggle = document.getElementById('glyphs');
+    glyphToggle.disabled = viewer.vectorFields.length === 0;
+    if (glyphToggle.checked && !glyphToggle.disabled) viewer.vectors = viewer.vectorFields[0];
     statusEl.textContent =
       `done — ${result.data.triangles?.length ?? 0} elements` + formatStats(result.stats);
     showArtifacts(result.artifacts);
@@ -182,6 +186,11 @@ editor.addEventListener('change', () => {
 runBtn.addEventListener('click', run);
 cancelBtn.addEventListener('click', () => currentJob?.cancel());
 fieldSelect.addEventListener('change', () => { viewer.field = fieldSelect.value; });
+// Vector glyphs (protocol 1.1). The checkbox is disabled until a result actually carries a
+// vector field, so an older server degrades to "no arrows" rather than a control that lies.
+document.getElementById('glyphs').addEventListener('change', (event) => {
+  viewer.vectors = event.target.checked ? viewer.vectorFields[0] ?? null : null;
+});
 document.getElementById('spline').addEventListener('change', (event) => {
   editor.mode = event.target.checked ? 'spline' : 'polygon';
   if (document.getElementById('auto').checked) run();

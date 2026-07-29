@@ -37,8 +37,10 @@ import {
   contourSegments,
   isoLevels,
   probe,
+  glyphSamples,
   resultFieldNames,
   resultFieldValues,
+  resultVectorFieldNames,
   resultMask,
 } from './field.js';
 
@@ -59,7 +61,9 @@ const COLORBAR_MARGIN = 12;
 const MASKED: [number, number, number] = [30, 30, 34];
 
 export class FieldViewerElement extends HTMLElement {
-  static observedAttributes = ['field', 'colormap', 'contours', 'colorbar', 'symmetric', 'units'];
+  static observedAttributes = [
+    'field', 'colormap', 'contours', 'colorbar', 'symmetric', 'units', 'vectors', 'glyphs',
+  ];
 
   #root: ShadowRoot;
   #canvas: HTMLCanvasElement;
@@ -72,6 +76,8 @@ export class FieldViewerElement extends HTMLElement {
   #showColorbar = true;
   #symmetric = false;
   #units = '';
+  #vectors: string | null = null;
+  #glyphs = 24;
   #frame = 0;
 
   constructor() {
@@ -122,6 +128,22 @@ export class FieldViewerElement extends HTMLElement {
     return this.#result ? resultFieldNames(this.#result) : [];
   }
 
+  /** Vector fields in the current result — empty against a pre-1.1 server. */
+  get vectorFields(): string[] {
+    return this.#result ? resultVectorFieldNames(this.#result) : [];
+  }
+
+  get vectors(): string | null {
+    return this.#vectors;
+  }
+
+  set vectors(name: string | null) {
+    // Via the attribute, like `field`: one path into `attributeChangedCallback`, so the
+    // property and the attribute can never disagree about what is being drawn.
+    if (name === null || name === '') this.removeAttribute('vectors');
+    else this.setAttribute('vectors', name);
+  }
+
   get colormap(): ColormapName {
     return this.#colormap;
   }
@@ -160,6 +182,14 @@ export class FieldViewerElement extends HTMLElement {
       case 'colormap':
         if (value && isColormapName(value)) this.#colormap = value;
         break;
+      case 'vectors':
+        this.#vectors = value || null;
+        break;
+      case 'glyphs': {
+        const across = Number(value);
+        this.#glyphs = Number.isFinite(across) && across > 0 ? Math.floor(across) : 24;
+        break;
+      }
       case 'contours': {
         const count = Number(value);
         this.#contours = Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
@@ -219,6 +249,7 @@ export class FieldViewerElement extends HTMLElement {
     else this.#drawMesh(ctx, values, range, plotWidth, height);
 
     if (this.#contours > 0) this.#drawContours(ctx, range, plotWidth, height);
+    if (this.#vectors) this.#drawGlyphs(ctx, plotWidth, height);
     if (this.#showColorbar) this.#drawColorbar(ctx, range, width, height);
   }
 
@@ -322,6 +353,58 @@ export class FieldViewerElement extends HTMLElement {
         const pb = project(b);
         ctx.moveTo(pa[0], pa[1]);
         ctx.lineTo(pb[0], pb[1]);
+      }
+    }
+    ctx.stroke();
+  }
+
+  /**
+   * Arrow glyphs for a vector field, on a lattice independent of the data's resolution.
+   *
+   * Arrows are scaled by magnitude but capped at the lattice spacing, so a fast region
+   * cannot draw arrows that overlap their neighbours into an unreadable smear — the cap
+   * is what keeps the *pattern* legible when the dynamic range is wide. Everything is
+   * drawn in one path: hundreds of individually stroked arrows is the slow way.
+   */
+  #drawGlyphs(ctx: CanvasRenderingContext2D, width: number, height: number): void {
+    const glyphs = glyphSamples(this.#result!, this.#vectors!, this.#glyphs);
+    if (!glyphs.length) return;
+    const project = this.#projector(width, height);
+    const peak = Math.max(...glyphs.map((g) => g.magnitude));
+    if (!(peak > 0)) return;
+
+    const spacing = width / this.#glyphs;
+    const maxLength = spacing * 0.85;
+    ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (const glyph of glyphs) {
+      const [px, py] = project([glyph.x, glyph.y]);
+      // Direction in screen space: y is flipped, because the domain has y up and the
+      // canvas has y down. Projecting a second point rather than negating by hand keeps
+      // this correct if the projection ever changes.
+      const [tx, ty] = project([glyph.x + glyph.vx, glyph.y + glyph.vy]);
+      const dx = tx - px;
+      const dy = ty - py;
+      const screenLength = Math.hypot(dx, dy);
+      if (!(screenLength > 0)) continue;
+      const length = (glyph.magnitude / peak) * maxLength;
+      const ux = (dx / screenLength) * length;
+      const uy = (dy / screenLength) * length;
+      // Centre the arrow on its lattice point instead of starting there: a tail-anchored
+      // arrow visually biases the field downstream by half its own length.
+      const x0 = px - ux / 2;
+      const y0 = py - uy / 2;
+      const x1 = px + ux / 2;
+      const y1 = py + uy / 2;
+      ctx.moveTo(x0, y0);
+      ctx.lineTo(x1, y1);
+      const head = Math.min(length * 0.35, spacing * 0.3);
+      const angle = Math.atan2(uy, ux);
+      for (const sweep of [2.6, -2.6]) {
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x1 + head * Math.cos(angle + sweep), y1 + head * Math.sin(angle + sweep));
       }
     }
     ctx.stroke();
