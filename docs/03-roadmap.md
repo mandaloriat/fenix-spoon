@@ -93,7 +93,13 @@ Goal: multi-user deployments are safe and boring.
       run on threads, and a memory limit is a property of a process. The cell budget is the proxy
       and the container limit is the backstop until the worker backend (#12) makes each solve its
       own process.*
-- [ ] Helm chart / compose profiles for API + workers + Redis (#15)
+- [ ] Helm chart / compose profiles for API + workers + Redis (#15) — *partially done: the
+      compose side ships as `docker-compose.workers.yml` (an override rather than a profile,
+      because a profile cannot change the API's environment, and the API must switch backend
+      and event bus together), and GHCR publishing builds both image variants with a startup
+      smoke test. The Helm chart is deliberately not written: Helm is not installable in the
+      environment this was developed in, so it could not be linted, let alone installed —
+      and an untested deployment recipe reads as supported when it is not.*
 - [x] Load test: N concurrent solves with progress streaming (#16) — `make loadtest` plus
       [documented results](06-load-test.md). 50 concurrent clients and 100 live WebSockets
       with zero failures and zero dropped streams. It found the concurrency knob nobody had

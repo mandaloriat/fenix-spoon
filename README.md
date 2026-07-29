@@ -71,6 +71,10 @@ With Docker (full FEniCSx runtime):
 docker compose up --build
 ```
 
+Or pull a published image instead of building — `ghcr.io/mandaloriat/fenix-spoon:latest`
+for the FEniCSx runtime, `:latest-slim` for a ~100 MB image with the mock solvers only,
+which is all front-end work needs.
+
 For the multi-user shape — the API dispatching to worker containers rather than solving
 itself — layer the worker override:
 

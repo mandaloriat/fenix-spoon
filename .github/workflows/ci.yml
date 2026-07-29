@@ -65,3 +65,32 @@ jobs:
         run: python3 -c "import dolfinx, gmsh"
       - name: Test (FEniCSx adapter)
         run: pytest server/tests -m fenics -v
+
+  # The distributed job backend. These tests skip themselves without a reachable Redis,
+  # so without this job the entire worker path — pub/sub, the queue, the worker entry
+  # point — would be covered by tests that never run.
+  redis:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install -e "./server[dev,redis]"
+      - name: Guard against silently skipped tests
+        # Same reasoning as the fenics job: a skip here would look like a pass.
+        run: python3 -c "import arq, redis"
+      - name: Test (Redis backend and workers)
+        env:
+          FENIXSPOON_TEST_REDIS_URL: redis://localhost:6379
+        run: pytest server/tests -m redis -v

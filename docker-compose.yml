@@ -8,6 +8,9 @@
 #
 services:
   api:
+    # Or skip the build entirely:
+    #   image: ghcr.io/mandaloriat/fenix-spoon:latest        # FEniCSx runtime
+    #   image: ghcr.io/mandaloriat/fenix-spoon:latest-slim   # mock solvers, ~100 MB
     build:
       context: .
       dockerfile: server/Dockerfile

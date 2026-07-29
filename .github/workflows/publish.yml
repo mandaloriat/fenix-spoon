@@ -1,0 +1,103 @@
+name: Publish images
+
+# Publishes the server image to GHCR so `docker compose up` and the Helm chart can pull
+# rather than build. Runs on main and on version tags; `workflow_dispatch` is there for
+# re-publishing after a base-image bump without an otherwise-pointless commit.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ${{ github.repository }}
+  # Pinned, not `stable`. The Dockerfile defaults to `dolfinx/dolfinx:stable` because a
+  # developer building locally wants what is current; a *published* image must be
+  # rebuildable to the same bytes next year, and it must match the version the FEniCSx
+  # adapter tests actually ran against in ci.yml. Bump both together.
+  DOLFINX_VERSION: v0.11.0
+
+jobs:
+  # Two images from one Dockerfile, differing only in base. The full one carries FEniCSx
+  # and is what a real deployment runs; the slim one has the mock solvers only, and
+  # exists because front-end work should never have to pull a 3 GB image.
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: fenics
+            base: dolfinx/dolfinx:v0.11.0
+            suffix: ""
+          - variant: slim
+            base: python:3.12-slim
+            suffix: "-slim"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE }}
+          # `suffix` keeps the two variants in one repository rather than two, so
+          # `:latest` and `:latest-slim` sit side by side.
+          flavor: |
+            latest=auto
+            suffix=${{ matrix.suffix }},onlatest=true
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+            # Lets a deployment pin the FEniCSx version explicitly, which is the thing
+            # most likely to force a rebuild.
+            type=raw,value=dolfinx-${{ env.DOLFINX_VERSION }},enable=${{ matrix.variant == 'fenics' }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: server/Dockerfile
+          build-args: |
+            BASE_IMAGE=${{ matrix.base }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
+
+      - name: Smoke-test the published image
+        # A pushed image that cannot start is worse than no image: `docker compose up`
+        # would pull it and fail for a user who did nothing wrong.
+        #
+        # Slim only, deliberately. What this checks is the entrypoint and the install —
+        # identical in both variants, since they share a Dockerfile — and the slim image
+        # is tens of megabytes against three gigabytes. The FEniCSx base is already
+        # exercised harder than this by the `fenics` job in ci.yml, which runs the whole
+        # adapter suite inside that exact image.
+        if: matrix.variant == 'slim'
+        run: |
+          IMAGE_REF=$(echo '${{ steps.meta.outputs.tags }}' | head -n 1)
+          docker run -d --name smoke -p 8000:8000 "$IMAGE_REF"
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8000/api/v1/solvers > /dev/null && break
+            sleep 2
+          done
+          docker logs smoke
+          curl -sf http://127.0.0.1:8000/api/v1/solvers | grep -q 'mock.laplace2d'
+          docker rm -f smoke

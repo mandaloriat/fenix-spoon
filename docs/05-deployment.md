@@ -32,6 +32,25 @@ sixty an hour, no single job can ask for more than half a million cells or five 
 and job history survives a restart. Generate keys with `python -c "import secrets;
 print(secrets.token_urlsafe(32))"`.
 
+## Images
+
+Published to GHCR on every push to `main` and every `v*` tag:
+
+| Tag | Contains | Size |
+|---|---|---|
+| `ghcr.io/mandaloriat/fenix-spoon:latest` | FEniCSx + Gmsh + the server | ~3 GB |
+| `ghcr.io/mandaloriat/fenix-spoon:latest-slim` | The server and the mock solvers only | ~100 MB |
+| `…:dolfinx-v0.11.0` | The FEniCSx image, pinned to a dolfinx release | |
+
+One image serves both roles — API and worker. Which one a container is depends on its
+command, not its build, so there is nothing to keep in sync between them.
+
+Use the slim image for front-end work: it runs the whole protocol, the demos and the mock
+solvers, and pulls in seconds. Use `:dolfinx-v0.11.0` rather than `:latest` in production —
+the FEniCSx version is the thing most likely to change a result.
+
+Replace the `build:` block in either compose file with `image:` to pull instead of build.
+
 ## Authentication
 
 | Mode | Configuration | Behaviour |
