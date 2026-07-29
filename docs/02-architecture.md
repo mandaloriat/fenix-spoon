@@ -168,6 +168,14 @@ Result payloads live on disk rather than in the database on purpose: a 512×341 
 megabytes of JSON, the data directory is already the durable-storage contract for artifacts, and
 keeping them together makes one job's bytes one directory you can copy, delete or mount.
 
+That only pays if nothing quietly keeps a second copy, which is a discipline rather than a
+guarantee, and it has to hold in two places. The live cache is **for jobs that are being solved**:
+once a job is terminal its entry is dropped, because the only things it still held that the store
+does not were the cancel handle and a status that had stopped moving — plus the payload. And a
+store read fetches **only what the caller asked for**: a status poll, a cancel and an artifact
+download take metadata alone, so `GET /jobs/{id}` does not pay for a multi-megabyte read to answer
+with six fields, and a history page does not pay for it once per row.
+
 Restarting introduces a state the in-process manager never had: a job the store believes is
 `running` that nothing is solving. Startup reconciliation fails those explicitly — a status
 stream that can never terminate is worse than a job that admits it was lost.

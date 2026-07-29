@@ -9,8 +9,10 @@ path version.
 !!! note "Versioning is the path, and only the path"
     `/api/v1` is currently the *whole* of the version signal: no payload carries a protocol
     version field, and a client cannot ask a server what it speaks beyond trying a path. That is
-    tolerable while there is one version and no third-party servers, and it is tracked as a gap —
-    a bump procedure has to exist before anyone else implements this protocol.
+    tolerable while there is one version and no third-party servers, and it is tracked as a gap
+    ([#58](https://github.com/mandaloriat/fenix-spoon/issues/58)) — a bump procedure has to exist
+    before anyone else implements this protocol, and the transports planned in M2.5 have no path
+    to carry a version in at all.
 
 ## Scope: domain contract vs HTTP transport
 

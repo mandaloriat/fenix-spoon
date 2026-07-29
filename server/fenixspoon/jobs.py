@@ -217,16 +217,23 @@ class JobManager:
             self.store, self.bus, self._data_dir, self._timeout, self.max_workers
         )
 
-    def get(self, job_id: str, owner: str | None = None) -> Job | None:
+    def get(
+        self, job_id: str, owner: str | None = None, *, with_result: bool = False
+    ) -> Job | None:
         """A live job if this process owns one, otherwise whatever the store remembers.
 
         ``owner`` scopes the lookup to one principal: a job belonging to somebody else
         comes back as None, so the caller answers 404. Not 403 — telling a stranger that
         a job id exists is itself a leak, and the ids are only 48 bits of randomness.
+
+        ``with_result`` defaults to False because almost nothing needs the payload: a
+        status poll, a cancel and an artifact download all want metadata, and loading a
+        multi-megabyte result to answer them costs more than the answer. Only
+        ``/jobs/{id}/result`` asks for it.
         """
         job = self._jobs.get(job_id)
         if job is None:
-            record = self.store.get(job_id)
+            record = self.store.get(job_id, with_result=with_result, with_events=False)
             job = Job.from_record(record, self._data_dir / record.id) if record else None
         if job is None or (owner is not None and job.owner != owner):
             return None
@@ -256,13 +263,38 @@ class JobManager:
         job.artifact_dir = self._data_dir / job.id
         record = job.to_record()
         self.store.put(record)
+        on_finish = job.absorb
         if self.backend.runs_locally:
             # Cache it only when this process is the one running it. A remote backend
             # never calls back, so a cached Job would stay `queued` forever while the
             # store — the only thing both processes share — said `done`.
             self._jobs[job.id] = job
-        await self.backend.start(record, solver_cls, geometry, params, on_finish=job.absorb)
+            on_finish = self._retire(job)
+        await self.backend.start(record, solver_cls, geometry, params, on_finish=on_finish)
         return job
+
+    def _retire(self, job: Job):
+        """Copy the outcome onto the live entry, then drop it from the cache.
+
+        The cache exists to answer for a job *while it is being solved* — a status that
+        has moved on since the last write, and the cancel handle. Once the job is
+        terminal it answers for nothing the store cannot, and it holds the one thing this
+        design went out of its way to keep out of memory: the full result payload. A
+        512×341 grid is ~3 MB of JSON, so keeping finished jobs for the retention window
+        (7 days by default) is an unbounded leak measured in gigabytes — the process runs
+        out of memory long before the TTL sweep would have freed anything.
+
+        Safe because :func:`~fenixspoon.execution.run_solve` persists the terminal record
+        *before* returning, so there is no window in which the entry is gone and the store
+        still says `running`. ``get()`` rehydrates from the store, reading `result.json`
+        back off disk on demand.
+        """
+
+        def finish(record: JobRecord) -> None:
+            job.absorb(record)
+            self._jobs.pop(job.id, None)
+
+        return finish
 
     async def cancel(self, job: Job) -> bool:
         """Request cooperative cancellation. Returns False if the job already ended.
@@ -324,7 +356,7 @@ class JobManager:
         """
         async with self.bus.subscribe(job.id) as live:
             replayed = 0
-            record = self.store.get(job.id)
+            record = self.store.get(job.id, with_result=False)
             history = record.events if record is not None else list(job.events)
             for event in history:
                 replayed += 1

@@ -27,7 +27,7 @@ import sqlite3
 import threading
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -73,14 +73,26 @@ class JobStore(ABC):
         """
 
     @abstractmethod
-    def get(self, job_id: str) -> JobRecord | None:
-        """Load a job with its full event log, or None if it is unknown or purged."""
+    def get(
+        self, job_id: str, *, with_result: bool = True, with_events: bool = True
+    ) -> JobRecord | None:
+        """Load one job, or None if it is unknown or purged.
+
+        The two flags exist because the expensive parts of a record are rarely the parts
+        a caller wants. A result payload is megabytes on disk and the event log is one
+        row per progress tick, while most callers — a status poll, a cancel, an artifact
+        download — need neither. Fetching them unconditionally made answering "is it done
+        yet?" cost a 3 MB read and a JSON parse.
+
+        Backends must return a record that is safe to mutate when either flag is False,
+        rather than a live reference with fields blanked out.
+        """
 
     @abstractmethod
     def list_jobs(
         self, limit: int = 50, offset: int = 0, owner: str | None = None
     ) -> list[JobRecord]:
-        """Newest first, without event logs — this is for a history page, not replay.
+        """Newest first, without event logs or result payloads — a history page.
 
         ``owner`` restricts the page to one principal; ``None`` spans every principal.
         """
@@ -142,15 +154,32 @@ class MemoryJobStore(JobStore):
         record.events.append(event)
         return len(record.events)
 
-    def get(self, job_id: str) -> JobRecord | None:
-        return self._records.get(job_id)
+    def get(
+        self, job_id: str, *, with_result: bool = True, with_events: bool = True
+    ) -> JobRecord | None:
+        record = self._records.get(job_id)
+        if record is None or (with_result and with_events):
+            return record
+        # Nothing is saved by omitting fields that are already in memory, but the contract
+        # has to hold: a caller that asked for a partial record must not get a live
+        # reference into the store, or mutating it would rewrite history in place.
+        # `replace` copies the dataclass, not the lists inside it, so those go by hand —
+        # otherwise appending to `record.events` still reaches the stored log.
+        return replace(
+            record,
+            result=record.result if with_result else None,
+            events=list(record.events) if with_events else [],
+            artifacts=list(record.artifacts),
+        )
 
     def list_jobs(
         self, limit: int = 50, offset: int = 0, owner: str | None = None
     ) -> list[JobRecord]:
         matching = [r for r in self._records.values() if owner is None or r.owner == owner]
         ordered = sorted(matching, key=lambda r: r.created_at, reverse=True)
-        return ordered[offset : offset + limit]
+        return [
+            replace(r, result=None, events=[]) for r in ordered[offset : offset + limit]
+        ]
 
     def count(self, owner: str | None = None) -> int:
         if owner is None:
@@ -322,9 +351,11 @@ class SqliteJobStore(JobStore):
             self._db.commit()
         return seq
 
-    def _record(self, row: sqlite3.Row, events: list[dict[str, Any]]) -> JobRecord:
+    def _record(
+        self, row: sqlite3.Row, events: list[dict[str, Any]], *, with_result: bool = True
+    ) -> JobRecord:
         result = None
-        if row["result_kind"]:
+        if row["result_kind"] and with_result:
             path = self._result_path(row["id"])
             # Metadata without its payload means the file was removed underneath us
             # (manual cleanup, a half-deleted job). Report the job, not a crash.
@@ -349,18 +380,24 @@ class SqliteJobStore(JobStore):
             events=events,
         )
 
-    def get(self, job_id: str) -> JobRecord | None:
+    def get(
+        self, job_id: str, *, with_result: bool = True, with_events: bool = True
+    ) -> JobRecord | None:
         with self._lock:
             row = self._db.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
             if row is None:
                 return None
-            events = [
-                json.loads(r["payload"])
-                for r in self._db.execute(
-                    "SELECT payload FROM events WHERE job_id = ? ORDER BY seq", (job_id,)
-                )
-            ]
-        return self._record(row, events)
+            events = (
+                [
+                    json.loads(r["payload"])
+                    for r in self._db.execute(
+                        "SELECT payload FROM events WHERE job_id = ? ORDER BY seq", (job_id,)
+                    )
+                ]
+                if with_events
+                else []
+            )
+        return self._record(row, events, with_result=with_result)
 
     def list_jobs(
         self, limit: int = 50, offset: int = 0, owner: str | None = None
@@ -372,7 +409,7 @@ class SqliteJobStore(JobStore):
                 "LIMIT ? OFFSET ?",
                 (*params, limit, offset),
             ).fetchall()
-        return [self._record(row, []) for row in rows]
+        return [self._record(row, [], with_result=False) for row in rows]
 
     def count(self, owner: str | None = None) -> int:
         where, params = ("WHERE owner = ?", [owner]) if owner is not None else ("", [])
