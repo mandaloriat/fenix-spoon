@@ -13,12 +13,21 @@ The canonical use case: an engineer opens a web page, drags the control points o
 solenoid cross-section), presses *Run*, and watches the simulation result appear live — no local
 installation, no desktop tooling, just a browser talking to a FEniCSx server.
 
+The browser is the first client, not the only planned one. The same declarative core — named
+solvers, typed parameters, jobs, results — is meant to be drivable from a local process too:
+scripts, CLI, and software agents on a machine that already has FEniCSx, talking to it over a
+structured local interface with compact answers instead of a web app. That direction is designed
+in [M2.5](docs/03-roadmap.md#m25--local-automation-and-agent-interface) and
+[docs/05-local-agent-interface.md](docs/05-local-agent-interface.md); it is planned work, not a
+shipped feature.
+
 > **Status: M1 and M2 done.** Two physics examples run end to end on real FEniCSx solves
 > (potential flow, magnetostatics), the three browser packages — SDK, geometry editor, field
 > viewer — are published from `client/`, and the airfoil demo is built from them. Pure-NumPy mock
 > solvers mirror every FEniCSx one, so the full loop (edit geometry → submit → stream progress →
-> render field) runs without installing FEniCSx at all. Next up is production job execution:
-> a real queue, persistence and auth — see the [roadmap](docs/03-roadmap.md).
+> render field) runs without installing FEniCSx at all. Next up: a transport-neutral core with a
+> local, non-browser interface (M2.5), then production job execution — a real queue, persistence
+> and auth (M3). See the [roadmap](docs/03-roadmap.md).
 
 ## Why
 
@@ -115,6 +124,8 @@ serialization formats), is in [`docs/02-architecture.md`](docs/02-architecture.m
 2. [Architecture](docs/02-architecture.md) — components, choices, trade-offs
 3. [Roadmap](docs/03-roadmap.md) — milestones M0 → M5
 4. [Wire protocol](docs/04-wire-protocol.md) — the JSON contract between client and server
+5. [Local agent interface](docs/05-local-agent-interface.md) — design draft for driving the same
+   core from a local process (planned, M2.5)
 
 ## Contributing
 
