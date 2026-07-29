@@ -86,7 +86,13 @@ Goal: multi-user deployments are safe and boring.
       and the container limit is the backstop until the worker backend (#12) makes each solve its
       own process.*
 - [ ] Helm chart / compose profiles for API + workers + Redis (#15)
-- [ ] Load test: N concurrent solves with progress streaming (#16)
+- [x] Load test: N concurrent solves with progress streaming (#16) — `make loadtest` plus
+      [documented results](06-load-test.md). 50 concurrent clients and 100 live WebSockets
+      with zero failures and zero dropped streams. It found the concurrency knob nobody had
+      set: solves ran on asyncio's shared default executor, so they competed for threads
+      with everything else the server hands off. They now get a bounded pool of their own
+      (`FENIXSPOON_MAX_WORKERS`), and the measurements show why the default is the core
+      count — FEniCSx parallelizes, the pure-Python mock solvers get *slower* with it.
 
 ## M4 — Gallery and docs site
 

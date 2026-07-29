@@ -13,12 +13,14 @@ The canonical use case: an engineer opens a web page, drags the control points o
 solenoid cross-section), presses *Run*, and watches the simulation result appear live — no local
 installation, no desktop tooling, just a browser talking to a FEniCSx server.
 
-> **Status: M1 and M2 done.** Two physics examples run end to end on real FEniCSx solves
-> (potential flow, magnetostatics), the three browser packages — SDK, geometry editor, field
-> viewer — are published from `client/`, and the airfoil demo is built from them. Pure-NumPy mock
-> solvers mirror every FEniCSx one, so the full loop (edit geometry → submit → stream progress →
-> render field) runs without installing FEniCSx at all. Next up is production job execution:
-> a real queue, persistence and auth — see the [roadmap](docs/03-roadmap.md).
+> **Status: M1 and M2 done, M3 mostly.** Two physics examples run end to end on real FEniCSx
+> solves (potential flow, magnetostatics), the three browser packages — SDK, geometry editor,
+> field viewer — are published from `client/`, and the airfoil demo is built from them.
+> Pure-NumPy mock solvers mirror every FEniCSx one, so the full loop (edit geometry → submit →
+> stream progress → render field) runs without installing FEniCSx at all. Jobs now persist
+> across restarts, API keys and per-user quotas are available, and the stack is
+> [load-tested](docs/06-load-test.md) at 50 concurrent clients. What remains for M3 is the
+> out-of-process worker backend — see the [roadmap](docs/03-roadmap.md).
 
 ## Why
 
@@ -86,6 +88,7 @@ The server is configured from the environment; the defaults are meant for a lapt
 | `FENIXSPOON_DATA_DIR` | `<tmp>/fenixspoon-jobs` | Where per-job artifacts, result payloads and the job database live. **Mount this** if job history should outlive the container |
 | `FENIXSPOON_STORE` | `sqlite` | `sqlite` persists jobs under the data directory; `memory` keeps them in the process and loses them on restart |
 | `FENIXSPOON_JOB_TIMEOUT` | `600` | Wall-clock seconds a solve may run; `0` disables. Cooperative — the worker is asked to stop |
+| `FENIXSPOON_MAX_WORKERS` | core count | How many solves run at once. Right for FEniCSx, which releases the GIL; lower it for Python-heavy solvers — see the [load test](docs/06-load-test.md) |
 | `FENIXSPOON_MAX_CELLS` | `2000000` | Cell budget for a single job; `0` disables. Checked at submit from the solver's own estimate, so an over-sized job is refused with an explanation instead of being killed halfway through |
 | `FENIXSPOON_JOB_TTL` | `604800` (7 days) | How long a finished job's record, result and artifacts are kept; `0` keeps them forever. Swept hourly and at startup |
 | `FENIXSPOON_API_KEYS` | unset (anonymous) | `"alice:secret,bob:secret"`. Set it and every route requires a key; each principal sees only its own jobs |
@@ -141,6 +144,7 @@ serialization formats), is in [`docs/02-architecture.md`](docs/02-architecture.m
 3. [Roadmap](docs/03-roadmap.md) — milestones M0 → M5
 4. [Wire protocol](docs/04-wire-protocol.md) — the JSON contract between client and server
 5. [Deployment](docs/05-deployment.md) — API keys, quotas, resource limits, CORS, reverse proxy
+6. [Load test](docs/06-load-test.md) — the tested envelope, and how to reproduce it
 
 ## Contributing
 

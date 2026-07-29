@@ -99,6 +99,12 @@ unchanged, because both key off `Principal.id`.
 | `FENIXSPOON_MAX_CONCURRENT_JOBS` | `0` (unlimited) | At submit, counting the principal's queued and running jobs |
 | `FENIXSPOON_MAX_JOBS_PER_HOUR` | `0` (unlimited) | At submit, over a rolling hour |
 | `FENIXSPOON_MAX_ARTIFACT_BYTES` | `0` (unlimited) | At submit, against the principal's stored artifacts |
+| `FENIXSPOON_MAX_WORKERS` | core count | Solves running at once, in a pool of the job manager's own |
+
+The worker count is the one knob whose right value depends on your solver. FEniCSx spends
+its time in PETSc and Gmsh, which release the GIL, so it parallelizes and the core count is
+right. A pure-Python solver does not, and over-subscribing it *lowers* throughput —
+measurably, see the [load test](06-load-test.md).
 
 **There is no per-job memory ceiling, and adding one here would be dishonest.** Solves run
 on threads inside the API process, and a memory limit is a property of a process — `RLIMIT_AS`

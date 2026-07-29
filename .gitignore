@@ -22,6 +22,10 @@ node_modules/
 *.swp
 .DS_Store
 
+# `make loadtest` scratch: a throwaway data dir and the server PID it stops
+.loadtest-data/
+.loadtest.pid
+
 # Simulation artifacts
 *.msh
 *.xdmf

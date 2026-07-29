@@ -56,10 +56,18 @@ the same protocol.
   infrastructure, fine for demos and single-user tools. Progress callbacks are marshalled from the
   worker thread onto the event loop and fanned out to WebSocket subscribers; events are replayed to
   late subscribers.
-- **M3 (partly landed):** resource limits (submit-time cell budgets, wall-clock timeouts) and
-  job persistence are in. The remaining piece is a pluggable execution backend — Celery or arq
-  with worker containers and a Redis broker — plus auth. The job-manager interface is written so
-  that swap doesn't touch the API layer.
+- **M3 (mostly landed):** resource limits (submit-time cell budgets, wall-clock timeouts), job
+  persistence, API-key auth and per-principal quotas are in, and solves run on the job manager's
+  own bounded pool rather than asyncio's shared default executor. The remaining piece is a
+  pluggable execution backend — Celery or arq with worker containers and a Redis broker. The
+  job-manager interface is written so that swap doesn't touch the API layer.
+
+  [Load testing](06-load-test.md) makes the case for it concretely: one API process handles 50
+  concurrent clients without dropping a stream, but every solve shares the interpreter with the
+  event loop, so a Python-heavy solver's throughput *falls* as concurrency rises. Moving solves
+  into worker processes is what removes that ceiling — and it is also what makes a per-job
+  memory limit expressible, and what lets a second API replica stream progress for a job it did
+  not start.
 
 ### Persistence: live state in memory, everything else in a store
 Subscriber queues, the cancel event and the running future cannot be serialized, so they stay in

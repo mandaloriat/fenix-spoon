@@ -35,6 +35,7 @@ import threading
 import time
 import uuid
 from collections.abc import AsyncIterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -72,6 +73,20 @@ def _default_max_cells() -> int:
 def _default_ttl() -> float:
     """How long a job's record and artifacts survive. 0 keeps them forever."""
     return float(os.environ.get("FENIXSPOON_JOB_TTL", str(7 * 24 * 3600)))
+
+
+def _default_workers() -> int:
+    """How many solves may run at once.
+
+    Defaults to the core count. Going wider does not finish work sooner — the box has
+    the cores it has — and it does make the API slower to answer, because solves and the
+    event loop share a GIL. Load testing (docs/06-load-test.md) shows submit latency
+    climbing with over-subscription while throughput stays flat.
+    """
+    configured = os.environ.get("FENIXSPOON_MAX_WORKERS")
+    if configured:
+        return max(1, int(configured))
+    return max(1, os.cpu_count() or 1)
 
 
 def _default_store(data_dir: Path) -> JobStore:
@@ -158,6 +173,7 @@ class JobManager:
         max_cells: int | None = None,
         store: JobStore | None = None,
         job_ttl: float | None = None,
+        max_workers: int | None = None,
     ) -> None:
         self._jobs: dict[str, Job] = {}
         self._data_dir = data_dir if data_dir is not None else _default_data_dir()
@@ -165,6 +181,14 @@ class JobManager:
         self.max_cells = max_cells if max_cells is not None else _default_max_cells()
         self.job_ttl = job_ttl if job_ttl is not None else _default_ttl()
         self.store = store if store is not None else _default_store(self._data_dir)
+        self.max_workers = max_workers if max_workers is not None else _default_workers()
+        # Its own pool, not asyncio's default executor: solves must not compete for
+        # threads with everything else the server hands off (static files, artifact
+        # reads), and a bounded pool is what keeps an unbounded submit rate from
+        # translating into unbounded concurrent solves.
+        self._executor = ThreadPoolExecutor(
+            max_workers=self.max_workers, thread_name_prefix="fenixspoon-solve"
+        )
 
     def get(self, job_id: str, owner: str | None = None) -> Job | None:
         """A live job if this process owns one, otherwise whatever the store remembers.
@@ -269,7 +293,7 @@ class JobManager:
         started = time.monotonic()
         try:
             solver = solver_cls()
-            work = loop.run_in_executor(None, solver.solve, geometry, params, ctx)
+            work = loop.run_in_executor(self._executor, solver.solve, geometry, params, ctx)
             job.result = await asyncio.wait_for(work, self._timeout or None)
             job.result.stats = {
                 **job.result.stats,
