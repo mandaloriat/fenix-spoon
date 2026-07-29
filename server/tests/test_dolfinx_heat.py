@@ -57,7 +57,10 @@ def heat_sink(fins: int) -> Regions2D:
 
 
 def solve(geometry, tmp_path, **params):
-    return DolfinxHeat2D().solve(geometry, DolfinxHeat2D.Params(**params), make_ctx(tmp_path))
+    # write_vtk off by default: none of these assert on the artifact, and a FEM run per
+    # test writing a file it never reads is pure I/O. `test_vtk_artifact` opts back in.
+    settings = {"write_vtk": False, **params}
+    return DolfinxHeat2D().solve(geometry, DolfinxHeat2D.Params(**settings), make_ctx(tmp_path))
 
 
 def test_adapter_is_registered():
@@ -164,8 +167,51 @@ def test_only_the_regions_are_meshed(tmp_path):
     assert points[:, 1].min() >= -0.0201, "mesh extends below the chip"
 
 
+def test_vtk_artifact(tmp_path):
+    """The one test that opts back into `write_vtk`, so the export path stays covered.
+
+    Turning it off in the shared helper saved a file write per test but would otherwise
+    have left the artifact path with no coverage at all.
+    """
+    ctx = make_ctx(tmp_path)
+    result = DolfinxHeat2D().solve(
+        heat_sink(3), DolfinxHeat2D.Params(mesh_size=0.002, write_vtk=True), ctx
+    )
+    assert [a["name"] for a in ctx.artifacts] == ["solution.vtk"]
+    text = (tmp_path / "artifacts" / "solution.vtk").read_text()
+    assert text.startswith("# vtk DataFile Version")
+    # Every field in the payload must reach the file, or ParaView shows a subset.
+    for field in result.data["point_fields"]:
+        assert f"SCALARS {field}" in text
+
+
+def test_estimate_is_based_on_the_solid_not_the_domain(tmp_path):
+    """The budget must reflect what is meshed, or it refuses jobs that would have run.
+
+    The regions here are a few percent of the bounding rectangle, so estimating from the
+    domain over-counted several-fold. The estimate must still be an over-estimate of the
+    real mesh — that is what makes it safe — just not by the ratio of solid to domain.
+    """
+    geometry = heat_sink(5)
+    params = DolfinxHeat2D.Params(mesh_size=0.002)
+    estimate = DolfinxHeat2D.estimate_cells(geometry, params)
+
+    xmin, ymin, xmax, ymax = geometry.bounds
+    domain_area = (xmax - xmin) * (ymax - ymin)
+    from fenixspoon.solvers.dolfinx_heat import _solid_area
+
+    assert _solid_area(geometry) < 0.5 * domain_area, "geometry no longer makes the point"
+    # Comfortably below what estimating from the whole domain would have produced...
+    assert estimate < 0.5 * (2.0 * 2.0 * domain_area / params.mesh_size**2)
+    # ...and still above the mesh actually generated.
+    actual = DolfinxHeat2D().solve(
+        geometry, DolfinxHeat2D.Params(mesh_size=0.002, write_vtk=False), make_ctx(tmp_path)
+    ).stats["cells"]
+    assert estimate > actual, f"estimate {estimate} under-counts the real mesh {actual}"
+
+
 def test_a_geometry_with_no_regions_never_reaches_the_solver():
-    """"Nothing to mesh" is refused by the protocol, before any adapter sees it.
+    """A geometry with nothing to mesh is refused by the protocol, before any adapter.
 
     `regions` is declared `min_length=1`, so this fails at validation with a 422 rather
     than inside a solver. The adapter keeps its own guard for the same condition, but that

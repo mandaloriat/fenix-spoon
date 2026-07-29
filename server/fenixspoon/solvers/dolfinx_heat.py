@@ -37,12 +37,29 @@ from ..geometry import Regions2D
 from ._gmsh import gmsh_session
 from .base import ProgressEvent, Solver, SolverContext, SolverResult
 from .dolfinx_poisson import (
+    _MESH_SAFETY_FACTOR,
     _nodal_speed,
     _p1_mesh_data,
     _write_vtk_unstructured,
-    estimate_triangles,
 )
 from .registry import register
+
+
+def _solid_area(geometry: Regions2D) -> float:
+    """Total polygon area of the regions, by the shoelace formula.
+
+    Regions that overlap are counted twice. That is deliberate for a budget estimate:
+    double-counting errs high, and the alternative — a real union — is a geometry
+    operation this does not need to do just to size a mesh.
+    """
+    total = 0.0
+    for region in geometry.regions:
+        pts = region.shape.points
+        n = len(pts)
+        total += 0.5 * abs(
+            sum(pts[i][0] * pts[(i + 1) % n][1] - pts[(i + 1) % n][0] * pts[i][1] for i in range(n))
+        )
+    return total
 
 
 def _build_solid_mesh(geometry: Regions2D, mesh_size: float):
@@ -149,9 +166,21 @@ class DolfinxHeat2D(Solver):
 
     @classmethod
     def estimate_cells(cls, geometry: Regions2D, params: "DolfinxHeat2D.Params") -> int:
-        # Over-estimates: this meshes only the regions, which are a fraction of the
-        # bounding box. Over-estimating is the safe direction for a submit-time budget.
-        return estimate_triangles(geometry.bounds, params.mesh_size)
+        """Estimate from the solid area, not the bounding box.
+
+        Over-estimating is the safe direction for a budget check, but only up to a point:
+        this adapter meshes the regions alone, and for a heat sink those are a few percent
+        of the bounding rectangle — 24% for the gallery heat sink, so estimating from the
+        whole domain over-counted by 4.1x. That turns into refusing jobs that would have
+        run comfortably, once the mesh is fine enough for the domain figure to cross
+        `FENIXSPOON_MAX_CELLS` while the real one is far below it.
+
+        Summing region areas still over-estimates — overlapping regions are counted twice,
+        and the safety factor stays — but it is wrong by a bounded factor rather than by
+        the fraction of the domain that happens to be solid.
+        """
+        area = _solid_area(geometry)
+        return int(_MESH_SAFETY_FACTOR * 2.0 * area / max(params.mesh_size, 1e-12) ** 2)
 
     def solve(
         self, geometry: Regions2D, params: "DolfinxHeat2D.Params", ctx: SolverContext
@@ -242,16 +271,16 @@ def _nodal_region_value(
     Max rather than an average so a material interface stays a visible edge instead of
     being smeared across the nodes that straddle it.
     """
-    by_tag = {
-        index: float(region.material.get(key, default))
-        for index, region in enumerate(geometry.regions, start=1)
-    }
+    # Filled by assignment per region rather than by looking up a tag per cell: one pass
+    # over regions instead of a Python-level loop over every cell, and it drops the
+    # intermediate tag array entirely. (`dolfinx_magnetostatics._nodal_material` is the
+    # same function with a different key and still has the older shape; they are close
+    # enough to be worth sharing if a third adapter needs one.)
     num_cells = msh.topology.index_map(msh.topology.dim).size_local
-    tags = np.zeros(num_cells, dtype=np.int32)
-    for tag in by_tag:
-        found = cell_tags.find(tag)
-        tags[found[found < num_cells]] = tag
-    cell_value = np.array([by_tag.get(int(t), default) for t in tags], dtype=float)
+    cell_value = np.full(num_cells, default, dtype=float)
+    for index, region in enumerate(geometry.regions, start=1):
+        found = cell_tags.find(index)
+        cell_value[found[found < num_cells]] = float(region.material.get(key, default))
 
     out = np.zeros(len(points))
     np.maximum.at(out, triangles, cell_value[: len(triangles)][:, None].repeat(3, axis=1))
