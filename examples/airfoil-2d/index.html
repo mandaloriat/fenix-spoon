@@ -136,12 +136,19 @@ function describe(error) {
 }
 
 // " · 8,192 cells · 1.84 s". Every key is optional and server-defined, so this reports
-// the ones it recognises and stays quiet about the rest.
+// the ones it recognises and stays quiet about the rest. Presence is tested with
+// Number.isFinite, not truthiness: a solve fast enough to round to 0.00 s still has a
+// duration, and "absent" and "zero" are different things.
+const STAT_FORMATS = [
+  ['cells', (v) => `${v.toLocaleString()} cells`],
+  ['dofs', (v) => `${v.toLocaleString()} dofs`],
+  ['seconds', (v) => `${v.toFixed(2)} s`],
+];
+
 function formatStats(stats = {}) {
-  const parts = [];
-  if (stats.cells) parts.push(`${stats.cells.toLocaleString()} cells`);
-  if (stats.dofs) parts.push(`${stats.dofs.toLocaleString()} dofs`);
-  if (stats.seconds) parts.push(`${stats.seconds.toFixed(2)} s`);
+  const parts = STAT_FORMATS.filter(([key]) => Number.isFinite(stats[key])).map(
+    ([key, format]) => format(stats[key]),
+  );
   return parts.length ? ` · ${parts.join(' · ')}` : '';
 }
 
