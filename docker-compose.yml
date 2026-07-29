@@ -8,4 +8,16 @@ services:
       #   BASE_IMAGE: python:3.12-slim
     ports:
       - "8000:8000"
-    # M3 adds: worker + redis services, artifact volume, resource limits.
+    environment:
+      # Job records, result payloads and artifacts all live here. Without the volume
+      # below, persistence works and then evaporates with the container.
+      FENIXSPOON_DATA_DIR: /data
+      # Every other knob is documented in the README's "Server configuration" table.
+      # FENIXSPOON_MAX_CELLS: "2000000"
+      # FENIXSPOON_JOB_TTL: "604800"
+    volumes:
+      - fenixspoon-data:/data
+    # M3 adds: worker + redis services, resource limits.
+
+volumes:
+  fenixspoon-data:

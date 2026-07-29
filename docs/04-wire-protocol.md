@@ -101,6 +101,20 @@ of being started and killed halfway through by the wall-clock timeout. Operators
 limit with `FENIXSPOON_MAX_CELLS` (default 2,000,000; `0` disables it). A solver that cannot
 estimate its cost is admitted, with the timeout as the backstop.
 
+### `GET /api/v1/jobs`
+
+Job history, newest first. `?limit=` (1–200, default 50) and `?offset=` paginate; out-of-range
+values are a `422`.
+
+```json
+{ "jobs": [ { "job_id": "...", "solver": "...", "status": "done", "...": "..." } ],
+  "total": 137, "limit": 50, "offset": 0 }
+```
+
+Entries are the same shape as `GET /jobs/{job_id}`. With a persistent store configured (the
+default) the listing spans process lifetimes; with `FENIXSPOON_STORE=memory` it covers only the
+current one.
+
 ### `GET /api/v1/jobs/{job_id}`
 
 `{ "job_id": "...", "solver": "...", "status": "queued|running|done|failed|cancelled", "error": null, "created_at": "...", "finished_at": null }`
@@ -164,8 +178,19 @@ Result kinds:
 
 Downloads an artifact listed in the result envelope. Only names registered by the solver are
 servable (artifact names are bare filenames by construction — no path traversal). Artifacts
-live on the server filesystem under `FENIXSPOON_DATA_DIR` and share the job's lifetime
-(persistence is roadmap M3).
+live on the server filesystem under `FENIXSPOON_DATA_DIR` and share the job's lifetime.
+
+## Durability
+
+Job metadata, the event log, the result payload and the artifacts all outlive the server
+process: mount `FENIXSPOON_DATA_DIR` and a restarted server answers for jobs the previous one
+ran. Two consequences a client should expect:
+
+- A job that was `running` when the server died comes back `failed` with
+  `"server restarted while this job was running"` — a status stream that could never
+  terminate is worse than a job that admits it was lost.
+- Records are kept for `FENIXSPOON_JOB_TTL` (default 7 days, `0` keeps them forever). Past
+  that, the job and its files are gone and every endpoint answers `404`.
 
 ## Conventions
 

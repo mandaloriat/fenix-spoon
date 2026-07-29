@@ -221,6 +221,28 @@ describe('FenixSpoonClient', () => {
     expect(progress.filter((e) => e.type === 'progress')).toHaveLength(1);
   });
 
+  it('lists job history, passing pagination through and omitting unset options', async () => {
+    const seen: string[] = [];
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      seen.push(String(input));
+      return new Response(JSON.stringify({ jobs: [], total: 0, limit: 50, offset: 0 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+    const client = new FenixSpoonClient('http://server', {
+      fetch: fetchImpl as unknown as typeof globalThis.fetch,
+    });
+
+    await client.listJobs();
+    await client.listJobs({ limit: 20, offset: 40 });
+    // No stray "?" on the bare call: it would be a different cache key for no reason.
+    expect(seen).toEqual([
+      'http://server/api/v1/jobs',
+      'http://server/api/v1/jobs?limit=20&offset=40',
+    ]);
+  });
+
   it('wait() throws JobFailedError carrying the server error', async () => {
     class Socket extends FakeSocket {
       script() {

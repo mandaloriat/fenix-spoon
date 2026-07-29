@@ -70,7 +70,14 @@ Goal: multi-user deployments are safe and boring.
 
 - [ ] Pluggable job backend: Celery or arq implementation (Redis), worker containers with
       dolfinx (#12)
-- [ ] Job persistence (SQLite/Postgres) and artifact storage (filesystem/S3-compatible) (#13)
+- [x] Job persistence (SQLite/Postgres) and artifact storage (filesystem/S3-compatible) (#13)
+      — a `JobStore` interface with SQLite (default) and in-memory backends: metadata and the
+      event log in the database, result payloads and artifacts on disk under the data
+      directory. Adds `GET /jobs` history with pagination, a configurable retention sweep
+      (`FENIXSPOON_JOB_TTL`), and startup reconciliation so a job orphaned by a dead process
+      fails instead of hanging its client. *Postgres and S3 are left to the interface: an
+      untested backend for a database nobody has run against would be pretend infrastructure.
+      A Postgres store implements the same six methods.*
 - [ ] Auth hooks (API keys / OIDC middleware), per-user quotas, wall-clock and memory limits (#14)
 - [ ] Helm chart / compose profiles for API + workers + Redis (#15)
 - [ ] Load test: N concurrent solves with progress streaming (#16)

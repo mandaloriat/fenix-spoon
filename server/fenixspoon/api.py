@@ -3,7 +3,7 @@
 import json
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ValidationError
 
@@ -24,6 +24,15 @@ class JobRequest(BaseModel):
 class JobCreated(BaseModel):
     job_id: str
     status: str
+
+
+class JobList(BaseModel):
+    """One page of job history, newest first."""
+
+    jobs: list[JobStatus]
+    total: int
+    limit: int
+    offset: int
 
 
 def _manager(request: Request) -> JobManager:
@@ -69,6 +78,22 @@ async def create_job(req: JobRequest, request: Request) -> JobCreated:
 
     job = await manager.submit(solver_cls, req.geometry, params)
     return JobCreated(job_id=job.id, status=job.status)
+
+
+@router.get("/jobs", response_model=JobList)
+def list_jobs(
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> JobList:
+    """Job history, newest first. Survives restarts when a persistent store is configured."""
+    jobs, total = _manager(request).list_jobs(limit=limit, offset=offset)
+    return JobList(
+        jobs=[JobStatus.from_job(job) for job in jobs],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get("/jobs/{job_id}", response_model=JobStatus)

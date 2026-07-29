@@ -91,6 +91,14 @@ export interface JobStatus {
   finished_at: string | null;
 }
 
+/** One page of job history, newest first. `total` counts every stored job, not the page. */
+export interface JobPage {
+  jobs: JobStatus[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 // ------------------------------------------------------------------ events
 
 export interface ProgressEvent {

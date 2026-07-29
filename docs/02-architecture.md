@@ -56,10 +56,26 @@ the same protocol.
   infrastructure, fine for demos and single-user tools. Progress callbacks are marshalled from the
   worker thread onto the event loop and fanned out to WebSocket subscribers; events are replayed to
   late subscribers.
-- **M3:** pluggable backend with a Celery (or arq) implementation for multi-user deployments —
-  worker containers with dolfinx, Redis broker, job persistence, resource limits (mesh size caps,
-  wall-clock timeouts), and auth. The job-manager interface is written so this swap doesn't touch
-  the API layer.
+- **M3 (partly landed):** resource limits (submit-time cell budgets, wall-clock timeouts) and
+  job persistence are in. The remaining piece is a pluggable execution backend — Celery or arq
+  with worker containers and a Redis broker — plus auth. The job-manager interface is written so
+  that swap doesn't touch the API layer.
+
+### Persistence: live state in memory, everything else in a store
+Subscriber queues, the cancel event and the running future cannot be serialized, so they stay in
+the process. Everything a client can still ask for afterwards — metadata, the event log, the
+result payload, the artifact list — goes to a `JobStore`. SQLite is the default backend and the
+data directory is the durable unit: metadata and events in `jobs.db`, result payloads and
+artifacts in `<data-dir>/<job-id>/`. Mount that directory and a restarted server answers for
+jobs the previous one ran.
+
+Result payloads live on disk rather than in the database on purpose: a 512×341 grid is several
+megabytes of JSON, the data directory is already the durable-storage contract for artifacts, and
+keeping them together makes one job's bytes one directory you can copy, delete or mount.
+
+Restarting introduces a state the in-process manager never had: a job the store believes is
+`running` that nothing is solving. Startup reconciliation fails those explicitly — a status
+stream that can never terminate is worse than a job that admits it was lost.
 
 ### Geometry: parametric JSON, meshed server-side
 Clients send parametric descriptions (v0: `polygon2d` obstacle in a rectangular domain; later:
@@ -93,7 +109,8 @@ until M5.
 server/fenixspoon/
 ├── main.py            # app factory, CORS, static demo mount
 ├── api.py             # /api/v1 routes: solvers, jobs, events WS, results
-├── jobs.py            # JobManager: submit/status/events/result
+├── jobs.py            # JobManager: submit/status/events/result, retention, reconciliation
+├── store.py           # JobStore: durable job metadata, event log and result payloads
 ├── geometry.py        # pydantic models for the geometry schema (protocol source of truth)
 └── solvers/
     ├── base.py        # Solver protocol, ProgressEvent, SolverResult

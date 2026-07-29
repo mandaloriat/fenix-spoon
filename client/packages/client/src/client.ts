@@ -15,6 +15,7 @@ import {
   type ArtifactRef,
   type JobCreated,
   type JobEvent,
+  type JobPage,
   type JobRequest,
   type JobResult,
   type JobStatus,
@@ -157,6 +158,23 @@ export class FenixSpoonClient {
   /** Attach to a job submitted elsewhere (a saved id, another tab). */
   job(jobId: string): Job {
     return new Job(this, jobId);
+  }
+
+  /**
+   * Job history, newest first. Spans restarts when the server has a persistent store.
+   *
+   * ```ts
+   * const { jobs, total } = await client.listJobs({ limit: 20 });
+   * ```
+   */
+  listJobs(options: { limit?: number; offset?: number } = {}): Promise<JobPage> {
+    const query = new URLSearchParams();
+    if (options.limit !== undefined) query.set('limit', String(options.limit));
+    if (options.offset !== undefined) query.set('offset', String(options.offset));
+    // `query.toString()` rather than `query.size`: the latter only reached Safari in 17.
+    const encoded = query.toString();
+    const suffix = encoded ? `?${encoded}` : '';
+    return this.request<JobPage>(`/api/v1/jobs${suffix}`);
   }
 
   status(jobId: string): Promise<JobStatus> {

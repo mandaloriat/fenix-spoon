@@ -83,12 +83,17 @@ The server is configured from the environment; the defaults are meant for a lapt
 
 | Variable | Default | What it does |
 |---|---|---|
-| `FENIXSPOON_DATA_DIR` | `<tmp>/fenixspoon-jobs` | Where per-job artifact files are written |
+| `FENIXSPOON_DATA_DIR` | `<tmp>/fenixspoon-jobs` | Where per-job artifacts, result payloads and the job database live. **Mount this** if job history should outlive the container |
+| `FENIXSPOON_STORE` | `sqlite` | `sqlite` persists jobs under the data directory; `memory` keeps them in the process and loses them on restart |
 | `FENIXSPOON_JOB_TIMEOUT` | `600` | Wall-clock seconds a solve may run; `0` disables. Cooperative — the worker is asked to stop |
 | `FENIXSPOON_MAX_CELLS` | `2000000` | Cell budget for a single job; `0` disables. Checked at submit from the solver's own estimate, so an over-sized job is refused with an explanation instead of being killed halfway through |
+| `FENIXSPOON_JOB_TTL` | `604800` (7 days) | How long a finished job's record, result and artifacts are kept; `0` keeps them forever. Swept hourly and at startup |
 
 Every finished job reports what it actually cost in the result's `stats` (`cells`, `dofs`,
 `iterations`, `seconds` — whichever the adapter knows), which is what the caps should be set from.
+
+Job history survives restarts: `GET /api/v1/jobs` pages through it, and a job that was mid-solve
+when the process died comes back `failed` rather than hanging a client that polls it forever.
 
 ## Architecture at a glance
 
