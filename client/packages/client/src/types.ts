@@ -13,8 +13,13 @@
  * changes are additive, so a client built for 1.0 keeps working against a 1.3 server.
  * `checkProtocolCompatibility` is the check; the shared fixture corpus asserts this
  * constant matches the server's `PROTOCOL_VERSION`, so the two cannot drift apart.
+ *
+ * 1.1 added vector fields to both result kinds, which this SDK carries. 1.2 added the
+ * progressive discovery operations (`/environment`, `/capabilities`); those serve local
+ * callers rather than browsers, so the SDK tracks the version without typing them — the
+ * fixtures for those payloads are validated on the server side only, and say so.
  */
-export const PROTOCOL_VERSION = '1.1';
+export const PROTOCOL_VERSION = '1.2';
 
 /** What `GET /api/v1/version` returns. The one endpoint that never requires a key. */
 export interface ProtocolVersion {

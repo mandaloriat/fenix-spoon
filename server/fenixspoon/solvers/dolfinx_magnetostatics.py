@@ -25,7 +25,8 @@ from pydantic import BaseModel, Field
 
 from ..geometry import Regions2D
 from ._gmsh import gmsh_session
-from .base import ProgressEvent, Solver, SolverContext, SolverResult
+from .base import CapabilityExample, ProgressEvent, Solver, SolverContext, SolverResult
+from .declarations import MAGNETOSTATICS_METRICS, VTK_ARTIFACT
 from .dolfinx_poisson import (
     _nodal_speed,
     _p1_mesh_data,
@@ -103,6 +104,26 @@ class DolfinxMagnetostatics2D(Solver):
         "Permeability and current density are piecewise constant per cell."
     )
     geometry_types = ["regions2d"]
+    physics = "magnetostatics"
+    availability = "fenicsx"
+    requires = ["dolfinx", "gmsh"]
+    metrics = MAGNETOSTATICS_METRICS
+    artifacts = [VTK_ARTIFACT]
+    examples = [
+        CapabilityExample(
+            title="coarse mesh",
+            description="Fast, but too coarse to trust `b_max`: the peak sits at a corner.",
+            params={"mesh_size": 0.01, "write_vtk": False},
+        ),
+        CapabilityExample(
+            title="resolved",
+            description=(
+                "The default element size, which resolves the iron/air interfaces the "
+                "region-tagged mesh exists to capture."
+            ),
+            params={"mesh_size": 0.004},
+        ),
+    ]
 
     class Params(BaseModel):
         # This adapter emits mesh2d only: the FEM triangulation is the whole point of

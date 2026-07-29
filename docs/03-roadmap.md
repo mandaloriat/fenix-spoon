@@ -90,12 +90,20 @@ the seams a second caller needs. The design specification is
       is reachable, which caught a real leak (`core.service` → `auth` → `fastapi`) that no
       in-process test could see. The workspace, result-query and study services land with #44,
       #46 and #48. (#42)
-- [ ] **Progressive capability discovery.** `environment.inspect`, `capability.list`,
-      `capability.describe` with section selection (geometries, params, metrics, artifacts, cost
-      estimation, sweep / gradient / MPI support, environment requirements). Full JSON Schemas are
-      fetched by reference or on request, never dumped on every call — `GET /solvers` returns every
-      schema for every solver today, which is right for a form generator and wrong for a caller
-      that only wants to know what is installed. (#43)
+- [x] **Progressive capability discovery.** `environment.inspect`, `capability.list`,
+      `capability.describe` with eight selectable sections, in `core/discovery.py` and bound to
+      HTTP as protocol 1.2. `GET /solvers` keeps its payload exactly — it is the right answer for
+      a form generator — and `capability.list` is the compact one beside it: 0.5 kB against 4.0 kB
+      on the three mock adapters. An unrequested section is *absent*, not null, and an unknown
+      section name is refused rather than ignored, because a caller that misspells `metrics` and
+      gets a payload without them would conclude the capability has none. Solver adapters gained
+      a declaration — physics, availability, metrics, artifacts, features, requirements,
+      examples — all defaulted, so an adapter written against 1.1 keeps working. *Two things the
+      implementation had to be honest about: **metrics are declared, not computed** (the values
+      are #46), so a metric that reduces a result field names the field and a test runs a solve
+      and checks it is really emitted; and the flattened `params` list is **flatter, not
+      smaller** — measured, marginally larger than the schema, and what it buys is that no
+      `$ref` has to be resolved.* (#43)
 - [ ] **Local workspace and object references.** An inspectable, reopenable workspace holding
       `geometry`, `material`, `boundary_condition`, `load_case`, `design`, `study`, `result` and
       `artifact` objects under stable identifiers (`geometry:g-42`, `design:d-18`, `study:s-9`,

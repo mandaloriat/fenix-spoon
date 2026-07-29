@@ -58,6 +58,10 @@ class JobRecord:
 class JobStore(ABC):
     """Where jobs live between requests, and between process lifetimes."""
 
+    #: Short identifier reported by `environment.inspect` (#43), matching the value
+    #: `FENIXSPOON_STORE` takes — so what an operator reads back is what they set.
+    kind = "unknown"
+
     @abstractmethod
     def put(self, record: JobRecord) -> None:
         """Insert or update a job's metadata, result and artifact list (not its events)."""
@@ -126,6 +130,8 @@ class JobStore(ABC):
 
 class MemoryJobStore(JobStore):
     """Dev default: keeps records in a dict, loses them with the process."""
+
+    kind = "memory"
 
     def __init__(self) -> None:
         self._records: dict[str, JobRecord] = {}
@@ -253,6 +259,8 @@ class SqliteJobStore(JobStore):
     and N workers on one mounted data directory. WAL makes concurrent readers and one
     writer safe, and ``busy_timeout`` makes a second writer wait rather than fail.
     """
+
+    kind = "sqlite"
 
     #: How long a statement waits for another process's write lock before giving up.
     BUSY_TIMEOUT_MS = 10_000

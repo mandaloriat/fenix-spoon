@@ -217,6 +217,18 @@ class JobManager:
             self.store, self.bus, self._data_dir, self._timeout, self.max_workers
         )
 
+    @property
+    def data_dir(self) -> Path:
+        """Where jobs, results and artifacts live. Read-only, and reported by
+        `environment.inspect` (#43) — a local caller needs to know where its files land,
+        and an operator needs to know what to back up."""
+        return self._data_dir
+
+    @property
+    def job_timeout(self) -> float:
+        """Wall-clock seconds a solve may run; 0 when disabled. Read-only, see #43."""
+        return self._timeout
+
     def get(
         self, job_id: str, owner: str | None = None, *, with_result: bool = False
     ) -> Job | None:

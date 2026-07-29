@@ -9,6 +9,11 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from fenixspoon.api import JobRequest, router
+from fenixspoon.core.discovery import (
+    CapabilityDescription,
+    CapabilitySummary,
+    EnvironmentInfo,
+)
 from fenixspoon.geometry import Geometry
 from fenixspoon.protocol import (
     PROTOCOL_VERSION,
@@ -28,6 +33,12 @@ VALIDATORS = {
     "results.json": TypeAdapter(ResultEnvelope).validate_python,
     "job-requests.json": TypeAdapter(JobRequest).validate_python,
     "version.json": TypeAdapter(ProtocolVersion).validate_python,
+    # Protocol 1.2, issue #43. The JS suite's list is separate and does not include these:
+    # discovery has no browser consumer yet, so there is no second implementation to drift
+    # from. Each file's `$comment` says so, and says what changes when one appears.
+    "environment.json": TypeAdapter(EnvironmentInfo).validate_python,
+    "capability-summaries.json": TypeAdapter(CapabilitySummary).validate_python,
+    "capability-descriptions.json": TypeAdapter(CapabilityDescription).validate_python,
 }
 
 

@@ -34,6 +34,22 @@ class UnknownCapability(CoreError):
         self.name = name
 
 
+class UnknownSection(CoreError):
+    """`capability.describe` was asked for a section that does not exist.
+
+    Refused rather than silently dropped. A caller that misspells `metrics` and gets a
+    payload with no metrics in it will conclude the capability has none, which is a wrong
+    answer arrived at quietly — the failure mode progressive discovery must not have.
+    """
+
+    def __init__(self, unknown: list[str], known: list[str]) -> None:
+        super().__init__(
+            f"unknown capability section(s) {unknown}: expected any of {known}"
+        )
+        self.unknown = unknown
+        self.known = known
+
+
 class GeometryKindMismatch(CoreError):
     """The solver exists but does not accept this geometry kind."""
 

@@ -1,0 +1,198 @@
+{
+  "$comment": "Conformance cases for `capability.describe` (`GET /api/v1/capabilities/{name}`), added by protocol 1.2 with issue #43. Validated against fenixspoon.core.discovery.CapabilityDescription. The shape under test is the section mechanism: every section is optional, `name` never is, and an unrequested section is absent rather than null. See environment.json for why the JS SDK does not read these.",
+  "valid": [
+    {
+      "name": "metrics only",
+      "$comment": "The acceptance criterion of #43, as a payload: sections: [\"metrics\"] answers with metrics and the name, and nothing whatsoever else.",
+      "payload": {
+        "name": "mock.heat2d",
+        "metrics": [
+          {
+            "name": "t_max",
+            "unit": "degC",
+            "description": "Peak temperature in the solid.",
+            "field": "T",
+            "reduction": "max"
+          },
+          {
+            "name": "t_rise",
+            "unit": "K",
+            "description": "Peak temperature above ambient."
+          }
+        ]
+      }
+    },
+    {
+      "name": "just the name",
+      "$comment": "Degenerate but legal: `sections: []` asks for nothing, and getting an identifiable empty answer beats an error. A caller probing whether a capability exists can use it.",
+      "payload": { "name": "mock.laplace2d" }
+    },
+    {
+      "name": "params as a reference",
+      "$comment": "The default: a flat parameter list plus a resolvable reference, with no JSON Schema inline.",
+      "payload": {
+        "name": "mock.laplace2d",
+        "params": {
+          "params": [
+            {
+              "name": "resolution",
+              "type": "integer",
+              "required": false,
+              "default": 128,
+              "description": "Grid points along the longer domain edge",
+              "minimum": 16.0,
+              "maximum": 512.0
+            },
+            {
+              "name": "output",
+              "type": "enum",
+              "required": false,
+              "default": "grid2d",
+              "choices": ["grid2d", "mesh2d"]
+            }
+          ],
+          "schema_ref": "schema:params/mock.laplace2d"
+        }
+      }
+    },
+    {
+      "name": "params with the schema inline",
+      "$comment": "What `inline_schemas` returns. `json_schema` rather than `schema`, because `schema` shadows a pydantic attribute.",
+      "payload": {
+        "name": "mock.laplace2d",
+        "params": {
+          "params": [
+            { "name": "u_inf", "type": "number", "required": false, "default": 1.0 }
+          ],
+          "schema_ref": "schema:params/mock.laplace2d",
+          "json_schema": {
+            "type": "object",
+            "properties": { "u_inf": { "type": "number", "default": 1.0 } }
+          }
+        }
+      }
+    },
+    {
+      "name": "every section",
+      "$comment": "What omitting `sections` returns, including the identity fields that are otherwise sections of their own.",
+      "payload": {
+        "name": "dolfinx.heat2d",
+        "title": "Heat sink (FEniCSx, region-tagged mesh)",
+        "description": "Steady conduction through the solid regions of a regions2d geometry.",
+        "physics": "heat-conduction",
+        "availability": "fenicsx",
+        "geometries": {
+          "kinds": ["regions2d"],
+          "note": "Geometry schemas are protocol-level, not per-capability."
+        },
+        "params": {
+          "params": [
+            { "name": "mesh_size", "type": "number", "required": false, "default": 0.0015 }
+          ],
+          "schema_ref": "schema:params/dolfinx.heat2d"
+        },
+        "metrics": [
+          {
+            "name": "flux_max",
+            "unit": "W/m^2",
+            "description": "Peak conductive heat flux magnitude.",
+            "field": "flux",
+            "reduction": "max"
+          }
+        ],
+        "artifacts": [
+          {
+            "name": "solution.vtk",
+            "content_type": "model/vnd.vtk",
+            "description": "The full field as a legacy-VTK file.",
+            "when": "write_vtk"
+          }
+        ],
+        "cost": {
+          "estimates_cells": true,
+          "max_cells": 2000000,
+          "job_timeout_seconds": 600.0
+        },
+        "features": { "sweep": false, "gradient": false, "mpi": false },
+        "requirements": {
+          "packages": [
+            { "name": "dolfinx", "imported": true, "version": "0.11.0" },
+            { "name": "gmsh", "imported": true, "version": "4.13.1" }
+          ],
+          "satisfied": true
+        },
+        "examples": [
+          {
+            "title": "coarse mesh",
+            "description": "A setup check, not a result.",
+            "params": { "mesh_size": 0.004, "write_vtk": false }
+          }
+        ]
+      }
+    },
+    {
+      "name": "an artifact written unconditionally",
+      "$comment": "`when` is null when no parameter gates the file.",
+      "payload": {
+        "name": "third_party.thing",
+        "artifacts": [
+          {
+            "name": "report.json",
+            "content_type": "application/json",
+            "description": "Always written.",
+            "when": null
+          }
+        ]
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "no name",
+      "reason": "A description must say what it describes. Every other field is a section and may be absent; this one identifies the answer.",
+      "payload": { "metrics": [] }
+    },
+    {
+      "name": "a metric with an unknown reduction",
+      "reason": "`reduction` is a closed set — max, min, mean, integral — because #46 has to implement each one. 'median' would be a metric nothing can compute.",
+      "payload": {
+        "name": "mock.heat2d",
+        "metrics": [
+          {
+            "name": "t_median",
+            "unit": "degC",
+            "description": "Median temperature.",
+            "field": "T",
+            "reduction": "median"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a metric with no unit",
+      "reason": "A scalar without a unit is not an engineering answer. Dimensionless is spelled \"1\", which is a unit; omitting the field is not.",
+      "payload": {
+        "name": "mock.laplace2d",
+        "metrics": [{ "name": "cp_min", "description": "Suction peak." }]
+      }
+    },
+    {
+      "name": "a params section with no schema reference",
+      "reason": "The flat parameter list is a summary, not the contract. Without the reference a caller that needs the real schema has no way to ask for it.",
+      "payload": {
+        "name": "mock.laplace2d",
+        "params": {
+          "params": [{ "name": "u_inf", "type": "number", "required": false, "default": 1.0 }]
+        }
+      }
+    },
+    {
+      "name": "metrics as an object keyed by name",
+      "reason": "An ordered list, not a map: the declaration order is the order an adapter author wrote them in, which is the order a caller should read them in.",
+      "payload": {
+        "name": "mock.heat2d",
+        "metrics": { "t_max": { "unit": "degC", "description": "Peak temperature." } }
+      }
+    }
+  ]
+}

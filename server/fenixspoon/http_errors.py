@@ -21,6 +21,7 @@ STATUS: dict[type[errors.CoreError], int] = {
     errors.JobNotFound: 404,
     errors.ArtifactNotFound: 404,
     errors.GeometryKindMismatch: 422,
+    errors.UnknownSection: 422,
     errors.InvalidParams: 422,
     errors.CellBudgetExceeded: 422,
     errors.JobAlreadyFinished: 409,

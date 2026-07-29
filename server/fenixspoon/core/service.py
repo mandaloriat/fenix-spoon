@@ -28,9 +28,16 @@ from pydantic import ValidationError
 
 from ..geometry import Geometry
 from ..jobs import Job, JobManager
-from ..solvers import available_solvers, get_solver
-from ..solvers.base import SolverInfo
-from . import errors
+from ..solvers import available_solvers, get_solver, registered_solvers
+from ..solvers.base import Solver, SolverInfo
+from . import discovery, errors
+from .discovery import (
+    CapabilityDescription,
+    CapabilitySummary,
+    EnvironmentInfo,
+    LimitsInfo,
+    UsageInfo,
+)
 from .errors import CoreError  # noqa: F401  (re-export: adapters catch this one class)
 from .identity import Principal, QuotaUsage, check_quotas, hour_ago
 
@@ -73,15 +80,81 @@ class FenixSpoonCore:
     # -------------------------------------------------------------- capabilities
 
     def capabilities(self) -> list[SolverInfo]:
-        """Every installed solver, with its params schema."""
+        """Every installed solver, with its params schema.
+
+        The exhaustive answer, kept because a form generator needs exactly this. For a
+        caller that does not, see :meth:`capability_list` and :meth:`capability_describe`.
+        """
         return available_solvers()
 
-    def capability(self, name: str) -> type:
+    def capability(self, name: str) -> type[Solver]:
         """One solver class by name, or :class:`~.errors.UnknownCapability`."""
         solver_cls = get_solver(name)
         if solver_cls is None:
             raise errors.UnknownCapability(name)
         return solver_cls
+
+    # ------------------------------------------------------- progressive discovery (#43)
+
+    def environment(self, principal: Principal) -> EnvironmentInfo:
+        """What this installation is, for the principal asking.
+
+        Per-principal because half the interesting numbers are: a caller wants to know its
+        own quotas and how much of them it has spent, not the server's abstract policy.
+        """
+        active, recent, artifact_bytes = self.jobs.store.usage(principal.id, hour_ago())
+        return discovery.environment_info(
+            principal=principal,
+            usage=UsageInfo(
+                concurrent_jobs=active,
+                jobs_last_hour=recent,
+                artifact_bytes=artifact_bytes,
+            ),
+            execution_backend=self.jobs.backend.kind,
+            event_bus=self.jobs.bus.kind,
+            store=self.jobs.store.kind,
+            data_dir=str(self.jobs.data_dir),
+            capabilities=len(registered_solvers()),
+            limits=LimitsInfo(
+                job_timeout_seconds=self.jobs.job_timeout,
+                max_cells=self.jobs.max_cells,
+                job_ttl_seconds=self.jobs.job_ttl,
+                max_workers=self.jobs.max_workers,
+            ),
+        )
+
+    def capability_list(self) -> list[CapabilitySummary]:
+        """One line per installed capability. No schemas, no prose."""
+        return [discovery.summarize(cls) for cls in registered_solvers()]
+
+    def capability_describe(
+        self,
+        name: str,
+        sections: list[str] | None = None,
+        *,
+        inline_schemas: bool = False,
+    ) -> CapabilityDescription:
+        """Selected sections of one capability.
+
+        ``sections=None`` returns everything, which is what a human at a CLI wants. An
+        explicit list returns those sections and nothing else.
+        """
+        return discovery.describe_capability(
+            self.capability(name),
+            sections=sections,
+            inline_schemas=inline_schemas,
+            max_cells=self.jobs.max_cells,
+            job_timeout=self.jobs.job_timeout,
+        )
+
+    def capability_schema(self, name: str) -> dict[str, Any]:
+        """Resolve a capability's `schema:params/<name>` reference to the JSON Schema.
+
+        The second half of the reference mechanism: `capability.describe` hands back a
+        reference so a caller that does not need a few kilobytes of schema never receives
+        it, and this is how the caller that does need it asks.
+        """
+        return self.capability(name).Params.model_json_schema()
 
     # ---------------------------------------------------------------------- jobs
 

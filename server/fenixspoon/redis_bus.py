@@ -41,6 +41,8 @@ class RedisEventBus(EventBus):
     is how redis-py works — a connection in subscribe mode can do nothing else.
     """
 
+    kind = "redis"
+
     def __init__(self, url: str, client: aioredis.Redis | None = None) -> None:
         self.url = url
         self._client = client if client is not None else aioredis.from_url(url)

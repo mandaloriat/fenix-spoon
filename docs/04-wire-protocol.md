@@ -1,20 +1,20 @@
 # Wire protocol — v1
 
 The contract between clients and a Fenix Spoon server. JSON everywhere; all endpoints under
-`/api/v1`. The pydantic models in `server/fenixspoon/geometry.py`, `protocol.py` and
-`solvers/base.py` are the source of truth; this document is the human-readable view, and the
-[protocol models](reference-protocol.md) page is generated from them. Breaking changes bump the
-path version.
+`/api/v1`. The pydantic models in `server/fenixspoon/geometry.py`, `protocol.py`,
+`solvers/base.py` and `core/discovery.py` are the source of truth; this document is the
+human-readable view, and the [protocol models](reference-protocol.md) page is generated from
+them. Breaking changes bump the path version.
 
 ## Versioning
 
-The protocol is versioned `MAJOR.MINOR`, currently **1.1**, and a server reports what it
+The protocol is versioned `MAJOR.MINOR`, currently **1.2**, and a server reports what it
 speaks:
 
 ### `GET /api/v1/version`
 
 ```json
-{ "protocol": "1.1", "implementation": "0.1.0", "api_path": "/api/v1" }
+{ "protocol": "1.2", "implementation": "0.1.0", "api_path": "/api/v1" }
 ```
 
 **The one route that never requires an API key.** A client needs to know whether it can talk
@@ -69,12 +69,13 @@ one of them alone turns the other red. The checklist is in
 
 Two things are described here and they age differently.
 
-**The domain contract** — geometry kinds, solver descriptions, job statuses, progress and status
-events, result kinds, `stats`, artifact metadata — is what a Fenix Spoon *means*, independent of
-how it is carried. It is defined by the pydantic models in `geometry.py`, `solvers/base.py` and
-`protocol.py` (rendered in the [protocol reference](reference-protocol.md)) and validated by the
-fixtures in `protocol/fixtures/`. Any future transport is expected to carry these same models with
-the same semantics.
+**The domain contract** — geometry kinds, solver descriptions, capability declarations, job
+statuses, progress and status events, result kinds, `stats`, artifact metadata — is what a Fenix
+Spoon *means*, independent of how it is carried. It is defined by the pydantic models in
+`geometry.py`, `solvers/base.py`, `protocol.py` and `core/discovery.py` (rendered in the
+[protocol reference](reference-protocol.md)) and validated by the fixtures in
+`protocol/fixtures/`. Any future transport is expected to carry these same models with the same
+semantics.
 
 **The HTTP envelope** — paths under `/api/v1`, verbs, status codes (`202` on submit, `409` on a
 result that isn't ready, `422` on validation failure, `429` over quota), the WebSocket event
@@ -85,9 +86,14 @@ finished" and "unknown solver" differently, but must mean the same thing.
 The distinction matters because [M2.5](03-roadmap.md)
 plans a second transport (JSON-RPC 2.0 over stdio) over the same domain models; its design draft
 is [docs/07-local-agent-interface.md](07-local-agent-interface.md). **This document stays the
-specification of the HTTP/WebSocket protocol** — the two are not merged here, and nothing in the
-local-interface draft is implemented. What they share is the models above, plus the conformance
-corpus both are required to satisfy.
+specification of the HTTP/WebSocket protocol** — the two are not merged here. What they share is
+the models above, plus the conformance corpus both are required to satisfy.
+
+Two pieces of that draft have landed and are HTTP-bound here as well as core-resident: the
+transport-neutral core ([#42](https://github.com/mandaloriat/fenix-spoon/issues/42), invisible on
+the wire) and progressive discovery
+([#43](https://github.com/mandaloriat/fenix-spoon/issues/43), the four routes below). The rest of
+the draft — workspace, JSON-RPC, compact result levels, cache, studies — is still design.
 
 ## Authentication
 
@@ -128,6 +134,92 @@ forms from it):
   }
 ]
 ```
+
+This is the exhaustive answer, and it is the right one for a form generator: to build every
+control it needs every schema. Its payload is fixed — protocol 1.2 added the four routes below
+*beside* it rather than changing it.
+
+### Progressive discovery
+
+Added in protocol 1.2 ([#43](https://github.com/mandaloriat/fenix-spoon/issues/43)). Three
+questions that `/solvers` answers only by answering all of them at once. Measured on the three
+mock adapters, `/solvers` is 4.0 kB where `/capabilities` is 0.5 kB; both grow with the number of
+solvers installed, so the ratio matters more than either figure.
+
+These are the HTTP binding of `environment.inspect`, `capability.list` and
+`capability.describe` — the same operations the local transports in
+[M2.5](03-roadmap.md#m25-local-automation-and-agent-interface) expose without a server. That is
+why sections are a list of strings and the schema reference is an opaque `schema:` identifier
+rather than a URL: neither has anything HTTP-shaped in it.
+
+#### `GET /api/v1/environment`
+
+What this installation *is*: versions, which dependencies imported, execution and event
+backends, the store, the data directory, the configured limits, and **the calling principal's**
+quotas and current usage. No schemas. Behind the auth gate, unlike `/version` — the two version
+strings are not secret, but a data directory, a backend topology and another principal's quota
+position are not free information.
+
+`cache` is reported as an explicit `null`: the content-addressed cache is
+[#47](https://github.com/mandaloriat/fenix-spoon/issues/47) and does not exist yet, and a null
+lets a caller distinguish "no cache here" from "this server is too old to say".
+
+#### `GET /api/v1/capabilities`
+
+One line per installed capability — name, title, physics tag, accepted geometry kinds,
+availability (`mock` or `fenicsx`). No schemas, no prose:
+
+```json
+[
+  {
+    "name": "mock.laplace2d",
+    "title": "Potential flow (mock, NumPy)",
+    "physics": "potential-flow",
+    "geometry_types": ["domain2d"],
+    "availability": "mock"
+  }
+]
+```
+
+#### `GET /api/v1/capabilities/{name}`
+
+One capability, in the sections asked for. `?sections=` is repeatable and selects from
+`geometries`, `params`, `metrics`, `artifacts`, `cost`, `features`, `requirements`, `examples`.
+Omit it entirely for all of them plus the title, description, physics tag and availability.
+
+**An unrequested section is absent from the JSON, not present and null.** `?sections=metrics`
+returns exactly `name` and `metrics` — `name` because an answer should be identifiable without
+correlating it back to the request. An unknown section name is a `422` rather than being
+ignored: a caller that misspells `metrics` and gets a payload with no metrics in it would
+conclude the capability has none, which is a wrong answer arrived at quietly.
+
+```json
+{
+  "name": "mock.heat2d",
+  "metrics": [
+    {"name": "t_max", "unit": "degC", "description": "Peak temperature ...",
+     "field": "T", "reduction": "max"},
+    {"name": "t_rise", "unit": "K", "description": "Peak temperature above ambient ..."}
+  ]
+}
+```
+
+Metrics are **declared, not yet computed**: this tells a caller what a solve will report, and
+the level that returns the values is [#46](https://github.com/mandaloriat/fenix-spoon/issues/46).
+Where a metric names a `field` and a `reduction` it is a stated reduction of a declared result
+field; `t_rise` names neither because it depends on a parameter as well, and claiming otherwise
+would be a declaration nothing can evaluate.
+
+The `params` section carries a flat parameter list — name, type, default, bounds, enum choices —
+plus `schema_ref`. Being flat is the point rather than being small: a `Literal` parameter reaches
+a caller as `$ref` → `$defs` → `enum`, and resolving that is work the summary does once. On the
+adapters shipped today the summary is in fact marginally *larger* than the schema it summarises.
+
+#### `GET /api/v1/capabilities/{name}/schema`
+
+Resolves the `schema:params/{name}` reference from a `params` section to the full JSON Schema —
+the same object `/solvers` embeds, fetched deliberately. Or pass `?inline_schemas=true` to
+`capability.describe` to get it in one round trip.
 
 ## Geometry
 
@@ -353,11 +445,13 @@ second protocol. Each is driven by
 [M2.5](03-roadmap.md) and detailed in the
 [local agent interface draft](07-local-agent-interface.md).
 
-- **Declared metrics.** `SolverInfo` describes a solver's inputs but not its outputs, so a caller
-  cannot know what a solve will report until it reads one. A `metrics` section (name, unit,
-  description) on the solver description, and a `metrics` map on the result envelope, would let a
-  form generator and a non-visual caller work from the same declaration. `stats` is the measured
-  *cost* of a solve; metrics are its engineering *answer*, and the two should stay distinct.
+- **Metric *values* on a result.** The *declaration* half landed in 1.2: `capability.describe`'s
+  `metrics` section says what a capability reports, with name, unit and meaning. What is still
+  missing is a `metrics` map on the result envelope carrying the numbers. `stats` is the measured
+  *cost* of a solve; metrics are its engineering *answer*, and the two stay distinct — note that
+  `mock.heat2d` and `dolfinx.heat2d` currently report `t_max` and `t_rise` in `stats`, which is
+  precisely the conflation to undo. They stay there until the result level exists to move them to,
+  because taking them away first would break the demo that reads them.
 - **Diagnostics.** Convergence flag, final residual and warnings have no home today: some of it
   is in `stats`, some only in progress events, some nowhere. A small structured diagnostics object
   alongside `stats` is the natural place — note that `stats` is typed `dict[str, float]`, so a

@@ -35,7 +35,8 @@ from pydantic import BaseModel, Field
 
 from ..geometry import Regions2D
 from ._gmsh import gmsh_session
-from .base import ProgressEvent, Solver, SolverContext, SolverResult
+from .base import CapabilityExample, ProgressEvent, Solver, SolverContext, SolverResult
+from .declarations import HEAT_METRICS, VTK_ARTIFACT
 from .dolfinx_poisson import (
     _MESH_SAFETY_FACTOR,
     _nodal_speed,
@@ -142,6 +143,28 @@ class DolfinxHeat2D(Solver):
         "not a meshed material."
     )
     geometry_types = ["regions2d"]
+    physics = "heat-conduction"
+    availability = "fenicsx"
+    requires = ["dolfinx", "gmsh"]
+    metrics = HEAT_METRICS
+    artifacts = [VTK_ARTIFACT]
+    examples = [
+        CapabilityExample(
+            title="coarse mesh",
+            description=(
+                "Meshes the fins in a couple of elements each — a setup check, not a result."
+            ),
+            params={"mesh_size": 0.004, "write_vtk": False},
+        ),
+        CapabilityExample(
+            title="forced air",
+            description=(
+                "The same comparison mock.heat2d offers, on the FEM mesh: `h` is what a fan "
+                "buys you, and it moves `t_rise` further than most geometry edits."
+            ),
+            params={"mesh_size": 0.0015, "h": 120.0},
+        ),
+    ]
 
     class Params(BaseModel):
         # Deliberately the same names, units and prose as mock.heat2d's parameters, so a

@@ -1,12 +1,19 @@
 # Local agent interface — design draft
 
-!!! warning "Preliminary design specification — nothing here is implemented"
+!!! warning "Preliminary design specification — mostly not implemented"
 
     This describes the interface [M2.5](03-roadmap.md) is meant to build, so that the
     milestone's issues can be written against something concrete. Names, payload shapes and
     operation sets *will* change during implementation; treat every example as illustrative,
     not as a stable API. The shipped contract today is the HTTP/WebSocket
     [wire protocol](04-wire-protocol.md).
+
+    **Landed so far:** the transport-neutral core §11 depends on
+    ([#42](https://github.com/mandaloriat/fenix-spoon/issues/42)), and capability discovery
+    §6 — `environment.inspect`, `capability.list`, `capability.describe`, bound to HTTP in
+    protocol 1.2 ([#43](https://github.com/mandaloriat/fenix-spoon/issues/43)). Where §6
+    below differs from what shipped, the [wire protocol](04-wire-protocol.md#progressive-discovery)
+    is the accurate one; the differences are noted inline.
 
 ## 1. Motivation
 
@@ -144,6 +151,17 @@ patch format is expected to be [JSON Patch (RFC 6902)](https://datatracker.ietf.
 or an equivalent standardized mechanism — see the open questions.
 
 ## 6. Capability discovery
+
+!!! success "Implemented (#43), with two departures from the draft below"
+
+    Both are worth recording. **The metrics section declares, it does not compute** — a caller
+    learns that `mock.heat2d` reports `t_max` before running anything, and the values arrive
+    with the result levels of [#46](https://github.com/mandaloriat/fenix-spoon/issues/46). To
+    stop that being an aspirational list, a metric that is a reduction of a result field names
+    the field and the reduction, and a test runs a real solve and fails if the field is not
+    there. **And the `params` section's flat list is not smaller than the schema it summarises**
+    — measured, it is marginally larger on today's adapters. What it removes is `$ref`
+    indirection; the size win is `capability.list` and not sending unrequested sections.
 
 A *capability* is what a solver adapter offers, described in sections so a caller can ask for the
 part it needs. Today `GET /api/v1/solvers` returns everything about every solver, full JSON Schemas
