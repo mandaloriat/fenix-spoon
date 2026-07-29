@@ -88,7 +88,18 @@ Planned kinds: `spline2d` profiles, `axisymmetric2d`, `step3d` (uploaded CAD).
 
 Response: `{ "job_id": "j-8f3a...", "status": "queued" }`
 
-Errors: `404` unknown solver · `422` invalid geometry/params (pydantic detail format).
+Errors: `404` unknown solver · `422` invalid geometry/params (pydantic detail format) · `422`
+over the server's cell budget, with a plain-string detail naming the estimate and the limit:
+
+```json
+{ "detail": "job would use about 4,194,304 cells, over this server's limit of 2,000,000. Lower the resolution or mesh size, or raise FENIXSPOON_MAX_CELLS." }
+```
+
+The budget check runs at submit time from the solver's own cheap estimate (grid resolution,
+or `2·area/h²` for a meshed domain), so an over-sized request is refused immediately instead
+of being started and killed halfway through by the wall-clock timeout. Operators set the
+limit with `FENIXSPOON_MAX_CELLS` (default 2,000,000; `0` disables it). A solver that cannot
+estimate its cost is admitted, with the timeout as the backstop.
 
 ### `GET /api/v1/jobs/{job_id}`
 
@@ -123,12 +134,19 @@ after completion still yields the full history. Stream closes after a terminal e
   "job_id": "j-8f3a...",
   "kind": "grid2d",
   "data": { "...": "see result kinds below" },
+  "stats": { "cells": 8192, "iterations": 3000, "seconds": 1.8421 },
   "artifacts": [
     { "name": "solution.vtk", "content_type": "model/vnd.vtk", "size": 191234,
       "url": "/api/v1/jobs/j-8f3a.../artifacts/solution.vtk" }
   ]
 }
 ```
+
+`stats` is what the solve actually cost, as an open map of `string → number`. Clients must
+treat every key as optional: `cells` and `seconds` are conventional and `seconds` is always
+present (the job manager measures it), the rest is whatever the adapter knows — the mock
+solvers report `iterations`, the FEniCSx adapters report `dofs`. A key present in `stats` is
+the measured value, unlike the pre-flight `estimate_cells` used by the budget check.
 
 Result kinds:
 

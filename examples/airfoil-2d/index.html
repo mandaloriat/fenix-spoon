@@ -112,7 +112,8 @@ async function run() {
 
     viewer.result = result;
     syncFieldOptions();
-    statusEl.textContent = `done — ${result.data.triangles?.length ?? 0} elements`;
+    statusEl.textContent =
+      `done — ${result.data.triangles?.length ?? 0} elements` + formatStats(result.stats);
     showArtifacts(result.artifacts);
   } catch (error) {
     statusEl.textContent =
@@ -132,6 +133,16 @@ async function run() {
 // "undefined" on the status line.
 function describe(error) {
   return error instanceof Error ? error.message : String(error);
+}
+
+// " · 8,192 cells · 1.84 s". Every key is optional and server-defined, so this reports
+// the ones it recognises and stays quiet about the rest.
+function formatStats(stats = {}) {
+  const parts = [];
+  if (stats.cells) parts.push(`${stats.cells.toLocaleString()} cells`);
+  if (stats.dofs) parts.push(`${stats.dofs.toLocaleString()} dofs`);
+  if (stats.seconds) parts.push(`${stats.seconds.toFixed(2)} s`);
+  return parts.length ? ` · ${parts.join(' · ')}` : '';
 }
 
 function syncFieldOptions() {

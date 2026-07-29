@@ -20,7 +20,7 @@ Goal: a working vertical slice with zero heavy dependencies, plus the planning d
 - [x] Test suite green without FEniCSx; CI workflow
 - [x] Docker scaffolding (dolfinx base image + compose)
 
-## M1 — Real FEniCSx path
+## M1 — Real FEniCSx path ✅
 
 Goal: the demo runs on an unstructured FEniCSx solve inside Docker, same UX.
 
@@ -36,8 +36,10 @@ Goal: the demo runs on an unstructured FEniCSx solve inside Docker, same UX.
       `mock.magnetostatics2d` and `dolfinx.magnetostatics2d`, and `examples/solenoid-2d/`.
       *Axisymmetric (A-φ) formulation deferred: the planar cut is what the demo needs, and
       axisymmetry belongs with a dedicated `axisymmetric2d` geometry kind.*
-- [ ] Mesh-size/quality parameters exposed through solver params, with server-side caps (#6)
-      — *partially done: wall-clock timeout + cancellation shipped; cell-count caps pending.*
+- [x] Mesh-size/quality parameters exposed through solver params, with server-side caps (#6)
+      — wall-clock timeout, cancellation, and a submit-time cell budget (`FENIXSPOON_MAX_CELLS`)
+      refusing over-sized jobs with an actionable 422 before they start. Every solve reports
+      what it cost (`stats`: cells, dofs, iterations, seconds), surfaced in both demos.
 
 ## M2 — Embeddable client widgets ✅
 

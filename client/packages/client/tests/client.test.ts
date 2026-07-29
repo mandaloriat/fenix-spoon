@@ -110,7 +110,28 @@ describe('FenixSpoonClient', () => {
           obstacle: { type: 'polygon2d', points: [[0, 0], [1, 0], [0.5, 0.5]] },
         },
       }),
-    ).rejects.toMatchObject({ name: 'FenixSpoonError', status: 404, detail: 'unknown solver' });
+    ).rejects.toMatchObject({
+      name: 'FenixSpoonError',
+      status: 404,
+      detail: 'unknown solver',
+      // A prose detail belongs in the message too: callers print `error.message`.
+      message: 'POST /api/v1/jobs failed: HTTP 404 — unknown solver',
+    });
+  });
+
+  it('keeps a structured detail off the message but on the error', async () => {
+    // pydantic validation errors are a list of objects; stringifying them into the
+    // message would produce "[object Object]".
+    const detail = [{ loc: ['body', 'params', 'resolution'], msg: 'less than 16' }];
+    const client = makeClient(
+      { '/api/v1/jobs/j-1/result': () => new Response(JSON.stringify({ detail }), { status: 422 }) },
+      FakeSocket,
+    );
+    await expect(client.job('j-1').result()).rejects.toMatchObject({
+      status: 422,
+      detail,
+      message: 'GET /api/v1/jobs/j-1/result failed: HTTP 422',
+    });
   });
 
   it('streams events in order and stops after the terminal event', async () => {

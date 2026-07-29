@@ -31,7 +31,7 @@ see the [state-of-the-art survey](docs/01-state-of-the-art.md). Fenix Spoon is t
 
 | Component | Where | Status |
 |---|---|---|
-| **Simulation server** — FastAPI app: job submission, WebSocket progress streaming, cancellation, wall-clock timeouts, result + artifact retrieval | [`server/`](server/) | ✅ working |
+| **Simulation server** — FastAPI app: job submission, WebSocket progress streaming, cancellation, wall-clock timeouts, cell budgets, result + artifact retrieval | [`server/`](server/) | ✅ working |
 | **Solver adapter protocol** — plug any solver (FEniCSx, mock, anything Python) behind the same API via `SolverContext` (progress / cancel / artifacts) | [`server/fenixspoon/solvers/`](server/fenixspoon/solvers/) | ✅ working |
 | **Mock solvers** — potential flow and magnetostatics in pure NumPy; let you develop the front-end without FEniCSx | [`mock_laplace.py`](server/fenixspoon/solvers/mock_laplace.py), [`mock_magnetostatics.py`](server/fenixspoon/solvers/mock_magnetostatics.py) | ✅ working |
 | **FEniCSx adapters** — the same two problems on unstructured Gmsh meshes, cross-validated against the mock solvers | [`dolfinx_poisson.py`](server/fenixspoon/solvers/dolfinx_poisson.py), [`dolfinx_magnetostatics.py`](server/fenixspoon/solvers/dolfinx_magnetostatics.py) | ✅ validated on dolfinx 0.11 (`pytest -m fenics`, CI job in the dolfinx image) |
@@ -76,6 +76,19 @@ micromamba create -p ./fenicsenv -c conda-forge python=3.12 fenics-dolfinx pytho
 ./fenicsenv/bin/pytest server/tests            # includes the `-m fenics` adapter tests
 ./fenicsenv/bin/uvicorn fenixspoon.main:app --app-dir server
 ```
+
+## Server configuration
+
+The server is configured from the environment; the defaults are meant for a laptop.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `FENIXSPOON_DATA_DIR` | `<tmp>/fenixspoon-jobs` | Where per-job artifact files are written |
+| `FENIXSPOON_JOB_TIMEOUT` | `600` | Wall-clock seconds a solve may run; `0` disables. Cooperative — the worker is asked to stop |
+| `FENIXSPOON_MAX_CELLS` | `2000000` | Cell budget for a single job; `0` disables. Checked at submit from the solver's own estimate, so an over-sized job is refused with an explanation instead of being killed halfway through |
+
+Every finished job reports what it actually cost in the result's `stats` (`cells`, `dofs`,
+`iterations`, `seconds` — whichever the adapter knows), which is what the caps should be set from.
 
 ## Architecture at a glance
 

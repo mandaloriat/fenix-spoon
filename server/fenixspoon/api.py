@@ -52,7 +52,22 @@ async def create_job(req: JobRequest, request: Request) -> JobCreated:
         params = solver_cls.Params.model_validate(req.params)
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=json.loads(exc.json())) from exc
-    job = await _manager(request).submit(solver_cls, req.geometry, params)
+
+    # Refuse work that would exhaust the box *before* accepting it: a clear rejection
+    # beats a job killed halfway through by the wall-clock timeout.
+    manager = _manager(request)
+    estimate = solver_cls.estimate_cells(req.geometry, params)
+    if estimate is not None and manager.max_cells and estimate > manager.max_cells:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"job would use about {estimate:,} cells, over this server's limit of "
+                f"{manager.max_cells:,}. Lower the resolution or mesh size, or raise "
+                "FENIXSPOON_MAX_CELLS."
+            ),
+        )
+
+    job = await manager.submit(solver_cls, req.geometry, params)
     return JobCreated(job_id=job.id, status=job.status)
 
 
@@ -90,6 +105,7 @@ def job_result(job_id: str, request: Request) -> dict[str, Any]:
         "job_id": job.id,
         "kind": job.result.kind,
         "data": job.result.data,
+        "stats": job.result.stats,
         "artifacts": [
             {**entry, "url": f"/api/v1/jobs/{job.id}/artifacts/{entry['name']}"}
             for entry in job.artifacts

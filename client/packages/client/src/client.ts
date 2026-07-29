@@ -125,8 +125,13 @@ export class FenixSpoonClient {
       } catch {
         detail = await response.text().catch(() => undefined);
       }
+      // A string detail is the server explaining itself in prose ("job would use about
+      // 4,194,304 cells, over this server's limit of…"). Put it in the message so a
+      // demo printing `error.message` shows the explanation, not just the status code.
+      // Structured details (pydantic's validation-error list) stay on `.detail` only.
+      const explanation = typeof detail === 'string' && detail ? ` — ${detail}` : '';
       throw new FenixSpoonError(
-        `${init?.method ?? 'GET'} ${path} failed: HTTP ${response.status}`,
+        `${init?.method ?? 'GET'} ${path} failed: HTTP ${response.status}${explanation}`,
         response.status,
         detail,
       );

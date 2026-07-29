@@ -177,3 +177,21 @@ def test_solve_through_job_api(tmp_path, monkeypatch):
         assert status["status"] == "done", status["error"]
         payload = client.get(f"/api/v1/jobs/{job_id}/result").json()
         assert payload["kind"] == "grid2d"
+        stats = payload["stats"]
+        assert stats["cells"] > 0 and stats["dofs"] > 0 and stats["seconds"] > 0
+
+
+@pytest.mark.parametrize("mesh_size", [0.06, 0.1])
+def test_cell_estimate_stays_above_the_real_mesh(tmp_path, mesh_size):
+    """The budget check is only useful if its estimate errs high.
+
+    ``2A/h²`` alone is the equilateral-tiling *floor* and Gmsh comes in ~35% above it,
+    so the estimate carries a safety factor. This test is what stops that factor from
+    being quietly tuned back below the real mesh.
+    """
+    params = DolfinxPotentialFlow2D.Params(mesh_size=mesh_size, resolution=48, write_vtk=False)
+    estimate = DolfinxPotentialFlow2D.estimate_cells(GEOMETRY, params)
+    result = DolfinxPotentialFlow2D().solve(GEOMETRY, params, make_ctx(tmp_path))
+    assert estimate >= result.stats["cells"]
+    # ...but not so high that the cap becomes theatre.
+    assert estimate <= 5 * result.stats["cells"]

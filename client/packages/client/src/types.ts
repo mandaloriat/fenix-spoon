@@ -146,10 +146,18 @@ export interface ArtifactRef {
   url: string;
 }
 
+/**
+ * What the solve actually cost. Every key is optional and server-defined: `cells` and
+ * `seconds` are conventional, adapters add their own (`iterations`, `dofs`). Read it for
+ * display, never branch on a key being present.
+ */
+export type JobStats = Record<string, number>;
+
 export interface Grid2DResult {
   job_id: string;
   kind: 'grid2d';
   data: Grid2DData;
+  stats: JobStats;
   artifacts: ArtifactRef[];
 }
 
@@ -157,6 +165,7 @@ export interface Mesh2DResult {
   job_id: string;
   kind: 'mesh2d';
   data: Mesh2DData;
+  stats: JobStats;
   artifacts: ArtifactRef[];
 }
 

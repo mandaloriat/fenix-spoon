@@ -12,12 +12,16 @@ Configuration (environment):
 - ``FENIXSPOON_JOB_TIMEOUT`` — wall-clock seconds a solve may run (default 600; 0 disables).
   Timeouts are cooperative: the worker thread is asked to stop via the cancel event, and
   the job is failed immediately from the caller's point of view.
+- ``FENIXSPOON_MAX_CELLS`` — cell budget a single job may ask for (default 2,000,000; 0
+  disables). Enforced at submit time from the solver's own estimate, so an over-budget
+  job is refused with a clear message instead of being killed mid-solve by the timeout.
 """
 
 import asyncio
 import os
 import tempfile
 import threading
+import time
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -42,6 +46,11 @@ def _default_data_dir() -> Path:
 
 def _default_timeout() -> float:
     return float(os.environ.get("FENIXSPOON_JOB_TIMEOUT", "600"))
+
+
+def _default_max_cells() -> int:
+    """Cell budget a single job may ask for. 0 disables the check."""
+    return int(os.environ.get("FENIXSPOON_MAX_CELLS", "2000000"))
 
 
 @dataclass
@@ -81,10 +90,16 @@ class JobStatus(BaseModel):
 
 
 class JobManager:
-    def __init__(self, data_dir: Path | None = None, job_timeout: float | None = None) -> None:
+    def __init__(
+        self,
+        data_dir: Path | None = None,
+        job_timeout: float | None = None,
+        max_cells: int | None = None,
+    ) -> None:
         self._jobs: dict[str, Job] = {}
         self._data_dir = data_dir if data_dir is not None else _default_data_dir()
         self._timeout = job_timeout if job_timeout is not None else _default_timeout()
+        self.max_cells = max_cells if max_cells is not None else _default_max_cells()
 
     def get(self, job_id: str) -> Job | None:
         return self._jobs.get(job_id)
@@ -121,10 +136,15 @@ class JobManager:
             cancel_event=job.cancel_event,
             artifact_dir=job.artifact_dir,
         )
+        started = time.monotonic()
         try:
             solver = solver_cls()
             work = loop.run_in_executor(None, solver.solve, geometry, params, ctx)
             job.result = await asyncio.wait_for(work, self._timeout or None)
+            job.result.stats = {
+                **job.result.stats,
+                "seconds": round(time.monotonic() - started, 4),
+            }
             job.artifacts = ctx.artifacts
             job.status = "done"
         except TimeoutError:

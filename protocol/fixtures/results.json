@@ -31,6 +31,21 @@
         },
         "artifacts": []
       }
+    },
+    {
+      "name": "grid2d with solve statistics",
+      "payload": {
+        "job_id": "j-abc123def456",
+        "kind": "grid2d",
+        "data": {
+          "bounds": [0.0, 0.0, 1.0, 1.0],
+          "shape": [1, 2],
+          "fields": { "psi": [0.0, 1.0] },
+          "mask": [0, 0]
+        },
+        "stats": { "cells": 2, "iterations": 50, "dofs": 2, "seconds": 0.0123 },
+        "artifacts": []
+      }
     }
   ],
   "invalid": [
@@ -41,6 +56,16 @@
         "job_id": "j-x", "kind": "grid2d",
         "data": { "bounds": [0, 0, 1, 1], "shape": [2, 3],
                   "fields": { "psi": [1, 2, 3] }, "mask": [0, 0, 0, 0, 0, 0] }
+      }
+    },
+    {
+      "name": "non-numeric stat value",
+      "reason": "stats is a map of numbers; keys are free but values are not",
+      "payload": {
+        "job_id": "j-x", "kind": "grid2d",
+        "data": { "bounds": [0, 0, 1, 1], "shape": [1, 2],
+                  "fields": { "psi": [0, 1] }, "mask": [0, 0] },
+        "stats": { "cells": "many" }
       }
     },
     {
