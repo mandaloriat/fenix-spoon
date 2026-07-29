@@ -10,10 +10,9 @@ is tracked as a GitHub issue, and each milestone has a tracking issue with the s
 [M5](https://github.com/mandaloriat/fenix-spoon/issues/30)
 
 M0–M2 build the browser path: geometry in, job out, field rendered. M3 takes that path to
-production. M2.5 turns the same core into something a *local* process — a script, a CLI, an agent —
-can drive without a web application; it is numbered before M3 because it was designed before M3
-shipped, and the two are independent rather than sequential. M2.5 is single-user and in-process,
-M3 is multi-user and distributed.
+production. M2.5 is a different axis: the same core, reachable from a *local* process — a script,
+a CLI, an agent — without a web application. Its number records a dependency, not a date: it sits
+on the M2 core and needs nothing from M3, and was rebased onto M3 once that landed.
 
 ## M0 — Kickstart (this repository state) ✅
 
@@ -77,36 +76,46 @@ Goal: *a local agent can inspect the installed engineering capabilities, create 
 submit a simulation, query compact metrics and diagnostics, and retrieve artifacts without starting
 a web application or receiving full field payloads in its context.*
 
-Scope in one line: everything needed to drive Fenix Spoon from a process on the same machine —
-single user, in-process jobs, local workspace, compact answers. Nothing here needs a queue, a
-broker, or auth; those are M3, and M3 has since shipped, so M2.5 can lean on the
-`ExecutionBackend` seam rather than inventing one. The design specification is the
-[local agent interface](07-local-agent-interface.md), which this milestone implements.
+Everything needed to drive Fenix Spoon from a process on the same machine — single user,
+in-process jobs, local workspace, compact answers. It requires nothing that M3 added: no Redis, no
+API keys, no worker containers, no shared volume. What M3 built it should *reuse* rather than
+duplicate — the `JobStore`, the `ExecutionBackend`, the `EventBus` and the `Principal` are already
+the seams a second caller needs. The design specification is
+[docs/07-local-agent-interface.md](07-local-agent-interface.md), which this milestone implements.
 
-- [ ] **Transport-neutral application core.** Extract from the FastAPI routes a reusable
-      application layer — capability catalog, workspace service, object store, job service,
-      result query service, study service — and make `api.py` an adapter over it. The HTTP API
-      keeps its current behavior, paths and status codes; only the layering moves. (#42)
+- [ ] **Transport-neutral application core.** M3 already lifted execution, persistence and event
+      delivery out of the API layer. What is still route-shaped is the *request* logic: solver
+      lookup, geometry-kind checking, params validation, cell-budget and quota checks, artifact-URL
+      construction and error mapping all live in `api.py` as `HTTPException`s. Extract that into an
+      application layer — capability catalog, workspace service, object store, job service, result
+      query service, study service — and make `api.py` an adapter over it, with the HTTP behavior,
+      paths and status codes unchanged. (#42)
 - [ ] **Progressive capability discovery.** `environment.inspect`, `capability.list`,
-      `capability.describe` with section selection (geometries, params, metrics, artifacts, sweep
-      / gradient / MPI support, environment requirements). Full JSON Schemas are fetched by
-      reference or on request, never dumped on every call. (#43)
+      `capability.describe` with section selection (geometries, params, metrics, artifacts, cost
+      estimation, sweep / gradient / MPI support, environment requirements). Full JSON Schemas are
+      fetched by reference or on request, never dumped on every call — `GET /solvers` returns every
+      schema for every solver today, which is right for a form generator and wrong for a caller
+      that only wants to know what is installed. (#43)
 - [ ] **Local workspace and object references.** An inspectable, reopenable workspace holding
       `geometry`, `material`, `boundary_condition`, `load_case`, `design`, `study`, `result` and
       `artifact` objects under stable identifiers (`geometry:g-42`, `design:d-18`, `study:s-9`,
       `result:r-105`). Iterations reference objects instead of resending geometry; incremental
-      edits go through a standard patch mechanism (JSON Patch is the leading candidate). (#44)
+      edits go through a standard patch mechanism (JSON Patch is the leading candidate). Jobs,
+      results and artifacts are already durable in the `JobStore` — the workspace extends that
+      store, it does not open a second one beside it. (#44)
 - [ ] **JSON-RPC 2.0 over stdio.** A local transport with no mandatory network port: the agent
       spawns `fenix-spoon rpc --stdio` as a child process and speaks structured messages over its
       pipes — documented framing, typed compact errors, long solves as asynchronous jobs, working
       identically against mock solvers and real FEniCSx. This is the base local transport; MCP
       is layered on it, not the other way round. (#45)
 - [ ] **Compact results: metrics, diagnostics and selective field queries.** Separate the response
-      levels `status` / `metrics` / `diagnostics` / `fields` / `artifacts`. Agents get scalar
+      levels `status` / `metrics` / `diagnostics` / `fields` / `artifacts`. Diagnostics already
+      half exist as the result's `stats` (cells, dofs, iterations, seconds) — formalize that rather
+      than inventing a parallel channel, and add the part that is missing: declared scalar
       engineering metrics (mass, maximum displacement, maximum stress, safety factor, strain
-      energy, force, inductance, peak temperature) and solve diagnostics by default; full fields
-      travel as artifacts by reference, with selective queries for max, min, mean, integral,
-      point value, region value, section, decimated sampling and hotspot location. (#46)
+      energy, force, inductance, peak temperature). Full fields travel as artifacts by reference,
+      with selective queries for max, min, mean, integral, point value, region value, section,
+      decimated sampling and hotspot location. (#46)
 - [ ] **Content-addressed cache and provenance.** Deterministic hashing of geometry, solver,
       parameters and environment; local result cache; deduplication of equivalent jobs; full
       provenance on every result and an explicit design → study → job → result relation. The cache
@@ -115,7 +124,7 @@ broker, or auth; those are M3, and M3 has since shipped, so M2.5 can lean on the
       material comparisons, load-case comparisons, parametric optimization and model calibration
       can be expressed. The first slice implements a single small, controlled study kind —
       enough to prove that several jobs can be orchestrated through object references and
-      compact results. No universal optimizer here (that stays M5, #22). (#48)
+      synthetic results. No universal optimizer here (that stays M5, #22). (#48)
 - [ ] **MCP adapter.** A thin Model Context Protocol server over the same core and the same
       operations as JSON-RPC: a small stable tool vocabulary (inspect environment, list
       capabilities, describe capability, create or patch object, submit job, inspect job, query
@@ -134,9 +143,9 @@ broker, or auth; those are M3, and M3 has since shipped, so M2.5 can lean on the
 discover the available potential-flow capability, create an airfoil design in a workspace, submit
 a solve (mock or FEniCSx), receive progress, query compact field metrics, retrieve the VTK
 artifact by reference, patch one geometry parameter, and run a second solve that reuses the
-unchanged objects and reports what it took from cache. The solenoid is an equally acceptable
-subject. The milestone is *not* done when JSON-RPC merely answers — it is done when that
-iterative loop runs end to end.
+unchanged objects and reports what it took from cache. The solenoid and the heat sink are equally
+acceptable subjects. The milestone is *not* done when JSON-RPC merely answers — it is done when
+that iterative loop runs end to end.
 
 ## M3 — Production job execution
 
@@ -147,6 +156,11 @@ Scope note: M3 is the *multi-user, distributed* milestone — queue, separate wo
 server-side persistence, authentication, per-user quotas, deployment and load testing. M2.5
 depends on none of it and must not grow a second parallel job system: the job service it extracts
 wraps the same `ExecutionBackend` interface the arq backend already implements.
+
+Scope note: M3 is the *multi-user, distributed* axis — queue, separate workers, Redis,
+server-side persistence, authentication, per-user quotas, object storage, deployment and load
+testing. M2.5 requires none of it at runtime and must not grow a second job system beside the
+`ExecutionBackend` and `JobStore` this milestone built.
 
 - [x] Pluggable job backend: Celery or arq implementation (Redis), worker containers with
       dolfinx (#12) — an `ExecutionBackend` with an in-process pool (the default) and an
@@ -209,16 +223,16 @@ Goal: adoption. People find, run, and copy examples.
 
 ## M5 — Advanced / exploratory
 
-Each item stands alone. Where one overlaps the study vocabulary introduced in M2.5, M2.5 provides
-the abstraction and M5 provides the depth.
+Advanced and experimental capabilities, each standing alone. Where an item overlaps the study
+vocabulary introduced in M2.5, M2.5 provides the abstraction and M5 provides the depth.
 
 - [ ] Parameter sweeps and design-of-experiments API (N jobs, one submission) (#21) — *builds on
       the M2.5 study abstraction rather than introducing a second one: DOE designs, fan-out
-      through the M3 job backend, and the HTTP surface for sweeps.*
+      through the execution backend, and the HTTP surface for sweeps.*
 - [ ] Optimization loop hooks (dolfinx-adjoint / scipy.optimize driving the geometry params) (#22)
       — *stays here: M2.5 explicitly does not ship an optimizer, and where the study service ends
-      and an optimization service begins is an open question (see the
-      [local agent interface](07-local-agent-interface.md)).*
+      and an optimization service begins is an open question (see
+      [docs/07-local-agent-interface.md](07-local-agent-interface.md)).*
 - [ ] Offline/degraded mode: scikit-fem under Pyodide behind the same JS SDK interface (#23)
 - [ ] Sandboxed arbitrary-UFL mode (explicitly opt-in; see security posture in architecture
       doc) (#24)
@@ -230,3 +244,7 @@ the abstraction and M5 provides the depth.
 - Competing with ParaView for post-processing depth; the viewer targets *embedded app* use cases.
 - A hosted SaaS. Fenix Spoon is a toolkit; hosting it is the user's business (or a future separate
   project).
+- Arbitrary execution on behalf of a client or an agent: no `run_python`, `execute_shell`,
+  `run_ufl`, `install_package` or `start_container` operation, on any transport. Sandboxed
+  arbitrary UFL remains a separate, opt-in M5 experiment (#24). The full list of local-interface
+  non-goals is in [docs/07-local-agent-interface.md](07-local-agent-interface.md).

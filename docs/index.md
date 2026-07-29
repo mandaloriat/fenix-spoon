@@ -44,7 +44,9 @@ install, no desktop tooling — a browser talking to a FEniCSx server.
 | Distributed execution: arq workers behind Redis | working |
 
 Milestones M1–M3 are complete apart from a Helm chart. The
-[roadmap](03-roadmap.md) tracks the rest.
+[roadmap](03-roadmap.md) tracks the rest — including
+[driving the same core from a local process](07-local-agent-interface.md) rather than a browser,
+which is designed but not built.
 
 ## The one design decision worth knowing up front
 

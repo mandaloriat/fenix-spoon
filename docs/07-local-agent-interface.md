@@ -1,11 +1,12 @@
 # Local agent interface — design draft
 
-> **Status: preliminary design specification, nothing here is implemented.** This document
-> describes the interface [M2.5](03-roadmap.md#m25-local-automation-and-agent-interface) is meant
-> to build, so that the milestone's issues can be written against something concrete. Names,
-> payload shapes and operation sets *will* change during implementation; treat every example as
-> illustrative, not as a stable API. The shipped contract today is the HTTP/WebSocket
-> [wire protocol](04-wire-protocol.md).
+!!! warning "Preliminary design specification — nothing here is implemented"
+
+    This describes the interface [M2.5](03-roadmap.md) is meant to build, so that the
+    milestone's issues can be written against something concrete. Names, payload shapes and
+    operation sets *will* change during implementation; treat every example as illustrative,
+    not as a stable API. The shipped contract today is the HTTP/WebSocket
+    [wire protocol](04-wire-protocol.md).
 
 ## 1. Motivation
 
@@ -16,26 +17,29 @@ constructing, running and automating FEniCSx-based engineering simulation workfl
 is one consumer of it.
 
 The consumer this document is about is a program on the same machine: a script, a CI step, a
-notebook, or a software agent. Such a caller already has FEniCSx available (in a conda
-environment or a container) and does not want a web application; it wants a structured way to ask
-*what can this environment simulate*, *run this*, *how did it come out*, and *give me the file*.
+notebook, or a software agent. Such a caller already has FEniCSx available (in a conda environment
+or a container) and does not want a web application; it wants a structured way to ask *what can
+this environment simulate*, *run this*, *how did it come out*, and *give me the file*.
 
 Today that caller has three bad options:
 
-1. **Drive the HTTP API.** Workable, but it forces a server process and a port for something that
-   is a local, single-user, one-shot interaction, and the answers are shaped for a viewer widget:
-   a `grid2d` result is tens of thousands of floats, which is exactly the wrong payload for a
-   caller with a bounded context window.
-2. **Import `fenixspoon` and call internals.** There is no supported surface: the useful logic —
-   solver lookup, geometry-kind checking, params validation, artifact URLs — lives inside FastAPI
-   route bodies (`server/fenixspoon/api.py`) and raises `HTTPException`.
+1. **Drive the HTTP API.** Workable, and after M3 it is a genuinely solid server — but it forces a
+   process and a port for what is a local, single-user interaction, and the answers are shaped for
+   a viewer widget: a `grid2d` result is tens of thousands of floats, exactly the wrong payload for
+   a caller with a bounded context window.
+2. **Import `fenixspoon` and call internals.** Closer than it used to be: M3 pulled execution,
+   persistence, event delivery and identity out of the API layer, so `ExecutionBackend`,
+   `JobStore`, `EventBus` and `Principal` are callable objects. But the *request* path never
+   moved — solver lookup, geometry-kind checking, params validation, the cell budget, quota checks
+   and error mapping are route bodies in `api.py` that raise `HTTPException`. There is no
+   supported way to submit a validated job without FastAPI.
 3. **Write dolfinx code and run it.** This is what people do, and it is precisely the failure mode
    the project's [security posture](02-architecture.md#security-posture-why-solvers-are-declarative)
    rejects for clients: unvalidated arbitrary execution, no discoverable schema, no provenance, no
    cache identity, nothing reusable between runs.
 
-The gap is not "AI support". It is that the application logic is not reachable except through one
-transport, and that its answers are sized for pixels rather than for decisions.
+The gap is not "AI support". It is that the request half of the application is reachable through
+exactly one transport, and that its answers are sized for pixels rather than for decisions.
 
 ## 2. Use cases
 
@@ -46,15 +50,15 @@ transport, and that its answers are sized for pixels rather than for decisions.
 - **Mesh convergence as a checked routine.** A script runs the same design at increasing mesh
   resolution and reports where the metric of interest stabilizes, reusing cached results for the
   resolutions already computed.
-- **Batch regression in CI.** A repository of designs is re-solved on every solver change; the
-  job compares metrics against stored baselines and fails on drift. No server, no browser.
-- **Interactive shell use.** An engineer runs `fenix-spoon capability describe dolfinx.potential_flow2d
-  --section params` and `fenix-spoon result query result:r-105 --op max --field speed` while
-  debugging, hitting the same code path an agent would.
+- **Batch regression in CI.** A repository of designs is re-solved on every solver change; the job
+  compares metrics against stored baselines and fails on drift. No server, no browser.
+- **Interactive shell use.** An engineer runs `fenix-spoon capability describe
+  dolfinx.potential_flow2d --section params` and `fenix-spoon result query result:r-105 --op max
+  --field speed` while debugging, hitting the same code path an agent would.
 - **Notebook / Python scripting.** A user imports the Python API in a Jupyter kernel that already
   has dolfinx, and gets the same objects, validation and caching as every other transport.
 - **MCP host integration.** A desktop assistant with an MCP client connects to a local Fenix Spoon
-  server and gets a handful of stable tools rather than a Python sandbox.
+  and gets a handful of stable tools rather than a Python sandbox.
 
 ## 3. Principles
 
@@ -64,28 +68,31 @@ transport, and that its answers are sized for pixels rather than for decisions.
    describe *how* to solve, only *what*, from a server-defined menu.
 3. **The core is transport-neutral.** HTTP/WebSocket, JSON-RPC over stdio, CLI, Python and MCP are
    adapters over one application core with one set of models and one set of errors.
-4. **It must work entirely locally.** No network port required, no external services, no
-   multi-user infrastructure. The base local transport is a child process speaking over pipes.
+4. **It must work entirely locally.** No network port required, no Redis, no API keys, no shared
+   volume. The base local transport is a child process speaking over pipes.
 5. **It must work without FEniCSx.** Mock solvers keep every operation exercisable in a plain
    virtualenv, exactly as they do for the browser path today.
 6. **It must use the FEniCSx that is there.** When dolfinx imports, the real adapters register
-   themselves and the same operations run the real solve — the local interface introduces no
-   separate execution path, no installation step, no container orchestration.
-7. **Answers are compact by default.** Scalars and diagnostics first; fields by reference or by
+   themselves and the same operations run the real solve — no separate execution path, no
+   installation step, no container orchestration.
+7. **Reuse the M3 seams, don't fork them.** `ExecutionBackend`, `EventBus`, `JobStore` and
+   `Principal` already exist and already cross process boundaries. The local interface is a new
+   caller of them, not a second implementation.
+8. **Answers are compact by default.** Scalars and diagnostics first; fields by reference or by
    query. A caller asks for volume, it never arrives unrequested.
-8. **Discovery is progressive.** Ask for the section you need. Full schemas are fetched by
+9. **Discovery is progressive.** Ask for the section you need. Full schemas are fetched by
    reference or on explicit request.
-9. **State lives in a workspace, not in messages.** Objects have stable ids; iterations send
-   patches and references, not whole geometries.
-10. **No arbitrary execution.** Engineering operations and domain objects only.
+10. **State lives in a workspace, not in messages.** Objects have stable ids; iterations send
+    patches and references, not whole geometries.
+11. **No arbitrary execution.** Engineering operations and domain objects only.
 
 ## 4. Non-goals
 
 Explicitly out of scope for this interface — not "later", but *not this*:
 
 - **Arbitrary Python, UFL or shell execution.** No `run_python(code)`, `run_ufl(source)`,
-  `execute_shell(command)`. Sandboxed opt-in arbitrary UFL remains a separate M5 experiment
-  (#24) with its own threat model, and would not be reachable through this vocabulary.
+  `execute_shell(command)`. Sandboxed opt-in arbitrary UFL remains a separate M5 experiment (#24)
+  with its own threat model, and would not be reachable through this vocabulary.
 - **Client-requested package installation** (`install_package(name)`). The environment is
   inspected and reported, never mutated.
 - **Starting arbitrary container images** (`start_container(image)`). Deployment chooses the
@@ -110,14 +117,14 @@ The workspace holds typed objects with stable identifiers of the form `<type>:<i
 | Type | Holds | Notes |
 |---|---|---|
 | `geometry` | a payload of a protocol geometry kind (`domain2d`, `regions2d`, …) | validated by the existing pydantic models |
-| `material` | named scalar properties (`mu_r`, `E`, `rho`, …) | the open-dict convention of `regions2d.material`, promoted to a reusable object |
-| `boundary_condition` | a named condition bound to a boundary tag | today implicit in each solver; needs a schema before it can be an object |
+| `material` | named scalar properties (`mu_r`, `k`, `rho`, …) | the open-dict convention of `regions2d.material`, promoted to a reusable object |
+| `boundary_condition` | a named condition bound to a boundary tag | today implicit in each solver's params; needs a schema before it can be an object |
 | `load_case` | a set of sources/loads applied to a design | groups current densities, inlet velocities, thermal loads |
 | `design` | a geometry reference + material/BC/load-case references + solver params | the unit an iteration patches |
 | `study` | a study kind + its base design + a variation spec | orchestrates several jobs |
-| `job` | one submitted solve | already exists (`Job` in `jobs.py`), gains a workspace identity |
-| `result` | metrics, diagnostics, provenance, references to fields and artifacts | the compact object an agent reads |
-| `artifact` | a file produced by a solve (VTK, VTU, mesh, log) | already exists per job; gains an id and a lifetime |
+| `job` | one submitted solve | **already exists and is already durable** (`JobRecord` in `store.py`) |
+| `result` | metrics, diagnostics, provenance, references to fields and artifacts | the compact object an agent reads; the payload itself is already stored on disk |
+| `artifact` | a file produced by a solve (VTK, VTU, mesh, log) | **already exists** per job, under the data directory |
 
 Identifiers look like `geometry:g-42`, `design:d-18`, `study:s-9`, `result:r-105`, `job:j-8f3adc…`
 (job ids keep their current format). Every operation that would otherwise take a payload accepts a
@@ -127,6 +134,10 @@ reference instead:
 {"method": "job.submit", "params": {"design": "design:d-18", "solver": "mock.laplace2d"}}
 ```
 
+The last three rows matter for scope: jobs, results and artifacts already have durable storage,
+retention and ownership. The workspace **extends `JobStore` with the new object types**; it does
+not open a second database next to `jobs.db` with its own lifetime rules.
+
 Objects are **versioned, not mutated in place**: `object.patch` produces a new revision and returns
 its id or revision tag, so a result's provenance can name exactly what it was computed from. The
 patch format is expected to be [JSON Patch (RFC 6902)](https://datatracker.ietf.org/doc/html/rfc6902)
@@ -135,31 +146,35 @@ or an equivalent standardized mechanism — see the open questions.
 ## 6. Capability discovery
 
 A *capability* is what a solver adapter offers, described in sections so a caller can ask for the
-part it needs. Today `GET /api/v1/solvers` returns everything about every solver, including full
-JSON Schemas — fine for a form generator, wasteful for a caller that wants to know whether
+part it needs. Today `GET /api/v1/solvers` returns everything about every solver, full JSON Schemas
+included — right for a form generator, wasteful for a caller that wants to know whether
 magnetostatics is available at all.
 
 Three operations:
 
 - **`environment.inspect`** — what this installation *is*: Fenix Spoon version, protocol version,
-  whether dolfinx and gmsh imported and at what versions, MPI availability, workspace location,
-  configured limits (job timeout, artifact caps), cache state. A few hundred bytes, no schemas.
+  whether dolfinx and gmsh imported and at what versions, MPI availability, execution backend
+  (in-process pool or workers), store backend, workspace location, configured limits (job timeout,
+  cell budget, TTL, quotas), cache state. A few hundred bytes, no schemas.
 - **`capability.list`** — the installed capabilities as identity plus one line each: name, title,
   physics tag, accepted geometry kinds, availability (`mock` / `fenicsx`). No schemas.
-- **`capability.describe`** — one capability, with a `sections` argument selecting from:
-  `geometries`, `params`, `metrics`, `artifacts`, `features` (sweep / gradient / MPI support),
-  `requirements` (what the environment must provide), `examples`. Unspecified sections are omitted;
-  large schemas are returned as a reference (`schema:params/dolfinx.potential_flow2d`) that a
-  further call resolves, or inline only when explicitly requested.
+- **`capability.describe`** — one capability, with a `sections` argument selecting from
+  `geometries`, `params`, `metrics`, `artifacts`, `cost` (does it implement `estimate_cells`, and
+  what does the server's budget allow), `features` (sweep / gradient / MPI support),
+  `requirements`, `examples`. Unspecified sections are omitted; large schemas are returned as a
+  reference (`schema:params/dolfinx.potential_flow2d`) that a further call resolves, or inline only
+  when explicitly requested.
 
 ```json
 {"method": "capability.describe",
- "params": {"capability": "dolfinx.potential_flow2d", "sections": ["metrics", "features"]}}
+ "params": {"capability": "dolfinx.potential_flow2d", "sections": ["metrics", "cost"]}}
 ```
 
 The `metrics` section is new and load-bearing: it is how a caller learns that this capability can
 report `speed_max`, `circulation`, `lift_proxy` — with unit and meaning — *before* running
-anything. Solver adapters declare their metrics the way they declare `Params` today.
+anything. Solver adapters declare their metrics the way they declare `Params` today. The `cost`
+section is nearly free: `Solver.estimate_cells` already exists for the submit-time budget check,
+and exposing it lets a caller size a request instead of discovering the limit by being refused.
 
 ## 7. Minimum operation set
 
@@ -186,42 +201,49 @@ The whole vocabulary should stay small enough to hold in one page. A first cut:
 
 Deliberately absent: anything that takes code, a command line, a package name or an image
 reference. Deliberately *not* per-physics: there is no `solve_magnetostatics` — the physics is a
-capability name, a parameter and a set of declared metrics, which is what makes a new solver
-adapter automatically available to every caller.
+capability name, a parameter set and declared metrics, which is what makes a new solver adapter
+automatically available to every caller, exactly as
+[writing an adapter](start-write-a-solver.md) makes it available to the HTTP API today.
 
 ## 8. Workspace
 
-A workspace is a directory the caller names (default: `./.fenix-spoon` or an XDG state path). It
-holds the object store, the result cache and the artifact files, and it must be:
+A workspace is a directory the caller names (default: `./.fenix-spoon`, or the existing
+`FENIXSPOON_DATA_DIR` when one is configured). It holds the object store, the result cache and the
+artifact files, and it must be:
 
 - **Inspectable** — a human can look at it, diff it, and put it in version control if they choose.
 - **Reopenable** — closing the process and reopening the workspace restores every object and
-  result; ids stay valid.
-- **Local and single-user** — no locking protocol beyond what one process plus a stray second one
-  needs, no server-side persistence semantics. Multi-user persistence is M3 (#13).
+  result; ids stay valid. Jobs and results already behave this way; the new object types must join
+  them rather than living somewhere with different rules.
+- **Local and single-user** — no locking protocol beyond SQLite's, no new durability semantics.
+  Multi-user persistence is the `JobStore` interface and is already solved.
 
-Whether that store is SQLite or a manifest-plus-files layout is an open question below. What is
-fixed is the contract: stable ids, a listable index, patchable objects, and results that name their
-inputs.
+Whether the new objects live in the existing SQLite store, in a separate database, or in a
+manifest-plus-files layout is an open question below. What is fixed is the contract: stable ids, a
+listable index, patchable objects, results that name their inputs, and one retention story rather
+than two.
 
 ## 9. Job lifecycle
 
-Unchanged in substance from the HTTP path — the same job service, the same statuses
-(`queued` → `running` → `done` | `failed` | `cancelled`), the same cooperative cancellation and
-wall-clock timeout, the same event replay so a late subscriber sees the full history. What changes
-for a local caller:
+Unchanged in substance from the HTTP path — the same execution backend, the same statuses
+(`queued` → `running` → `done` | `failed` | `cancelled`), the same cooperative cancellation,
+wall-clock timeout, cell budget and sequence-numbered event replay. What changes for a local
+caller:
 
 - **Submission takes references.** `job.submit` with a `design` id resolves geometry, materials and
   params from the workspace; an inline geometry is still accepted for one-shot use.
-- **Progress is opt-in.** An agent that does not want twenty progress ticks in its context
-  submits, then polls `job.get`, or subscribes with a coarser cadence. The stream exists; it is
-  not pushed at a caller that did not ask.
+- **Progress is opt-in.** An agent that does not want twenty progress ticks in its context submits,
+  then polls `job.get`, or subscribes with a coarser cadence. The stream exists; it is not pushed
+  at a caller that did not ask.
 - **Completion produces a `result` object**, not a payload. `job.get` on a finished job returns
   status, the result id, its metrics and diagnostics — not fields.
 - **Equivalent jobs may not run at all.** With a content-addressed identity (geometry + solver +
-  params + environment), a resubmission of something already computed returns the cached result
-  and says so in the provenance (`cached: true`). This is the single biggest lever on both compute
-  cost and context cost in an iterative loop.
+  params + environment), a resubmission of something already computed returns the cached result and
+  says so in the provenance (`cached: true`). This is the single biggest lever on both compute cost
+  and context cost in an iterative loop.
+- **Ownership and limits still apply.** A local caller resolves to a `Principal` like any other;
+  its jobs are owned, counted against quotas if any are configured, and swept by the same retention
+  policy. The local transport is a different door, not a bypass.
 
 ## 10. Result queries
 
@@ -231,13 +253,21 @@ Five response levels, requested independently:
 |---|---|---|
 | `status` | terminal status, timing, error | tens of bytes |
 | `metrics` | declared scalar engineering quantities | hundreds of bytes |
-| `diagnostics` | mesh cells/dofs, iterations, residual, convergence flag, warnings | hundreds of bytes |
+| `diagnostics` | cells, dofs, iterations, seconds, convergence, warnings | hundreds of bytes |
 | `fields` | full nodal/cell arrays | megabytes — never a default |
 | `artifacts` | references to files (VTK/VTU/mesh/log) | reference only |
 
-**Metrics** are what the caller actually reasons about: mass, maximum displacement, maximum
-stress, safety factor, strain energy, force, inductance, peak temperature — each declared by the
-capability with a name, a unit and a description, so the meaning does not have to be inferred.
+**Diagnostics already half exist.** Every result carries `stats` — `cells`, `dofs`, `iterations`,
+`seconds`, whichever the adapter knows. That is the cost of the solve, and it is the right seed for
+this level; what is missing is convergence state and warnings, which today live only in progress
+events or nowhere. Formalize `stats`, do not duplicate it.
+
+**Metrics are the part that does not exist yet**, and they are what the caller actually reasons
+about: mass, maximum displacement, maximum stress, safety factor, strain energy, force, inductance,
+peak temperature — each declared by the capability with a name, a unit and a description, so the
+meaning does not have to be inferred. The three mock solvers plus their FEniCSx counterparts
+already compute fields from which a first set falls out directly (peak speed, peak flux density,
+peak temperature).
 
 **Selective field queries** cover the cases where a scalar is needed but was not pre-declared.
 `result.query` takes a field name and an operation:
@@ -253,14 +283,14 @@ capability with a name, a unit and a description, so the meaning does not have t
 | `sample` | decimated sampling of the field at a requested budget |
 | `hotspots` | the N most extreme locations, clustered |
 
-Every one of these returns a bounded payload; `section` and `sample` take an explicit budget and
-the server caps it. Full arrays are reached exactly one way: fetch the artifact.
+Every one returns a bounded payload; `section` and `sample` take an explicit budget and the server
+caps it. Full arrays are reached exactly one way: fetch the artifact.
 
 ## 11. Transports
 
 | Transport | Status | Role |
 |---|---|---|
-| HTTP + WebSocket (`/api/v1`) | shipped | browsers, remote clients, the M3 production path |
+| HTTP + WebSocket (`/api/v1`) | shipped | browsers, remote clients, the multi-user deployment |
 | JSON-RPC 2.0 over stdio | planned, M2.5 | **the base local transport** |
 | CLI (`fenix-spoon …`, JSON output) | planned, M2.5 | shells, CI, reproducible scripting, debugging |
 | Python API | planned, M2.5 | notebooks and in-process embedding |
@@ -269,10 +299,9 @@ the server caps it. Full arrays are reached exactly one way: fetch the artifact.
 **JSON-RPC 2.0 over stdio.** The agent spawns the process (`fenix-spoon rpc --stdio` is the
 expected entrypoint), writes requests to its stdin and reads responses from its stdout. No port is
 opened, no origin policy applies, and the process dies with its parent. Requirements: documented
-framing, typed compact errors (a code, a message, and structured `data` — not a stack trace and
-not an HTML error page), asynchronous jobs for anything long-running so the channel is never
-blocked by a solve, and identical behavior against mock and FEniCSx solvers. Framing choice is
-open (below).
+framing, typed compact errors (a code, a message, and structured `data` — not a stack trace and not
+an HTML error page), asynchronous jobs for anything long-running so the channel is never blocked by
+a solve, and identical behavior against mock and FEniCSx solvers. Framing choice is open (below).
 
 **MCP is layered on this, not underneath it.** The MCP adapter maps a small stable tool set —
 inspect environment, list capabilities, describe capability, create or patch object, submit job,
@@ -284,7 +313,8 @@ own. If MCP is replaced by something else in two years, one adapter is deleted.
 equivalent request over HTTP and JSON-RPC produces the same semantic result, that a validation
 failure is the same failure on both, that mock and FEniCSx honor the same envelopes, that schemas
 do not diverge, and that a compact response never carries a full numeric array. This extends the
-existing `protocol/fixtures/` corpus, which pytest and vitest already share.
+existing `protocol/fixtures/` corpus that pytest and vitest already share, and the generated
+[protocol reference](reference-protocol.md) whose staleness CI already fails on.
 
 ## 12. Security
 
@@ -300,25 +330,25 @@ expose later**:
   loophole in the declarative rule; it is the same rule with a different pipe.
 - **No listening socket by default.** stdio means there is nothing to reach from outside the
   machine, and nothing to misconfigure. Exposing JSON-RPC over a network socket is out of scope
-  for M2.5.
-- **Path confinement.** Artifacts already must be bare filenames under the job directory
+  for M2.5; anything networked goes through the existing auth path, not around it.
+- **Identity is not bypassed.** Jobs are owned by a `Principal` and quotas key off it. A local
+  caller authenticates by being able to start the process, and resolves to a principal like any
+  other; it does not get an unowned job or an unmetered one.
+- **Path confinement.** Artifacts must already be bare filenames under the job directory
   (`SolverContext.artifact` enforces it); workspace objects and artifact resolution must be
   confined to the workspace root the same way. A capability that reads a file the caller names
   would need its own review — none is planned.
 - **Environment is reported, never mutated.** `environment.inspect` tells the caller what is
   installed. Nothing in this vocabulary installs, upgrades, or launches anything.
-- **Resource limits still apply.** The wall-clock timeout and the future mesh-size caps (#6) are
-  properties of the job service, so a local caller inherits them; an agent that asks for an
-  absurd resolution gets a validation error, not a wedged machine.
-- **Authentication is out of scope here** and stays in M3 (#14). A local single-user process
-  authenticates by being able to start the process. Any networked exposure of these operations
-  must go through the M3 auth path, not around it.
+- **Resource limits still apply.** The cell budget, the wall-clock timeout and the retention sweep
+  are properties of the job path, so a local caller inherits them: an agent that asks for an absurd
+  resolution gets a validation error, not a wedged machine.
 
 ## 13. Token efficiency
 
 For an agent, payload size is not a performance concern but a correctness one: a result that does
-not fit is a result that cannot be reasoned about. Design rules, to be enforced by tests rather
-than by good intentions:
+not fit is a result that cannot be reasoned about. Design rules, enforced by tests rather than by
+good intentions:
 
 - **A discovery call answers in kilobytes, not tens of kilobytes.** `capability.list` should stay
   under a couple of kilobytes for a realistic installation; `capability.describe` returns only the
@@ -346,17 +376,17 @@ started**:
 4. `object.create` a `geometry` (an airfoil `domain2d`) and a `design` referencing it with solver
    params.
 5. `job.submit` for that design → `job.get` / progress → terminal status.
-6. Read metrics and diagnostics from the result; run one `result.query` (say, `max` of `speed`
-   with its location).
+6. Read metrics and diagnostics from the result; run one `result.query` (say, `max` of `speed` with
+   its location).
 7. `artifact.get` the VTK file by reference — a path, not bytes in the context.
 8. `object.patch` one geometry parameter → `job.submit` again → the second result comes back with
-   provenance showing which objects were reused and whether the solve was recomputed or served
-   from cache.
+   provenance showing which objects were reused and whether the solve was recomputed or served from
+   cache.
 9. Compare the two results' metrics.
 
-The solenoid (`regions2d`, `mock.magnetostatics2d` / `dolfinx.magnetostatics2d`) is an equally
-valid subject and exercises materials and regions more heavily; whichever is chosen, the slice
-must run in both mock and FEniCSx environments.
+The solenoid (`regions2d`, magnetostatics) and the heat sink are equally valid subjects and
+exercise materials and regions more heavily; whichever is chosen, the slice must run in both mock
+and FEniCSx environments.
 
 **The milestone is not complete because JSON-RPC answers.** It is complete when that loop —
 discover, build, solve, read compactly, fetch by reference, patch, re-solve reusing state — runs
@@ -370,15 +400,15 @@ settled by picking whatever is fashionable.
 | Question | Options | How to decide |
 |---|---|---|
 | **JSON-RPC framing** | newline-delimited JSON vs `Content-Length` headers (LSP/MCP style) | NDJSON is trivial to implement and debug by hand; `Content-Length` is what MCP hosts already speak and is robust to embedded newlines. Decide by what the MCP adapter needs and by whether any payload can contain a raw newline. Supporting both is cheap and may be the answer. |
-| **Workspace store** | SQLite vs manifest files on disk | SQLite gives queries, transactions and concurrent-read safety; files give diffability, git-friendliness and zero opacity. Decide by whether the first study kind needs real queries, and by how much a human is expected to inspect the workspace by hand. |
-| **Patch format** | JSON Patch (RFC 6902) vs JSON Merge Patch vs a domain-specific patch | JSON Patch is standard, precise about arrays (point lists!), and already has implementations everywhere; a domain patch (`set_param`, `move_point`) is friendlier to generate and easier to validate. Decide by looking at real geometry edits — moving one control point is the test case. |
-| **Identifiers** | readable short ids (`g-42`) vs UUIDs vs content hashes | readable ids are far cheaper in an agent's context and in a CLI; UUIDs avoid collisions across merged workspaces; content hashes unify identity with caching but change on every edit. Note these can coexist: a readable id naming a content hash. |
-| **Object lifetime and GC** | keep everything vs TTL vs explicit deletion vs cache eviction by size | artifacts are the space cost, objects are cheap. Decide by measuring a realistic sweep, and beware breaking provenance: a result must not outlive the objects it names without at least recording them. |
-| **Artifact binary format** | keep VTK legacy vs VTU/VTKHDF vs a compact internal format for queries | `result.query` implies something the server can index efficiently; ParaView compatibility implies VTK-family output. These may be two different files with different jobs. Ties into M1 #4. |
+| **Where workspace objects live** | extend the SQLite `JobStore` schema vs a second store vs manifest files on disk | the store already exists, has WAL, retention and an interface with two implementations — extending it keeps one retention story and one thing to back up. Against that: designs and studies are a different lifetime from jobs, and files are diffable and git-friendly in a way a database is not. Decide by whether a workspace is meant to be committed to a repository. |
+| **Patch format** | JSON Patch (RFC 6902) vs JSON Merge Patch vs a domain-specific patch | JSON Patch is standard, precise about arrays (point lists!), and has implementations everywhere; a domain patch (`set_param`, `move_point`) is friendlier to generate and easier to validate. Decide by looking at real geometry edits — moving one control point is the test case. |
+| **Identifiers** | readable short ids (`g-42`) vs UUIDs vs content hashes | readable ids are far cheaper in an agent's context and in a CLI; UUIDs avoid collisions across merged workspaces; content hashes unify identity with caching but change on every edit. Note these can coexist: a readable id naming a content hash. Job ids (`j-<12 hex>`) are already the precedent. |
+| **Object lifetime and GC** | inherit `FENIXSPOON_JOB_TTL` vs a separate policy vs explicit deletion | jobs already expire after 7 days by default, which is *wrong* for a design an agent has been iterating on for a week. Decide what a result means when the objects it names have been swept, and prefer recording provenance inline over keeping everything forever. |
+| **Artifact binary format** | keep VTK legacy vs VTU/VTKHDF vs a compact internal format for queries | `result.query` implies something the server can index efficiently; ParaView compatibility implies VTK-family output. These may be two different files with different jobs. |
 | **MCP resource exposure** | artifacts as MCP resources vs tool-returned paths vs both | resources are the idiomatic MCP answer and let a host fetch lazily; paths are simpler and work for hosts with filesystem access. Decide against real MCP host behavior, not against the specification alone. |
 | **Study vs optimization boundary** | how much belongs in the M2.5 study service | a study that enumerates a variation space is clearly in; a study that *chooses* the next point is an optimizer and is M5 (#22). The line should be drawn where an external driver would otherwise have to reimplement job orchestration. |
 
 Two further questions are worth naming even though they are not blocking: how a capability declares
 its metrics without every adapter reimplementing the plumbing, and whether `boundary_condition` and
 `load_case` can be schematized generically or must stay solver-specific for now. Both are answered
-by the second physics capability that has to be modelled, not by argument.
+by the next physics capability that has to be modelled, not by argument.

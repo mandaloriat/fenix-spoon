@@ -177,8 +177,12 @@ class MemoryJobStore(JobStore):
     ) -> list[JobRecord]:
         matching = [r for r in self._records.values() if owner is None or r.owner == owner]
         ordered = sorted(matching, key=lambda r: r.created_at, reverse=True)
+        # `artifacts` is copied for the same reason as in `get()`: `replace` copies the
+        # dataclass, not the lists inside it, and `Job.from_record` hands this list straight
+        # to a live `Job` — so a caller appending to it would rewrite the stored record.
         return [
-            replace(r, result=None, events=[]) for r in ordered[offset : offset + limit]
+            replace(r, result=None, events=[], artifacts=list(r.artifacts))
+            for r in ordered[offset : offset + limit]
         ]
 
     def count(self, owner: str | None = None) -> int:

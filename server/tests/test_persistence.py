@@ -306,6 +306,11 @@ def test_stores_agree_on_partial_loads(tmp_path, store_factory):
     listed = store.list_jobs()[0]
     assert listed.result is None and listed.events == []
 
+    # …and it is a copy too. `Job.from_record` hands `artifacts` straight to a live `Job`,
+    # so a listing that aliased it would let a caller rewrite the stored record.
+    listed.artifacts.append({"name": "bogus"})
+    assert store.get("j-1").artifacts == [], "listing aliased the stored artifact list"
+
     # A partial record must be safe to mutate — it must not alias what the store holds.
     partial = store.get("j-1", with_result=False)
     partial.status = "cancelled"
