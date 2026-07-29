@@ -12,6 +12,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
+from fenixspoon.backends import InProcessBackend
+from fenixspoon.events import InProcessEventBus
 from fenixspoon.jobs import JobManager
 from fenixspoon.main import create_app
 from fenixspoon.solvers.base import SolverResult
@@ -310,6 +312,73 @@ def test_stores_agree_on_partial_loads(tmp_path, store_factory):
     partial.events.append({"type": "bogus"})
     assert store.get("j-1").status == "done", "mutating a partial record rewrote the store"
     assert len(store.get("j-1").events) == 1
+
+
+def test_shutdown_releases_the_backend_and_the_bus(tmp_path):
+    """Shutdown closed the store and nothing else, leaving two resources behind.
+
+    It matters most for the worker deployment, where the backend and the bus each hold a
+    Redis connection pool. But it bites the default too: the in-process backend owns a
+    `ThreadPoolExecutor`, and `concurrent.futures` installs an atexit hook that joins its
+    threads, so an abandoned executor makes a process with a long solve in flight refuse
+    to exit.
+    """
+    closed = []
+
+    class SpyBus(InProcessEventBus):
+        async def close(self):
+            closed.append("bus")
+
+    class SpyBackend(InProcessBackend):
+        async def close(self):
+            closed.append("backend")
+            await super().close()
+
+    store = MemoryJobStore()
+    bus = SpyBus()
+    app = create_app()
+    app.state.jobs = JobManager(
+        data_dir=tmp_path,
+        store=store,
+        bus=bus,
+        backend=SpyBackend(store, bus, tmp_path, timeout=5, max_workers=1),
+    )
+    with TestClient(app):
+        pass
+
+    # Backend before bus: nothing new starts solving before delivery stops.
+    assert closed == ["backend", "bus"]
+    assert app.state.jobs.backend._executor._shutdown, "thread pool left running"
+
+
+def test_one_failing_close_does_not_skip_the_others(tmp_path):
+    """The counter-case: a backend that throws must not strand the bus and the store."""
+    closed = []
+
+    class ExplodingBackend(InProcessBackend):
+        async def close(self):
+            raise RuntimeError("redis went away")
+
+    class SpyBus(InProcessEventBus):
+        async def close(self):
+            closed.append("bus")
+
+    class SpyStore(MemoryJobStore):
+        def close(self):
+            closed.append("store")
+
+    store = SpyStore()
+    bus = SpyBus()
+    app = create_app()
+    app.state.jobs = JobManager(
+        data_dir=tmp_path,
+        store=store,
+        bus=bus,
+        backend=ExplodingBackend(store, bus, tmp_path, timeout=5, max_workers=1),
+    )
+    with TestClient(app):
+        pass
+    assert closed == ["bus", "store"]
 
 
 def test_status_and_listing_never_read_a_result_payload(data_dir):
