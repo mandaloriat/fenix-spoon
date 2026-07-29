@@ -119,6 +119,36 @@ def test_every_route_refuses_an_unauthenticated_request(keyed_client, method, pa
     assert response.headers["WWW-Authenticate"] == "Bearer"
 
 
+def test_version_is_the_one_route_outside_the_gate(keyed_client):
+    """Version discovery must work without a credential, and must stay the only exception.
+
+    A client has to learn whether it can speak to a server *before* it can sensibly send
+    anything, and if that needed a key then a misconfigured client could not distinguish
+    "wrong key" from "wrong protocol". The route discloses two version strings and a path
+    prefix — nothing that is not already on the OpenAPI page.
+
+    The second half of this test is the guard that matters: it enumerates the routes and
+    fails if a *new* one ever becomes reachable unauthenticated. Opening this door once was
+    deliberate; opening it again by accident should not be possible quietly.
+    """
+    response = keyed_client.get("/api/v1/version")
+    assert response.status_code == 200
+    assert set(response.json()) == {"protocol", "implementation", "api_path"}
+
+    from fenixspoon.api import router
+
+    unauthenticated = set()
+    for route in router.routes:
+        path, methods = route.path, getattr(route, "methods", set())
+        if "GET" not in methods or "{" in path:
+            continue  # parametrised paths are covered above; WS has its own test
+        if keyed_client.get(path).status_code != 401:
+            unauthenticated.add(path)
+    assert unauthenticated == {"/api/v1/version"}, (
+        f"routes reachable without a key: {sorted(unauthenticated)}"
+    )
+
+
 def test_submit_refuses_an_unauthenticated_request(keyed_client):
     assert submit(keyed_client).status_code == 401
 

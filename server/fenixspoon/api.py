@@ -1,4 +1,4 @@
-"""REST + WebSocket routes implementing wire protocol v0 (docs/04-wire-protocol.md)."""
+"""REST + WebSocket routes implementing the wire protocol (docs/04-wire-protocol.md)."""
 
 import json
 from typing import Annotated, Any
@@ -15,6 +15,7 @@ from fastapi import (
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, ValidationError
 
+from . import __version__
 from .auth import (
     Principal,
     QuotaUsage,
@@ -25,6 +26,7 @@ from .auth import (
 )
 from .geometry import Geometry
 from .jobs import JobManager, JobStatus
+from .protocol import PROTOCOL_VERSION, ProtocolVersion
 from .solvers import available_solvers, get_solver
 from .solvers.base import SolverInfo
 
@@ -66,6 +68,21 @@ class JobList(BaseModel):
 
 def _manager(request: Request) -> JobManager:
     return request.app.state.jobs
+
+
+@router.get("/version", response_model=ProtocolVersion)
+def protocol_version() -> ProtocolVersion:
+    """What this server speaks. **The one route outside the auth gate.**
+
+    Every other route requires a key when keys are configured. This one must not: a client
+    needs to know whether it can talk to a server *before* deciding what to send, and
+    making version discovery require a credential means a misconfigured client cannot tell
+    "wrong key" from "wrong protocol". It leaks two version strings and a path prefix,
+    none of which is a secret — the same information the OpenAPI page already serves.
+    """
+    return ProtocolVersion(
+        protocol=PROTOCOL_VERSION, implementation=__version__, api_path=router.prefix
+    )
 
 
 @router.get("/solvers", response_model=list[SolverInfo])

@@ -6,6 +6,82 @@
  * against *both* sides in CI so they cannot drift silently.
  */
 
+/**
+ * The wire-contract version this SDK is written against, `MAJOR.MINOR`.
+ *
+ * MAJOR is the compatibility boundary and is mirrored in the path (`/api/v1`); MINOR
+ * changes are additive, so a client built for 1.0 keeps working against a 1.3 server.
+ * `checkProtocolCompatibility` is the check; the shared fixture corpus asserts this
+ * constant matches the server's `PROTOCOL_VERSION`, so the two cannot drift apart.
+ */
+export const PROTOCOL_VERSION = '1.0';
+
+/** What `GET /api/v1/version` returns. The one endpoint that never requires a key. */
+export interface ProtocolVersion {
+  /** Wire-contract version as `MAJOR.MINOR`. */
+  protocol: string;
+  /** Version of the server package, independent of the protocol version. */
+  implementation: string;
+  /** Path prefix this protocol version is served under. */
+  api_path: string;
+}
+
+export interface CompatibilityVerdict {
+  compatible: boolean;
+  /** Present when incompatible, or when the server is newer in a way worth knowing. */
+  reason?: string;
+}
+
+/**
+ * Compare a server's protocol version against the one this SDK was written for.
+ *
+ * A different MAJOR is incompatible: the path would differ too, so the request would not
+ * have reached this version of the contract anyway. A *higher* MINOR on the server is
+ * fine — additive by definition — and is reported so a caller can mention that newer
+ * features exist. A higher MINOR on the *client* is the interesting case: the SDK may
+ * send a field the server does not know, so it is flagged rather than silently allowed.
+ */
+export function checkProtocolCompatibility(
+  serverVersion: string,
+  sdkVersion: string = PROTOCOL_VERSION,
+): CompatibilityVerdict {
+  const parse = (v: string) => {
+    const [major, minor] = v.split('.').map((part) => Number.parseInt(part, 10));
+    return { major, minor: Number.isFinite(minor) ? minor : 0 };
+  };
+  const server = parse(serverVersion);
+  const sdk = parse(sdkVersion);
+  if (!Number.isFinite(server.major)) {
+    return {
+      compatible: false,
+      reason: `cannot parse the server's protocol version: ${JSON.stringify(serverVersion)}`,
+    };
+  }
+  if (server.major !== sdk.major) {
+    return {
+      compatible: false,
+      reason:
+        `server speaks protocol ${serverVersion}, this SDK speaks ${sdkVersion}; ` +
+        'a major difference is a breaking change and the path differs too',
+    };
+  }
+  if (server.minor < sdk.minor) {
+    return {
+      compatible: true,
+      reason:
+        `server is at ${serverVersion}, older than this SDK's ${sdkVersion}; ` +
+        'requests using features added after ' + serverVersion + ' will be rejected',
+    };
+  }
+  if (server.minor > sdk.minor) {
+    return {
+      compatible: true,
+      reason: `server is at ${serverVersion}, newer than this SDK's ${sdkVersion}; additive only`,
+    };
+  }
+  return { compatible: true };
+}
+
 // ---------------------------------------------------------------- geometry
 
 export interface Polygon2D {

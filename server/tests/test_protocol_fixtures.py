@@ -8,9 +8,15 @@ from pathlib import Path
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from fenixspoon.api import JobRequest
+from fenixspoon.api import JobRequest, router
 from fenixspoon.geometry import Geometry
-from fenixspoon.protocol import ProgressEvent, ResultEnvelope, StatusEvent
+from fenixspoon.protocol import (
+    PROTOCOL_VERSION,
+    ProgressEvent,
+    ProtocolVersion,
+    ResultEnvelope,
+    StatusEvent,
+)
 
 FIXTURES = Path(__file__).resolve().parents[2] / "protocol" / "fixtures"
 
@@ -21,7 +27,31 @@ VALIDATORS = {
     "events.json": _event_adapter.validate_python,
     "results.json": TypeAdapter(ResultEnvelope).validate_python,
     "job-requests.json": TypeAdapter(JobRequest).validate_python,
+    "version.json": TypeAdapter(ProtocolVersion).validate_python,
 }
+
+
+def test_the_corpus_and_the_server_agree_on_the_protocol_version():
+    """The corpus names a version; the server must be speaking it.
+
+    This is the tripwire that makes a bump deliberate. `PROTOCOL_VERSION` and the corpus
+    are edited in the same commit or this fails — and because the SDK's conformance suite
+    asserts the *same* corpus value against its own constant, changing either side alone
+    goes red on the other. That is the whole mechanism: one number, three places, no way
+    to move one of them quietly.
+    """
+    declared = json.loads((FIXTURES / "version.json").read_text())["protocol_version"]
+    assert declared == PROTOCOL_VERSION, (
+        f"protocol/fixtures/version.json says {declared}, the server says {PROTOCOL_VERSION}"
+    )
+
+
+def test_the_major_version_matches_the_path():
+    """`/api/v1` is not decoration — it is the major version, and must stay in step."""
+    major = PROTOCOL_VERSION.split(".")[0]
+    assert router.prefix == f"/api/v{major}", (
+        f"protocol {PROTOCOL_VERSION} is served under {router.prefix}"
+    )
 
 
 def _cases(kind: str):

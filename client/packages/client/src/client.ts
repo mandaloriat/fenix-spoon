@@ -19,6 +19,7 @@ import {
   type JobRequest,
   type JobResult,
   type JobStatus,
+  type ProtocolVersion,
   type SolverInfo,
   isTerminal,
 } from './types.js';
@@ -151,6 +152,20 @@ export class FenixSpoonClient {
       );
     }
     return (await response.json()) as T;
+  }
+
+  /**
+   * What protocol the server speaks. The one endpoint that never requires a key, so it
+   * works before you know whether your credential is right.
+   *
+   * ```ts
+   * const { protocol } = await client.version();
+   * const { compatible, reason } = checkProtocolCompatibility(protocol);
+   * if (!compatible) throw new Error(reason);
+   * ```
+   */
+  version(): Promise<ProtocolVersion> {
+    return this.request<ProtocolVersion>('/api/v1/version');
   }
 
   /** Solvers installed on this server, with a JSON Schema for each one's params. */
