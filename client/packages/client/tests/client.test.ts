@@ -110,7 +110,28 @@ describe('FenixSpoonClient', () => {
           obstacle: { type: 'polygon2d', points: [[0, 0], [1, 0], [0.5, 0.5]] },
         },
       }),
-    ).rejects.toMatchObject({ name: 'FenixSpoonError', status: 404, detail: 'unknown solver' });
+    ).rejects.toMatchObject({
+      name: 'FenixSpoonError',
+      status: 404,
+      detail: 'unknown solver',
+      // A prose detail belongs in the message too: callers print `error.message`.
+      message: 'POST /api/v1/jobs failed: HTTP 404 — unknown solver',
+    });
+  });
+
+  it('keeps a structured detail off the message but on the error', async () => {
+    // pydantic validation errors are a list of objects; stringifying them into the
+    // message would produce "[object Object]".
+    const detail = [{ loc: ['body', 'params', 'resolution'], msg: 'less than 16' }];
+    const client = makeClient(
+      { '/api/v1/jobs/j-1/result': () => new Response(JSON.stringify({ detail }), { status: 422 }) },
+      FakeSocket,
+    );
+    await expect(client.job('j-1').result()).rejects.toMatchObject({
+      status: 422,
+      detail,
+      message: 'GET /api/v1/jobs/j-1/result failed: HTTP 422',
+    });
   });
 
   it('streams events in order and stops after the terminal event', async () => {
@@ -198,6 +219,73 @@ describe('FenixSpoonClient', () => {
     const result = await client.job('j-1').wait((event) => progress.push(event));
     expect(result.kind).toBe('grid2d');
     expect(progress.filter((e) => e.type === 'progress')).toHaveLength(1);
+  });
+
+  it('lists job history, passing pagination through and omitting unset options', async () => {
+    const seen: string[] = [];
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      seen.push(String(input));
+      return new Response(JSON.stringify({ jobs: [], total: 0, limit: 50, offset: 0 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+    const client = new FenixSpoonClient('http://server', {
+      fetch: fetchImpl as unknown as typeof globalThis.fetch,
+    });
+
+    await client.listJobs();
+    await client.listJobs({ limit: 20, offset: 40 });
+    // No stray "?" on the bare call: it would be a different cache key for no reason.
+    expect(seen).toEqual([
+      'http://server/api/v1/jobs',
+      'http://server/api/v1/jobs?limit=20&offset=40',
+    ]);
+  });
+
+  it('sends the API key as a header on HTTP and a query param on the socket', async () => {
+    // Two transports, two mechanisms, because a browser cannot put a header on a
+    // WebSocket handshake. Both must carry the key or half the client is locked out.
+    let seenAuth: string | null = null;
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      seenAuth = new Headers(init?.headers).get('Authorization');
+      return new Response(JSON.stringify({ job_id: 'j-1', status: 'queued' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+    FakeSocket.instances.length = 0;
+    const client = new FenixSpoonClient('http://server', {
+      apiKey: 'sk-secret',
+      fetch: fetchImpl as unknown as typeof globalThis.fetch,
+      WebSocket: FakeSocket as unknown as typeof globalThis.WebSocket,
+    });
+
+    await client.status('j-1');
+    expect(seenAuth).toBe('Bearer sk-secret');
+
+    const controller = new AbortController();
+    const stream = client.events('j-1', { signal: controller.signal });
+    const pending = stream.next(); // an async generator opens nothing until pulled
+    await Promise.resolve();
+    expect(FakeSocket.instances.at(-1)?.url).toContain('api_key=sk-secret');
+    controller.abort();
+    await pending.catch(() => undefined);
+  });
+
+  it('does not overwrite an Authorization header the caller set explicitly', async () => {
+    let seenAuth: string | null = null;
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      seenAuth = new Headers(init?.headers).get('Authorization');
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+    const client = new FenixSpoonClient('http://server', {
+      apiKey: 'sk-secret',
+      fetchOptions: { headers: { Authorization: 'Bearer from-caller' } },
+      fetch: fetchImpl as unknown as typeof globalThis.fetch,
+    });
+    await client.status('j-1');
+    expect(seenAuth).toBe('Bearer from-caller');
   });
 
   it('wait() throws JobFailedError carrying the server error', async () => {

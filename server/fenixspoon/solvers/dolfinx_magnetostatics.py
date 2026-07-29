@@ -26,7 +26,12 @@ from pydantic import BaseModel, Field
 from ..geometry import Regions2D
 from ._gmsh import gmsh_session
 from .base import ProgressEvent, Solver, SolverContext, SolverResult
-from .dolfinx_poisson import _nodal_speed, _p1_mesh_data, _write_vtk_unstructured
+from .dolfinx_poisson import (
+    _nodal_speed,
+    _p1_mesh_data,
+    _write_vtk_unstructured,
+    estimate_triangles,
+)
 from .mock_magnetostatics import MU0
 from .registry import register
 
@@ -109,6 +114,10 @@ class DolfinxMagnetostatics2D(Solver):
             default=True, description="Attach the solution as a legacy-VTK artifact"
         )
 
+    @classmethod
+    def estimate_cells(cls, geometry: Regions2D, params: "DolfinxMagnetostatics2D.Params") -> int:
+        return estimate_triangles(geometry.bounds, params.mesh_size)
+
     def solve(
         self, geometry: Regions2D, params: "DolfinxMagnetostatics2D.Params", ctx: SolverContext
     ) -> SolverResult:
@@ -187,7 +196,11 @@ class DolfinxMagnetostatics2D(Solver):
             },
         }
         ctx.progress(ProgressEvent(iteration=4, total=4, message="done"))
-        return SolverResult(kind="mesh2d", data=data)
+        stats = {
+            "cells": float(msh.topology.index_map(msh.topology.dim).size_local),
+            "dofs": float(V.dofmap.index_map.size_local),
+        }
+        return SolverResult(kind="mesh2d", data=data, stats=stats)
 
 
 def _nodal_material(points, triangles, msh, cell_tags, geometry: Regions2D) -> np.ndarray:

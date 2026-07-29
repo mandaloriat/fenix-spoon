@@ -37,6 +37,10 @@ class SolverResult(BaseModel):
 
     kind: str  # "grid2d" | "mesh2d"
     data: dict[str, Any]
+    stats: dict[str, float] = {}
+    """What the solve actually cost: ``cells``, ``dofs``, and whatever else the adapter
+    knows. The job manager adds ``seconds``. Reported so a user can see why a job was
+    slow, and so an operator can pick a sensible cap."""
 
 
 class SolverInfo(BaseModel):
@@ -136,6 +140,18 @@ class Solver(ABC):
             geometry_types=cls.geometry_types,
             params_schema=cls.Params.model_json_schema(),
         )
+
+    @classmethod
+    def estimate_cells(cls, geometry: Geometry, params: "Solver.Params") -> int | None:
+        """Roughly how many cells this job will use, for the server-side cap.
+
+        Called *before* the job is accepted, so it must be cheap — no meshing. Return
+        ``None`` when the adapter genuinely cannot say; the job is then admitted and the
+        wall-clock timeout remains the backstop. A deliberate over-estimate is safer
+        than an under-estimate: the point is refusing work that would exhaust the box,
+        and a job rejected with a clear message beats one killed halfway through.
+        """
+        return None
 
     @abstractmethod
     def solve(

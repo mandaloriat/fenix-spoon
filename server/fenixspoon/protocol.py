@@ -67,6 +67,9 @@ class ResultEnvelope(BaseModel):
     job_id: str
     kind: Literal["grid2d", "mesh2d"]
     data: dict[str, Any]
+    stats: dict[str, float] = {}
+    """What the solve cost. Keys are server-defined and all optional — clients display
+    them, they never branch on one being present."""
     artifacts: list[ArtifactRef] = []
 
     @model_validator(mode="after")

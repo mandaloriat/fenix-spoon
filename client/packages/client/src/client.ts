@@ -15,6 +15,7 @@ import {
   type ArtifactRef,
   type JobCreated,
   type JobEvent,
+  type JobPage,
   type JobRequest,
   type JobResult,
   type JobStatus,
@@ -46,7 +47,15 @@ export class JobFailedError extends Error {
 }
 
 export interface ClientOptions {
-  /** Passed to every `fetch` — use it for auth headers or credentials. */
+  /**
+   * API key for a server that requires one. Sent as `Authorization: Bearer` on HTTP
+   * requests and as `?api_key=` on the event stream — a browser cannot put a header on
+   * a WebSocket handshake, so the query string is the only way a page can authenticate
+   * it. That places the key in a URL, where server logs may keep it: use per-user keys
+   * you can revoke, not one shared secret.
+   */
+  apiKey?: string;
+  /** Passed to every `fetch` — use it for extra headers or credentials. */
   fetchOptions?: RequestInit;
   /** Injectable for tests / non-browser runtimes. Defaults to global `fetch`. */
   fetch?: typeof globalThis.fetch;
@@ -103,6 +112,7 @@ export class FenixSpoonClient {
   private wsUrl(path: string): string {
     const absolute = new URL(this.url(path), globalThis.location?.href ?? 'http://localhost');
     absolute.protocol = absolute.protocol === 'https:' ? 'wss:' : 'ws:';
+    if (this.options.apiKey) absolute.searchParams.set('api_key', this.options.apiKey);
     return absolute.toString();
   }
 
@@ -112,6 +122,10 @@ export class FenixSpoonClient {
     // caller's auth headers.
     const headers = new Headers(this.options.fetchOptions?.headers);
     new Headers(init?.headers).forEach((value, key) => headers.set(key, value));
+    // Set last but only if absent, so an explicit Authorization in fetchOptions still wins.
+    if (this.options.apiKey && !headers.has('Authorization')) {
+      headers.set('Authorization', `Bearer ${this.options.apiKey}`);
+    }
 
     const response = await this.fetchImpl(this.url(path), {
       ...this.options.fetchOptions,
@@ -125,8 +139,13 @@ export class FenixSpoonClient {
       } catch {
         detail = await response.text().catch(() => undefined);
       }
+      // A string detail is the server explaining itself in prose ("job would use about
+      // 4,194,304 cells, over this server's limit of…"). Put it in the message so a
+      // demo printing `error.message` shows the explanation, not just the status code.
+      // Structured details (pydantic's validation-error list) stay on `.detail` only.
+      const explanation = typeof detail === 'string' && detail ? ` — ${detail}` : '';
       throw new FenixSpoonError(
-        `${init?.method ?? 'GET'} ${path} failed: HTTP ${response.status}`,
+        `${init?.method ?? 'GET'} ${path} failed: HTTP ${response.status}${explanation}`,
         response.status,
         detail,
       );
@@ -152,6 +171,23 @@ export class FenixSpoonClient {
   /** Attach to a job submitted elsewhere (a saved id, another tab). */
   job(jobId: string): Job {
     return new Job(this, jobId);
+  }
+
+  /**
+   * Job history, newest first. Spans restarts when the server has a persistent store.
+   *
+   * ```ts
+   * const { jobs, total } = await client.listJobs({ limit: 20 });
+   * ```
+   */
+  listJobs(options: { limit?: number; offset?: number } = {}): Promise<JobPage> {
+    const query = new URLSearchParams();
+    if (options.limit !== undefined) query.set('limit', String(options.limit));
+    if (options.offset !== undefined) query.set('offset', String(options.offset));
+    // `query.toString()` rather than `query.size`: the latter only reached Safari in 17.
+    const encoded = query.toString();
+    const suffix = encoded ? `?${encoded}` : '';
+    return this.request<JobPage>(`/api/v1/jobs${suffix}`);
   }
 
   status(jobId: string): Promise<JobStatus> {

@@ -4,6 +4,27 @@ The contract between clients and a Fenix Spoon server. JSON everywhere; all endp
 `/api/v1`. The pydantic models in `server/fenixspoon/geometry.py` and `solvers/base.py` are the
 source of truth; this document is the human-readable view. Breaking changes bump the path version.
 
+## Authentication
+
+Optional and off by default: with no keys configured every caller is the principal
+`anonymous` and no header is needed. When a server sets `FENIXSPOON_API_KEYS`, every route
+requires a key:
+
+```
+Authorization: Bearer <key>          # or:  X-API-Key: <key>
+```
+
+Missing or wrong is `401` with `WWW-Authenticate: Bearer`. **The event-stream WebSocket takes
+the key as `?api_key=<key>` instead** — a browser cannot set headers on a WebSocket handshake.
+An unauthenticated stream is refused at the handshake, which reaches a browser as an HTTP `403`
+and an `onerror` rather than an open socket. The header still works there for non-browser
+clients.
+
+Jobs belong to the principal that created them. Another principal's job id is a `404` on every
+endpoint, not a `403`. Exceeding a quota (`concurrent jobs`, `jobs/hour`, `artifact bytes`) is a
+`429` with a prose `detail`, and `Retry-After` where a wait actually helps. See
+[deployment](05-deployment.md).
+
 ## Discovery
 
 ### `GET /api/v1/solvers`
@@ -88,7 +109,32 @@ Planned kinds: `spline2d` profiles, `axisymmetric2d`, `step3d` (uploaded CAD).
 
 Response: `{ "job_id": "j-8f3a...", "status": "queued" }`
 
-Errors: `404` unknown solver · `422` invalid geometry/params (pydantic detail format).
+Errors: `404` unknown solver · `422` invalid geometry/params (pydantic detail format) · `422`
+over the server's cell budget, with a plain-string detail naming the estimate and the limit:
+
+```json
+{ "detail": "job would use about 4,194,304 cells, over this server's limit of 2,000,000. Lower the resolution or mesh size, or raise FENIXSPOON_MAX_CELLS." }
+```
+
+The budget check runs at submit time from the solver's own cheap estimate (grid resolution,
+or `2·area/h²` for a meshed domain), so an over-sized request is refused immediately instead
+of being started and killed halfway through by the wall-clock timeout. Operators set the
+limit with `FENIXSPOON_MAX_CELLS` (default 2,000,000; `0` disables it). A solver that cannot
+estimate its cost is admitted, with the timeout as the backstop.
+
+### `GET /api/v1/jobs`
+
+Job history, newest first. `?limit=` (1–200, default 50) and `?offset=` paginate; out-of-range
+values are a `422`.
+
+```json
+{ "jobs": [ { "job_id": "...", "solver": "...", "status": "done", "...": "..." } ],
+  "total": 137, "limit": 50, "offset": 0 }
+```
+
+Entries are the same shape as `GET /jobs/{job_id}`. With a persistent store configured (the
+default) the listing spans process lifetimes; with `FENIXSPOON_STORE=memory` it covers only the
+current one.
 
 ### `GET /api/v1/jobs/{job_id}`
 
@@ -123,12 +169,19 @@ after completion still yields the full history. Stream closes after a terminal e
   "job_id": "j-8f3a...",
   "kind": "grid2d",
   "data": { "...": "see result kinds below" },
+  "stats": { "cells": 8192, "iterations": 3000, "seconds": 1.8421 },
   "artifacts": [
     { "name": "solution.vtk", "content_type": "model/vnd.vtk", "size": 191234,
       "url": "/api/v1/jobs/j-8f3a.../artifacts/solution.vtk" }
   ]
 }
 ```
+
+`stats` is what the solve actually cost, as an open map of `string → number`. Clients must
+treat every key as optional: `cells` and `seconds` are conventional and `seconds` is always
+present (the job manager measures it), the rest is whatever the adapter knows — the mock
+solvers report `iterations`, the FEniCSx adapters report `dofs`. A key present in `stats` is
+the measured value, unlike the pre-flight `estimate_cells` used by the budget check.
 
 Result kinds:
 
@@ -146,8 +199,19 @@ Result kinds:
 
 Downloads an artifact listed in the result envelope. Only names registered by the solver are
 servable (artifact names are bare filenames by construction — no path traversal). Artifacts
-live on the server filesystem under `FENIXSPOON_DATA_DIR` and share the job's lifetime
-(persistence is roadmap M3).
+live on the server filesystem under `FENIXSPOON_DATA_DIR` and share the job's lifetime.
+
+## Durability
+
+Job metadata, the event log, the result payload and the artifacts all outlive the server
+process: mount `FENIXSPOON_DATA_DIR` and a restarted server answers for jobs the previous one
+ran. Two consequences a client should expect:
+
+- A job that was `running` when the server died comes back `failed` with
+  `"server restarted while this job was running"` — a status stream that could never
+  terminate is worse than a job that admits it was lost.
+- Records are kept for `FENIXSPOON_JOB_TTL` (default 7 days, `0` keeps them forever). Past
+  that, the job and its files are gone and every endpoint answers `404`.
 
 ## Conventions
 

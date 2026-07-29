@@ -13,12 +13,15 @@ The canonical use case: an engineer opens a web page, drags the control points o
 solenoid cross-section), presses *Run*, and watches the simulation result appear live — no local
 installation, no desktop tooling, just a browser talking to a FEniCSx server.
 
-> **Status: M1 and M2 done.** Two physics examples run end to end on real FEniCSx solves
-> (potential flow, magnetostatics), the three browser packages — SDK, geometry editor, field
-> viewer — are published from `client/`, and the airfoil demo is built from them. Pure-NumPy mock
-> solvers mirror every FEniCSx one, so the full loop (edit geometry → submit → stream progress →
-> render field) runs without installing FEniCSx at all. Next up is production job execution:
-> a real queue, persistence and auth — see the [roadmap](docs/03-roadmap.md).
+> **Status: M1 and M2 done, M3 mostly.** Two physics examples run end to end on real FEniCSx
+> solves (potential flow, magnetostatics), the three browser packages — SDK, geometry editor,
+> field viewer — are published from `client/`, and the airfoil demo is built from them.
+> Pure-NumPy mock solvers mirror every FEniCSx one, so the full loop (edit geometry → submit →
+> stream progress → render field) runs without installing FEniCSx at all. Jobs now persist
+> across restarts, API keys and per-user quotas are available, solves can run in worker
+> containers behind a Redis queue, and the stack is [load-tested](docs/06-load-test.md) at
+> 50 concurrent clients. What remains for M3 is deployment packaging — see the
+> [roadmap](docs/03-roadmap.md).
 
 ## Why
 
@@ -31,7 +34,7 @@ see the [state-of-the-art survey](docs/01-state-of-the-art.md). Fenix Spoon is t
 
 | Component | Where | Status |
 |---|---|---|
-| **Simulation server** — FastAPI app: job submission, WebSocket progress streaming, cancellation, wall-clock timeouts, result + artifact retrieval | [`server/`](server/) | ✅ working |
+| **Simulation server** — FastAPI app: job submission, WebSocket progress streaming, cancellation, wall-clock timeouts, cell budgets, result + artifact retrieval | [`server/`](server/) | ✅ working |
 | **Solver adapter protocol** — plug any solver (FEniCSx, mock, anything Python) behind the same API via `SolverContext` (progress / cancel / artifacts) | [`server/fenixspoon/solvers/`](server/fenixspoon/solvers/) | ✅ working |
 | **Mock solvers** — potential flow and magnetostatics in pure NumPy; let you develop the front-end without FEniCSx | [`mock_laplace.py`](server/fenixspoon/solvers/mock_laplace.py), [`mock_magnetostatics.py`](server/fenixspoon/solvers/mock_magnetostatics.py) | ✅ working |
 | **FEniCSx adapters** — the same two problems on unstructured Gmsh meshes, cross-validated against the mock solvers | [`dolfinx_poisson.py`](server/fenixspoon/solvers/dolfinx_poisson.py), [`dolfinx_magnetostatics.py`](server/fenixspoon/solvers/dolfinx_magnetostatics.py) | ✅ validated on dolfinx 0.11 (`pytest -m fenics`, CI job in the dolfinx image) |
@@ -40,7 +43,8 @@ see the [state-of-the-art survey](docs/01-state-of-the-art.md). Fenix Spoon is t
 | **JS/TS SDK** — `@fenix-spoon/client`: typed protocol client with progress streaming, reconnection and runtime validators | [`client/packages/client/`](client/packages/client/) | ✅ working |
 | **Geometry editor widget** — `<fs-geometry-2d>`: SVG-based parametric profile editor, keyboard-operable, emits protocol JSON | [`client/packages/geometry-2d/`](client/packages/geometry-2d/) | ✅ working |
 | **Field viewer widget** — `<fs-viewer>`: canvas renderer for `grid2d`/`mesh2d` with colormaps, contours and a hover probe | [`client/packages/viewer/`](client/packages/viewer/) | ✅ working |
-| **Docker deployment** — one image with dolfinx + server, `docker compose up` | [`Dockerfile`](server/Dockerfile), [`docker-compose.yml`](docker-compose.yml) | ✅ scaffolded |
+| **Docker deployment** — one image with dolfinx + server, `docker compose up`; a worker override for API + Redis + N solver containers | [`Dockerfile`](server/Dockerfile), [`docker-compose.yml`](docker-compose.yml), [`docker-compose.workers.yml`](docker-compose.workers.yml) | ✅ working |
+| **Distributed job execution** — `ExecutionBackend` with an in-process pool and an arq/Redis backend; progress crosses processes over pub/sub | [`backends.py`](server/fenixspoon/backends.py), [`worker.py`](server/fenixspoon/worker.py) | ✅ working |
 
 ## Quickstart (no FEniCSx required)
 
@@ -67,6 +71,13 @@ With Docker (full FEniCSx runtime):
 docker compose up --build
 ```
 
+For the multi-user shape — the API dispatching to worker containers rather than solving
+itself — layer the worker override:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.workers.yml up --scale worker=4
+```
+
 Without Docker, a conda environment works too (this is also how the FEniCSx test suite runs):
 
 ```bash
@@ -76,6 +87,33 @@ micromamba create -p ./fenicsenv -c conda-forge python=3.12 fenics-dolfinx pytho
 ./fenicsenv/bin/pytest server/tests            # includes the `-m fenics` adapter tests
 ./fenicsenv/bin/uvicorn fenixspoon.main:app --app-dir server
 ```
+
+## Server configuration
+
+The server is configured from the environment; the defaults are meant for a laptop.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `FENIXSPOON_DATA_DIR` | `<tmp>/fenixspoon-jobs` | Where per-job artifacts, result payloads and the job database live. **Mount this** if job history should outlive the container |
+| `FENIXSPOON_STORE` | `sqlite` | `sqlite` persists jobs under the data directory; `memory` keeps them in the process and loses them on restart |
+| `FENIXSPOON_JOB_TIMEOUT` | `600` | Wall-clock seconds a solve may run; `0` disables. Cooperative — the worker is asked to stop |
+| `FENIXSPOON_MAX_WORKERS` | core count | How many solves run at once *in-process*. Right for FEniCSx, which releases the GIL; lower it for Python-heavy solvers — see the [load test](docs/06-load-test.md) |
+| `FENIXSPOON_REDIS_URL` | unset | Set it and the API stops solving: jobs go to a Redis queue that worker containers drain, and progress comes back over pub/sub. See [deployment](docs/05-deployment.md) |
+| `FENIXSPOON_MAX_CELLS` | `2000000` | Cell budget for a single job; `0` disables. Checked at submit from the solver's own estimate, so an over-sized job is refused with an explanation instead of being killed halfway through |
+| `FENIXSPOON_JOB_TTL` | `604800` (7 days) | How long a finished job's record, result and artifacts are kept; `0` keeps them forever. Swept hourly and at startup |
+| `FENIXSPOON_API_KEYS` | unset (anonymous) | `"alice:secret,bob:secret"`. Set it and every route requires a key; each principal sees only its own jobs |
+| `FENIXSPOON_CORS_ORIGINS` | `*`, or nothing when keys are set | Comma-separated allowed origins. Same-origin pages (including these demos) never need it |
+| `FENIXSPOON_MAX_CONCURRENT_JOBS`<br>`FENIXSPOON_MAX_JOBS_PER_HOUR`<br>`FENIXSPOON_MAX_ARTIFACT_BYTES` | `0` (unlimited) | Per-principal quotas, refused at submit with a `429` |
+
+Every finished job reports what it actually cost in the result's `stats` (`cells`, `dofs`,
+`iterations`, `seconds` — whichever the adapter knows), which is what the caps should be set from.
+
+Job history survives restarts: `GET /api/v1/jobs` pages through it, and a job that was mid-solve
+when the process died comes back `failed` rather than hanging a client that polls it forever.
+
+Locking a server to a team is one block of environment variables — see
+[docs/05-deployment.md](docs/05-deployment.md), which also covers OIDC, reverse-proxy
+WebSocket settings, and why there is no per-job memory ceiling yet.
 
 ## Architecture at a glance
 
@@ -115,6 +153,8 @@ serialization formats), is in [`docs/02-architecture.md`](docs/02-architecture.m
 2. [Architecture](docs/02-architecture.md) — components, choices, trade-offs
 3. [Roadmap](docs/03-roadmap.md) — milestones M0 → M5
 4. [Wire protocol](docs/04-wire-protocol.md) — the JSON contract between client and server
+5. [Deployment](docs/05-deployment.md) — API keys, quotas, resource limits, CORS, reverse proxy
+6. [Load test](docs/06-load-test.md) — the tested envelope, and how to reproduce it
 
 ## Contributing
 

@@ -248,6 +248,7 @@ export function validateJobResult(value: unknown): JobResult {
   if (typeof value.job_id !== 'string') fail('result needs a job_id');
   if (!isRecord(value.data)) fail('result needs a data object');
   const artifacts = validateArtifacts(value.artifacts);
+  const stats = validateStats(value.stats);
 
   if (value.kind === 'grid2d') {
     const data = value.data;
@@ -273,6 +274,7 @@ export function validateJobResult(value: unknown): JobResult {
       job_id: value.job_id,
       kind: 'grid2d',
       data: { bounds, shape: [ny, nx], fields, mask },
+      stats,
       artifacts,
     };
   }
@@ -314,11 +316,23 @@ export function validateJobResult(value: unknown): JobResult {
       job_id: value.job_id,
       kind: 'mesh2d',
       data: { bounds, points, triangles, point_fields: pointFields },
+      stats,
       artifacts,
     };
   }
 
   fail(`unknown result kind ${JSON.stringify(value.kind)}`);
+}
+
+function validateStats(value: unknown): Record<string, number> {
+  // Absent on servers older than the field; an empty map keeps consumers from null-checking.
+  if (value === undefined || value === null) return {};
+  if (!isRecord(value)) fail('stats must be an object');
+  const stats: Record<string, number> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    stats[key] = requireNumber(entry, `stats.${key}`);
+  }
+  return stats;
 }
 
 function validateArtifacts(value: unknown) {

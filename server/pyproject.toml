@@ -28,6 +28,10 @@ dev = [
 fenics = [
     "gmsh",
 ]
+# The distributed job backend: an API that dispatches to worker processes.
+redis = [
+    "arq>=0.26",
+]
 
 [tool.setuptools.packages.find]
 include = ["fenixspoon*"]
@@ -43,4 +47,5 @@ select = ["E", "F", "W", "I", "UP", "B"]
 testpaths = ["tests"]
 markers = [
     "fenics: tests requiring dolfinx + gmsh (skipped automatically when not installed)",
+    "redis: tests requiring a reachable Redis (set FENIXSPOON_TEST_REDIS_URL)",
 ]

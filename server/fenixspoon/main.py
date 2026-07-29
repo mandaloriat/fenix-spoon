@@ -1,5 +1,10 @@
 """App factory. Run with: uvicorn fenixspoon.main:app --reload"""
 
+import asyncio
+import contextlib
+import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -9,7 +14,10 @@ from fastapi.staticfiles import StaticFiles
 
 from . import __version__
 from .api import router
-from .jobs import JobManager
+from .auth import Authenticator, cors_origins
+from .jobs import PURGE_INTERVAL_SECONDS, JobManager
+
+log = logging.getLogger(__name__)
 
 # In a repo checkout the examples live two levels up from this file; when the package is
 # pip-installed without the repo, /demo simply isn't mounted.
@@ -35,18 +43,53 @@ def _mount_client_packages(app: FastAPI) -> list[str]:
     return mounted
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Reconcile what the last process lifetime left behind, then sweep on a timer."""
+    manager: JobManager = app.state.jobs
+    stranded = manager.reconcile()
+    if stranded:
+        log.warning("failed %d job(s) left running by a previous process", len(stranded))
+    purged = manager.purge_expired()
+    if purged:
+        log.info("purged %d expired job(s)", len(purged))
+
+    async def sweep() -> None:
+        while True:
+            await asyncio.sleep(PURGE_INTERVAL_SECONDS)
+            # A failing sweep must not take the server down with it.
+            try:
+                manager.purge_expired()
+            except Exception:
+                log.exception("retention sweep failed")
+
+    task = asyncio.create_task(sweep())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        manager.store.close()
+
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title="Fenix Spoon",
         version=__version__,
         description="Toolkit server for FEniCSx-powered web applications",
+        lifespan=lifespan,
     )
     app.state.jobs = JobManager()
-    # Dev default: open CORS so widgets on any origin can talk to the server.
-    # Production deployments must restrict origins (roadmap M3).
+    # Replaceable wholesale: an OIDC deployment assigns its own object here.
+    app.state.auth = Authenticator()
+    if app.state.auth.required:
+        log.info("API key authentication is enabled")
+    # Open in dev so a widget on any origin can talk to a local server; a server with
+    # keys configured defaults to same-origin only. See auth.cors_origins.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=cors_origins(app.state.auth.required),
         allow_methods=["*"],
         allow_headers=["*"],
     )

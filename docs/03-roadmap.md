@@ -20,7 +20,7 @@ Goal: a working vertical slice with zero heavy dependencies, plus the planning d
 - [x] Test suite green without FEniCSx; CI workflow
 - [x] Docker scaffolding (dolfinx base image + compose)
 
-## M1 — Real FEniCSx path
+## M1 — Real FEniCSx path ✅
 
 Goal: the demo runs on an unstructured FEniCSx solve inside Docker, same UX.
 
@@ -36,8 +36,10 @@ Goal: the demo runs on an unstructured FEniCSx solve inside Docker, same UX.
       `mock.magnetostatics2d` and `dolfinx.magnetostatics2d`, and `examples/solenoid-2d/`.
       *Axisymmetric (A-φ) formulation deferred: the planar cut is what the demo needs, and
       axisymmetry belongs with a dedicated `axisymmetric2d` geometry kind.*
-- [ ] Mesh-size/quality parameters exposed through solver params, with server-side caps (#6)
-      — *partially done: wall-clock timeout + cancellation shipped; cell-count caps pending.*
+- [x] Mesh-size/quality parameters exposed through solver params, with server-side caps (#6)
+      — wall-clock timeout, cancellation, and a submit-time cell budget (`FENIXSPOON_MAX_CELLS`)
+      refusing over-sized jobs with an actionable 422 before they start. Every solve reports
+      what it cost (`stats`: cells, dofs, iterations, seconds), surfaced in both demos.
 
 ## M2 — Embeddable client widgets ✅
 
@@ -66,12 +68,39 @@ Goal: `npm install` two widgets and build the demo page in ten lines.
 
 Goal: multi-user deployments are safe and boring.
 
-- [ ] Pluggable job backend: Celery or arq implementation (Redis), worker containers with
-      dolfinx (#12)
-- [ ] Job persistence (SQLite/Postgres) and artifact storage (filesystem/S3-compatible) (#13)
-- [ ] Auth hooks (API keys / OIDC middleware), per-user quotas, wall-clock and memory limits (#14)
+- [x] Pluggable job backend: Celery or arq implementation (Redis), worker containers with
+      dolfinx (#12) — an `ExecutionBackend` with an in-process pool (the default) and an
+      arq/Redis backend, an `EventBus` with in-process and Redis pub/sub implementations,
+      a worker entry point, cross-process cancellation, and a compose override for
+      API + Redis + N workers. *arq over Celery: async-native, and used purely as a
+      dispatcher so the job store stays the single source of truth — reasoning in
+      [architecture](02-architecture.md) and [backends.py](../server/fenixspoon/backends.py).
+      Not done: heartbeats, so a job whose worker is killed stays `running` until the
+      retention sweep. Postgres would let several API replicas share state; SQLite on a
+      shared volume already supports API + N workers.*
+- [x] Job persistence (SQLite/Postgres) and artifact storage (filesystem/S3-compatible) (#13)
+      — a `JobStore` interface with SQLite (default) and in-memory backends: metadata and the
+      event log in the database, result payloads and artifacts on disk under the data
+      directory. Adds `GET /jobs` history with pagination, a configurable retention sweep
+      (`FENIXSPOON_JOB_TTL`), and startup reconciliation so a job orphaned by a dead process
+      fails instead of hanging its client. *Postgres and S3 are left to the interface: an
+      untested backend for a database nobody has run against would be pretend infrastructure.
+      A Postgres store implements the same six methods.*
+- [x] Auth hooks (API keys / OIDC middleware), per-user quotas, wall-clock and memory limits (#14)
+      — API keys with anonymous still the dev default, per-principal job isolation and quotas
+      (concurrent, per hour, artifact bytes), CORS that stops defaulting to `*` once keys are
+      configured, and [a deployment recipe](05-deployment.md). *No per-job memory ceiling: solves
+      run on threads, and a memory limit is a property of a process. The cell budget is the proxy
+      and the container limit is the backstop until the worker backend (#12) makes each solve its
+      own process.*
 - [ ] Helm chart / compose profiles for API + workers + Redis (#15)
-- [ ] Load test: N concurrent solves with progress streaming (#16)
+- [x] Load test: N concurrent solves with progress streaming (#16) — `make loadtest` plus
+      [documented results](06-load-test.md). 50 concurrent clients and 100 live WebSockets
+      with zero failures and zero dropped streams. It found the concurrency knob nobody had
+      set: solves ran on asyncio's shared default executor, so they competed for threads
+      with everything else the server hands off. They now get a bounded pool of their own
+      (`FENIXSPOON_MAX_WORKERS`), and the measurements show why the default is the core
+      count — FEniCSx parallelizes, the pure-Python mock solvers get *slower* with it.
 
 ## M4 — Gallery and docs site
 

@@ -30,6 +30,25 @@ from ._gmsh import gmsh_session
 from .base import ProgressEvent, Solver, SolverContext, SolverResult
 from .registry import register
 
+# Equilateral triangles of side h tile an area A with 2A/h^2 of them, but that is a
+# *floor*: the adapters set ``Mesh.MeshSizeMax``, so h is an upper bound on edge length
+# and Gmsh's Delaunay refinement comes in finer. Measured against the airfoil domain the
+# real count runs ~1.35x the ideal tiling; the factor below keeps the estimate on the
+# conservative side of that with room for geometries that refine harder.
+_MESH_SAFETY_FACTOR = 2.0
+
+
+def estimate_triangles(bounds, mesh_size: float) -> int:
+    """Conservative triangle count for a domain meshed at ``mesh_size``.
+
+    Used only for the submit-time budget check, where over-estimating is the safe
+    direction: refusing a job that would have fitted costs the user one parameter
+    change, admitting one that does not costs the box.
+    """
+    xmin, ymin, xmax, ymax = bounds
+    area = (xmax - xmin) * (ymax - ymin)
+    return int(_MESH_SAFETY_FACTOR * 2.0 * area / max(mesh_size, 1e-12) ** 2)
+
 
 def _build_mesh(geometry: Domain2D, mesh_size: float):
     """Rectangle minus polygon, meshed with Gmsh (OpenCascade kernel)."""
@@ -78,6 +97,10 @@ class DolfinxPotentialFlow2D(Solver):
         write_vtk: bool = Field(
             default=True, description="Attach the solution as a legacy-VTK artifact"
         )
+
+    @classmethod
+    def estimate_cells(cls, geometry: Domain2D, params: "DolfinxPotentialFlow2D.Params") -> int:
+        return estimate_triangles(geometry.bounds, params.mesh_size)
 
     def solve(
         self,
@@ -169,7 +192,11 @@ class DolfinxPotentialFlow2D(Solver):
         else:
             data = _sample_grid2d(msh, psi_h, geometry, params.resolution, obstacle_pts)
         ctx.progress(ProgressEvent(iteration=4, total=4, message="done"))
-        return SolverResult(kind=params.output, data=data)
+        stats = {
+            "cells": float(msh.topology.index_map(msh.topology.dim).size_local),
+            "dofs": float(V.dofmap.index_map.size_local),
+        }
+        return SolverResult(kind=params.output, data=data, stats=stats)
 
 
 def _p1_mesh_data(V, psi_h):

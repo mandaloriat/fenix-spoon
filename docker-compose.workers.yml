@@ -1,0 +1,57 @@
+# Distributed deployment: the API stops solving and hands jobs to worker containers.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.workers.yml up
+#   docker compose -f docker-compose.yml -f docker-compose.workers.yml up --scale worker=4
+#
+# An override rather than a profile, because the difference is not "start more
+# containers" — it changes what the API *is*. Setting FENIXSPOON_REDIS_URL on the API is
+# what switches its execution backend and its event bus together; a profile could add
+# services but not modify the API's environment.
+#
+# What this buys: a heavy solve can no longer make the API slow to answer, workers scale
+# on their own, and a solve is a process — so `mem_limit` below is a real per-job memory
+# ceiling, which the in-process backend cannot express at all.
+services:
+  api:
+    environment:
+      FENIXSPOON_DATA_DIR: /data
+      FENIXSPOON_REDIS_URL: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    # The queue and the progress channel. Both are recoverable — job state lives in the
+    # store, not here — so Redis needs no volume and no persistence.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  worker:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    command: ["arq", "fenixspoon.worker.WorkerSettings"]
+    environment:
+      FENIXSPOON_DATA_DIR: /data
+      FENIXSPOON_REDIS_URL: redis://redis:6379
+      # One solve per container, so `--scale worker=N` means exactly N at once and the
+      # memory limit below applies to one job rather than to several sharing it.
+      FENIXSPOON_WORKER_CONCURRENCY: "1"
+    volumes:
+      # The same volume as the API: workers write results and artifacts, the API serves
+      # them. This is the one thing the two processes genuinely must share.
+      - fenixspoon-data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    # Uncomment for a hard per-job memory ceiling. Now that a solve is its own process,
+    # this is enforceable — see docs/05-deployment.md.
+    # mem_limit: 2g
+
+volumes:
+  fenixspoon-data:
