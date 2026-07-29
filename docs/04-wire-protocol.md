@@ -4,6 +4,30 @@ The contract between clients and a Fenix Spoon server. JSON everywhere; all endp
 `/api/v1`. The pydantic models in `server/fenixspoon/geometry.py` and `solvers/base.py` are the
 source of truth; this document is the human-readable view. Breaking changes bump the path version.
 
+## Scope: domain contract vs HTTP transport
+
+Two things are described here and they age differently.
+
+**The domain contract** — geometry kinds, solver descriptions, job statuses, progress and status
+events, result kinds, `stats`, artifact metadata — is what a Fenix Spoon *means*, independent of
+how it is carried. It is defined by the pydantic models in `geometry.py`, `solvers/base.py` and
+`protocol.py` (rendered in the [protocol reference](reference-protocol.md)) and validated by the
+fixtures in `protocol/fixtures/`. Any future transport is expected to carry these same models with
+the same semantics.
+
+**The HTTP envelope** — paths under `/api/v1`, verbs, status codes (`202` on submit, `409` on a
+result that isn't ready, `422` on validation failure, `429` over quota), the WebSocket event
+channel, the `Authorization` header and the `url` fields that make artifacts fetchable — is this
+transport's binding of that contract. A caller that is not speaking HTTP will encode "job not
+finished" and "unknown solver" differently, but must mean the same thing.
+
+The distinction matters because [M2.5](03-roadmap.md)
+plans a second transport (JSON-RPC 2.0 over stdio) over the same domain models; its design draft
+is [docs/07-local-agent-interface.md](07-local-agent-interface.md). **This document stays the
+specification of the HTTP/WebSocket protocol** — the two are not merged here, and nothing in the
+local-interface draft is implemented. What they share is the models above, plus the conformance
+corpus both are required to satisfy.
+
 ## Authentication
 
 Optional and off by default: with no keys configured every caller is the principal
@@ -219,3 +243,29 @@ ran. Two consequences a client should expect:
   planned optimization, negotiated via `Accept`, never the default.
 - Timestamps are RFC 3339 UTC.
 - CORS is open in dev images; production deployments configure allowed origins explicitly (M3).
+
+## Planned extensions to the domain contract
+
+Not implemented; recorded here so the models grow compatibly instead of being duplicated in a
+second protocol. Each is driven by
+[M2.5](03-roadmap.md) and detailed in the
+[local agent interface draft](07-local-agent-interface.md).
+
+- **Declared metrics.** `SolverInfo` describes a solver's inputs but not its outputs, so a caller
+  cannot know what a solve will report until it reads one. A `metrics` section (name, unit,
+  description) on the solver description, and a `metrics` map on the result envelope, would let a
+  form generator and a non-visual caller work from the same declaration. `stats` is the measured
+  *cost* of a solve; metrics are its engineering *answer*, and the two should stay distinct.
+- **Diagnostics.** Convergence flag, final residual and warnings have no home today: some of it
+  is in `stats`, some only in progress events, some nowhere. A small structured diagnostics object
+  alongside `stats` is the natural place.
+- **Object references.** A geometry that has already been sent should be referenceable rather than
+  resent. Whatever identifier scheme the workspace settles on must be expressible in a job request
+  on every transport, not only in the local one.
+- **Result levels.** `status` / `metrics` / `diagnostics` / `fields` / `artifacts` as separately
+  requestable levels, so a caller can ask for a summary without the arrays. The HTTP binding is
+  likely a query parameter on the result endpoint; it must not change the default payload the
+  browser SDK already relies on.
+
+Until these land, the result envelope is exactly what is documented above: `job_id`, `kind`,
+`data`, `stats`, `artifacts`.

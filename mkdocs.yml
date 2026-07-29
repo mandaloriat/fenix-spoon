@@ -58,6 +58,7 @@ nav:
       - Architecture: 02-architecture.md
       - State of the art: 01-state-of-the-art.md
       - Roadmap: 03-roadmap.md
+      - Local agent interface (draft): 07-local-agent-interface.md
 
 # Every warning is an error: a broken internal link in the docs is a bug like any other,
 # and the whole point of this site is that following it gets you somewhere.
