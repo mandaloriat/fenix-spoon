@@ -58,7 +58,17 @@ nav:
       - Architecture: 02-architecture.md
       - State of the art: 01-state-of-the-art.md
       - Roadmap: 03-roadmap.md
+      - Local agent interface (draft): 07-local-agent-interface.md
 
 # Every warning is an error: a broken internal link in the docs is a bug like any other,
 # and the whole point of this site is that following it gets you somewhere.
 strict: true
+
+# `strict` alone does not cover *anchors* — mkdocs reports a link to a heading that does not
+# exist at INFO level, so the build stays green while the link lands at the top of the page.
+# Promoting it to a warning makes `strict` mean what it looks like it means. Found the hard way:
+# `#m25--local-automation-and-agent-interface` (two hyphens, the obvious guess for an em dash)
+# silently pointed nowhere in four files.
+validation:
+  links:
+    anchors: warn
