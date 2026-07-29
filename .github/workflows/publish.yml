@@ -31,16 +31,30 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # No base image here: `strategy` cannot read the `env` context, so pinning it
+          # in the matrix would mean the version lived in two places — and a bump that
+          # missed one would publish a `dolfinx-vX` tag over an image built on some
+          # other version. The base is derived from DOLFINX_VERSION in a step below,
+          # where `env` is available.
           - variant: fenics
-            base: dolfinx/dolfinx:v0.11.0
             suffix: ""
           - variant: slim
-            base: python:3.12-slim
             suffix: "-slim"
     steps:
       - uses: actions/checkout@v4
 
       - uses: docker/setup-buildx-action@v3
+
+      - name: Resolve the base image
+        id: base
+        # The single place the variant → base mapping lives, so the published
+        # `dolfinx-*` tag cannot disagree with what was actually built.
+        run: |
+          if [ "${{ matrix.variant }}" = "fenics" ]; then
+            echo "image=dolfinx/dolfinx:${DOLFINX_VERSION}" >> "$GITHUB_OUTPUT"
+          else
+            echo "image=python:3.12-slim" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -74,7 +88,7 @@ jobs:
           context: .
           file: server/Dockerfile
           build-args: |
-            BASE_IMAGE=${{ matrix.base }}
+            BASE_IMAGE=${{ steps.base.outputs.image }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -92,12 +106,14 @@ jobs:
         # adapter suite inside that exact image.
         if: matrix.variant == 'slim'
         run: |
+          set -euo pipefail
           IMAGE_REF=$(echo '${{ steps.meta.outputs.tags }}' | head -n 1)
           docker run -d --name smoke -p 8000:8000 "$IMAGE_REF"
+          # On a trap, not at the end: the failure case is the one where the container's
+          # logs matter, and that is exactly the path a trailing `docker logs` skips.
+          trap 'docker logs smoke 2>&1 || true; docker rm -f smoke >/dev/null 2>&1 || true' EXIT
           for _ in $(seq 1 30); do
             curl -sf http://127.0.0.1:8000/api/v1/solvers > /dev/null && break
             sleep 2
           done
-          docker logs smoke
           curl -sf http://127.0.0.1:8000/api/v1/solvers | grep -q 'mock.laplace2d'
-          docker rm -f smoke
