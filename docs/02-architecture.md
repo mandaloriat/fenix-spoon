@@ -9,7 +9,7 @@ flowchart TB
         direction LR
         GEO["@fenix-spoon/geometry-2d<br/>parametric profile editor"]
         SDK["@fenix-spoon/client<br/>JS SDK: jobs, WS events"]
-        VIEW["@fenix-spoon/viewer<br/>vtk.js field viewer"]
+        VIEW["@fenix-spoon/viewer<br/>canvas field viewer"]
     end
     subgraph proto["Wire protocol (JSON over REST + WebSocket)"]
         P1["geometry schema · job lifecycle · progress events · field results"]
@@ -110,11 +110,18 @@ spline profiles, axisymmetric sections, CSG of primitives). The server meshes wi
 (OpenCascade kernel) and imports via `dolfinx.io.gmshio`. In-browser CAD kernels (OpenCascade.js)
 are deliberately out of the core: heavy, and the mesh must be produced server-side anyway.
 
-### Visualization: client-side rendering first
-v0 renders 2D fields with raw canvas (demo) and M2 wraps vtk.js for a real viewer widget
-(unstructured meshes, contours, vectors, 3D). Server-side rendering (trame-style image streaming)
-is an escape hatch for huge models, not the default: client-side keeps interaction latency low and
-the server stateless between jobs.
+### Visualization: client-side rendering, on canvas rather than vtk.js
+The plan here was vtk.js; M2 shipped canvas instead, and the reason is the embed footprint. Every
+result kind is 2D — `grid2d` and `mesh2d`, both scalar — so a multi-megabyte WebGL toolkit would
+have dominated the download for capability nothing yet uses. `@fenix-spoon/viewer` draws both
+kinds, with colormaps, a colorbar, iso-contours and a hover probe, in a fraction of that.
+
+The drawing surface is isolated, so a WebGL backend can land with the first result kind that needs
+it — 3D (#25), or vector fields, which the protocol does not yet carry and which is why the
+Navier–Stokes example in #18 is blocked rather than merely unwritten.
+
+Server-side rendering (trame-style image streaming) remains an escape hatch for huge models, not
+the default: client-side keeps interaction latency low and the server stateless between jobs.
 
 ### Deployment: one Docker image
 `server/Dockerfile` builds `FROM dolfinx/dolfinx:stable` (overridable via `BASE_IMAGE` build arg to
