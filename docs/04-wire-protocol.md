@@ -113,9 +113,19 @@ Every region is *filled*; the mesh covers the whole rectangle.
 ```
 
 - `material` is an **open dict of scalars**, not a typed physics model: the protocol stays
-  physics-agnostic and each solver documents the keys it reads (unknown keys are ignored,
-  so one payload can carry properties for several solvers). `mock.magnetostatics2d` reads
-  `mu_r` and `current_density`.
+  physics-agnostic and each solver documents the keys it reads. Unknown keys are ignored, so
+  one payload can carry properties for several solvers and be sent to each in turn:
+
+  | solver | reads | default when absent |
+  |---|---|---|
+  | `mock.magnetostatics2d`, `dolfinx.magnetostatics2d` | `mu_r`, `current_density` | `1.0`, `0.0` |
+  | `mock.heat2d` | `k` (W/m·K), `q` (W/m³) | `1.0`, `0.0` |
+
+- `background` applies wherever no region covers — but **what that means is the solver's
+  choice, not the protocol's**. `mock.magnetostatics2d` solves the background as another
+  material, so its `mu_r` matters. `mock.heat2d` does not solve it at all: the region set *is*
+  the solid, everything else is fluid handled as a convective boundary condition, and the
+  background's keys are ignored. The result's `mask` marks which cells were not solved.
 - Regions may be **nested** (core inside a coil); where they overlap, **later entries in the
   list win**, like painter's order. Regions whose outlines properly *cross* are rejected —
   that describes an ambiguous material assignment rather than nesting.
