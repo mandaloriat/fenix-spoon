@@ -45,6 +45,7 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Gallery: gallery.md
   - Get started:
       - Embed the widgets: start-embed-widgets.md
       - Deploy the server: start-deploy-server.md

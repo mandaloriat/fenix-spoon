@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fenix Spoon — heat sink (form generated from params_schema)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 1.5rem; max-width: 1000px;
+         margin-inline: auto; }
+  h1 { font-size: 1.25rem; }
+  .stage { position: relative; aspect-ratio: 5 / 4; border: 1px solid #8884; border-radius: 6px;
+           overflow: hidden; }
+  fs-viewer { position: absolute; inset: 0; }
+  .controls { display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem; align-items: center;
+              margin: 0.75rem 0; }
+  .controls label { display: flex; gap: 0.4rem; align-items: center; font-size: 0.9rem; }
+  button { padding: 0.45rem 1.2rem; font-size: 1rem; border-radius: 6px; border: 1px solid #8886;
+           background: #3b82f6; color: white; cursor: pointer; }
+  button:disabled { opacity: 0.5; cursor: wait; }
+  progress { width: 160px; }
+  #status { font-size: 0.85rem; opacity: 0.75; min-height: 1.2em; }
+  .hint { font-size: 0.8rem; opacity: 0.6; }
+  .missing { padding: 1rem; border: 1px solid #f59e0b; border-radius: 6px; background: #f59e0b22; }
+  /* The generated form. One row per schema property; no per-field styling anywhere, because
+     the page does not know which fields exist until the server tells it. */
+  .params { display: grid; grid-template-columns: max-content 1fr max-content; gap: 0.4rem 0.75rem;
+            align-items: center; font-size: 0.85rem; border: 1px solid #8884; border-radius: 6px;
+            padding: 0.9rem 1rem; margin: 0.75rem 0; }
+  .params > label { justify-self: end; cursor: help; }
+  .params output { font-variant-numeric: tabular-nums; opacity: 0.8; min-width: 4.5em; }
+  .params input[type=range] { width: 100%; }
+  .params .full { grid-column: 1 / -1; }
+  details { margin: 0.5rem 0; font-size: 0.85rem; }
+  summary { cursor: pointer; opacity: 0.75; }
+  .readout { display: flex; gap: 1.5rem; flex-wrap: wrap; font-size: 0.9rem; margin: 0.5rem 0; }
+  .readout b { font-variant-numeric: tabular-nums; font-size: 1.15rem; }
+  .legend { display: flex; gap: 1rem; font-size: 0.8rem; opacity: 0.75; margin-top: 0.4rem; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "@fenix-spoon/client": "/packages/client/index.js",
+    "@fenix-spoon/viewer": "/packages/viewer/index.js"
+  }
+}
+</script>
+</head>
+<body>
+<h1>Fenix Spoon 🥄 — heat sink, with the controls built from the solver's own schema</h1>
+<p class="hint">Aluminium fins on a base, heated from below by a chip and cooled by air moving over
+every exposed surface. <strong>Nothing below the geometry sliders is written by this page</strong>:
+the parameter form is generated from the <code>params_schema</code> that
+<code>GET /api/v1/solvers</code> returns, so a solver that gains a parameter gains a control here
+without anyone editing HTML. Add fins and watch the chip temperature fall.</p>
+
+<div id="missing" class="missing" hidden>
+  The widget bundles aren't built. Run <code>npm --prefix client install &amp;&amp; npm --prefix
+  client run build</code>, then reload.
+</div>
+
+<div class="stage">
+  <!-- `plasma`, not `inferno`: the viewer ships viridis/plasma/coolwarm/greyscale and falls
+       back to viridis for anything else, silently. Asking for a colormap that does not exist
+       looks exactly like asking for the default. -->
+  <fs-viewer id="viewer" field="T" colormap="plasma" contours="10"></fs-viewer>
+</div>
+<div class="legend">
+  <span>colour = temperature (°C)</span>
+  <span>grey = air, not solved — it is a boundary condition, not a region</span>
+</div>
+
+<div class="readout">
+  <span>chip rise over ambient<br><b id="rise">—</b></span>
+  <span>peak temperature<br><b id="peak">—</b></span>
+  <span>solid cells<br><b id="cells">—</b></span>
+</div>
+
+<div class="controls">
+  <button id="run">Run ▶</button>
+  <button id="cancel" hidden>Cancel ✕</button>
+  <label><input type="checkbox" id="auto" checked> auto-run on change</label>
+  <label>fins <input type="range" id="fins" min="0" max="12" step="1" value="5">
+    <output id="finsval">5</output></label>
+  <label>fin height <input type="range" id="finh" min="5" max="40" step="1" value="35">
+    <output id="finhval">35 mm</output></label>
+  <label>solver <select id="solver"></select></label>
+  <label>field <select id="field"></select></label>
+  <progress id="prog" value="0" max="1" hidden></progress>
+</div>
+
+<form id="params" class="params"></form>
+
+<div id="status">connecting…</div>
+<div id="artifacts" class="hint"></div>
+
+<script type="module">
+import { FenixSpoonClient, JobFailedError } from '@fenix-spoon/client';
+import '@fenix-spoon/viewer';
+
+const client = new FenixSpoonClient('');
+const $ = (id) => document.getElementById(id);
+const viewer = $('viewer');
+let running = false;
+let currentJob = null;
+
+/* ------------------------------------------------------------------ *
+ * Building a form from a JSON Schema
+ *
+ * `GET /api/v1/solvers` returns each solver's `params_schema`, produced by pydantic from
+ * the adapter's `Params` model. Everything a control needs is already in there — type,
+ * bounds, default, prose — so the form is derived rather than written, and stays correct
+ * when a solver changes. This is the whole point of the example.
+ *
+ * Only the shapes pydantic actually emits are handled. An unknown one falls back to a
+ * text box rather than being skipped: a control you can still type into beats a parameter
+ * that silently cannot be set.
+ * ------------------------------------------------------------------ */
+
+// Prominence only. These are shown first and the rest fold into a <details>; both groups
+// are generated the same way, and a parameter missing from this list still gets a control.
+const PROMINENT = ['h', 't_ambient', 'resolution'];
+
+// JSON Schema spells "greater than" two ways. An <input> only understands inclusive
+// bounds, so an exclusive one is nudged by a step — `relaxation` is `< 2.0`, and a slider
+// that could reach exactly 2.0 would submit a value the server rejects.
+function bounds(spec, step) {
+  const min = spec.minimum ?? (spec.exclusiveMinimum != null ? spec.exclusiveMinimum + step : null);
+  const max = spec.maximum ?? (spec.exclusiveMaximum != null ? spec.exclusiveMaximum - step : null);
+  return { min, max };
+}
+
+function stepFor(spec) {
+  if (spec.type === 'integer') return 1;
+  // A sensible decimal step from the range, so a 0–2 slider isn't quantised to integers.
+  const span = (spec.maximum ?? spec.exclusiveMaximum ?? 100) - (spec.minimum ?? spec.exclusiveMinimum ?? 0);
+  return span <= 5 ? 0.01 : span <= 200 ? 0.5 : 1;
+}
+
+// `default` is optional in JSON Schema — a required parameter simply has none. Nothing may
+// invent one, because every fabricated value is submitted as if the user had chosen it and
+// silently overrides whatever the server would have applied. Measured, with the defaults
+// stripped from this solver's schema: sliders took the midpoint of their bounds and sent
+// `resolution: 264`, `h: 5001`, `iterations: 20005`; blank number boxes read back as `0`,
+// which tripped `report_every`'s `minimum: 1` and 422'd the job; and `write_vtk` quietly
+// turned itself off. Plausible-looking invented numbers are worse than a loud failure.
+//
+// So a control with no default renders *unset*, and `read()` returns undefined for it. The
+// key is then omitted from the request, the server applies its own default, and a genuinely
+// required parameter fails with a message naming it instead of solving the wrong problem.
+function buildControl(name, spec) {
+  const value = spec.default;
+  const unset = value === undefined;
+
+  if (Array.isArray(spec.enum)) {
+    const select = document.createElement('select');
+    const options = spec.enum.map((v) => new Option(v, v, v === value, v === value));
+    // A blank first entry is the only way a <select> can represent "not chosen".
+    if (unset) options.unshift(new Option('(server default)', '', true, true));
+    select.replaceChildren(...options);
+    return { input: select, read: () => select.value || undefined };
+  }
+
+  if (spec.type === 'boolean') {
+    const input = Object.assign(document.createElement('input'), { type: 'checkbox', checked: !!value });
+    // Neither checked nor unchecked: a checkbox's third state is exactly "no opinion".
+    // Clicking it clears indeterminate, so the user can still make a choice.
+    input.indeterminate = unset;
+    return { input, read: () => (input.indeterminate ? undefined : input.checked) };
+  }
+
+  if (spec.type === 'integer' || spec.type === 'number') {
+    const step = stepFor(spec);
+    const { min, max } = bounds(spec, step);
+    // A slider needs both ends *and* a starting value — it has no way to show "unset", it
+    // always sits somewhere. With no default, a number box that can genuinely be empty is
+    // the only honest control, whatever the bounds say.
+    const slider = !unset && min != null && max != null;
+    const input = document.createElement('input');
+    // Order matters, and getting it wrong is silent. A range input defaults to max=100, so
+    // assigning `value` first clamps any larger default to 100 — `resolution` (160) and
+    // `iterations` (3000) both came out as 100, and the demo then solved at a hundredth of
+    // the intended sweep count while looking fine. Bounds first, value last.
+    input.type = slider ? 'range' : 'number';
+    input.step = String(step);
+    if (min != null) input.min = String(min);
+    if (max != null) input.max = String(max);
+    if (!unset) input.value = String(value);
+    else input.placeholder = 'server default';
+    const out = document.createElement('output');
+    const show = () => { out.textContent = input.value; };
+    show();
+    input.addEventListener('input', show);
+    // `Number('')` is 0, not NaN, so an empty box would otherwise submit a confident zero.
+    return { input, suffix: out, read: () => (input.value === '' ? undefined : Number(input.value)) };
+  }
+
+  const input = Object.assign(document.createElement('input'), { type: 'text', value: value ?? '' });
+  if (unset) input.placeholder = 'server default';
+  return { input, read: () => input.value || undefined };
+}
+
+// name -> read(), so submitting is just mapping over this.
+const readers = new Map();
+
+function renderParamsForm(schema) {
+  readers.clear();
+  const form = $('params');
+  form.replaceChildren();
+  const entries = Object.entries(schema.properties ?? {});
+  if (!entries.length) {
+    form.append(Object.assign(document.createElement('p'), {
+      className: 'full hint', textContent: 'This solver takes no parameters.',
+    }));
+    return;
+  }
+
+  const advanced = document.createElement('details');
+  const summary = document.createElement('summary');
+  const advancedGrid = document.createElement('div');
+  advancedGrid.className = 'params';
+  advancedGrid.style.border = 'none';
+  advancedGrid.style.padding = '0.5rem 0 0';
+  advanced.append(summary, advancedGrid);
+  advanced.classList.add('full');
+  let advancedCount = 0;
+
+  for (const [name, spec] of entries) {
+    const { input, suffix, read } = buildControl(name, spec);
+    readers.set(name, read);
+    input.id = `param-${name}`;
+    input.name = name;
+
+    const label = document.createElement('label');
+    label.htmlFor = input.id;
+    label.textContent = spec.title ?? name;
+    // The schema's prose is the only documentation a generated form can offer, so it must
+    // not be dropped on the floor.
+    if (spec.description) label.title = spec.description;
+
+    const target = PROMINENT.includes(name) ? form : (advancedCount++, advancedGrid);
+    target.append(label, input, suffix ?? document.createElement('span'));
+  }
+
+  if (advancedCount) {
+    summary.textContent = `${advancedCount} more parameter${advancedCount === 1 ? '' : 's'}`;
+    form.append(advanced);
+  }
+}
+
+function readParams() {
+  // Drop the unset ones rather than sending them. `JSON.stringify` would omit an `undefined`
+  // value anyway, but filtering here makes the intent explicit and survives anyone who later
+  // sends this object by some other route.
+  return Object.fromEntries(
+    [...readers].map(([name, read]) => [name, read()]).filter(([, v]) => v !== undefined),
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * Geometry: an aluminium base with N fins, and a chip underneath.
+ * ------------------------------------------------------------------ */
+
+const K_ALUMINIUM = 205.0;
+
+const rect = (x0, y0, x1, y1) => ({
+  type: 'polygon2d', points: [[x0, y0], [x1, y0], [x1, y1], [x0, y1]],
+});
+
+function buildGeometry() {
+  const fins = Number($('fins').value);
+  const finTop = -0.005 + Number($('finh').value) / 1000;
+  const spacing = 0.064 / Math.max(fins, 1);
+  // Fin width tracks the spacing instead of being fixed. Two reasons, one of which is a bug
+  // this demo hit: at a fixed 6 mm, twelve fins are closer together than they are wide, so
+  // their outlines *cross* — and crossing regions are rejected by the geometry validator
+  // with a 422, because they describe an ambiguous material assignment. The second reason is
+  // physical: past a point, adding fins to a fixed span means thinner fins and narrower
+  // gaps, which is exactly the trade a real heat sink makes.
+  const width = Math.min(0.006, 0.55 * spacing);
+  return {
+    type: 'regions2d',
+    bounds: [-0.05, -0.03, 0.05, 0.05],
+    background: { k: 0.026 },   // air; this solver does not solve it — see the wire protocol
+    regions: [
+      { name: 'base', shape: rect(-0.04, -0.012, 0.04, -0.005), material: { k: K_ALUMINIUM } },
+      ...Array.from({ length: fins }, (_, i) => ({
+        name: `fin${i}`,
+        shape: rect(-0.032 + i * spacing, -0.005, -0.032 + i * spacing + width, finTop),
+        material: { k: K_ALUMINIUM },
+      })),
+      // The chip: lower conductivity than the sink, and the only source of heat.
+      { name: 'chip', shape: rect(-0.012, -0.02, 0.012, -0.012), material: { k: 150.0, q: 2.0e6 } },
+    ],
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * Solve
+ * ------------------------------------------------------------------ */
+
+async function run() {
+  if (running) return;
+  running = true;
+  $('run').disabled = true;
+  $('cancel').hidden = false;
+  $('prog').hidden = false;
+  $('prog').value = 0;
+  $('artifacts').textContent = '';
+
+  try {
+    currentJob = await client.submit({
+      solver: $('solver').value,
+      geometry: buildGeometry(),
+      params: readParams(),
+    });
+
+    const result = await currentJob.wait((event) => {
+      if (event.type !== 'progress') return;
+      if (event.total) $('prog').value = event.iteration / event.total;
+      $('status').textContent = event.residual != null
+        ? `sweep ${event.iteration} — residual ${event.residual.toExponential(2)}`
+        : `sweep ${event.iteration}`;
+    });
+
+    viewer.result = result;
+    syncFieldOptions();
+    showStats(result.stats ?? {});
+    showArtifacts(result.artifacts);
+    $('status').textContent = `done${formatStats(result.stats)}`;
+  } catch (error) {
+    $('status').textContent =
+      error instanceof JobFailedError && error.status === 'cancelled'
+        ? 'cancelled'
+        : `⚠ ${describe(error)}`;
+  } finally {
+    running = false;
+    $('run').disabled = false;
+    $('cancel').hidden = true;
+    $('prog').hidden = true;
+    currentJob = null;
+  }
+}
+
+const describe = (error) => (error instanceof Error ? error.message : String(error));
+
+function showStats(stats) {
+  // `t_rise` is the number the example exists to move: more fins, smaller rise.
+  $('rise').textContent = Number.isFinite(stats.t_rise) ? `${stats.t_rise.toFixed(1)} K` : '—';
+  $('peak').textContent = Number.isFinite(stats.t_max) ? `${stats.t_max.toFixed(1)} °C` : '—';
+  $('cells').textContent = Number.isFinite(stats.solid_cells)
+    ? stats.solid_cells.toLocaleString() : '—';
+}
+
+const STAT_FORMATS = [
+  ['cells', (v) => `${v.toLocaleString()} cells`],
+  ['iterations', (v) => `${v.toLocaleString()} sweeps`],
+  ['seconds', (v) => `${v.toFixed(2)} s`],
+];
+
+function formatStats(stats = {}) {
+  const parts = STAT_FORMATS.filter(([k]) => Number.isFinite(stats[k])).map(([k, f]) => f(stats[k]));
+  return parts.length ? ` — ${parts.join(' · ')}` : '';
+}
+
+function syncFieldOptions() {
+  const names = viewer.fields;
+  const select = $('field');
+  if (names.join() === [...select.options].map((o) => o.value).join()) return;
+  select.replaceChildren(...names.map((n) => new Option(n, n, false, n === viewer.field)));
+}
+
+function showArtifacts(artifacts = []) {
+  const el = $('artifacts');
+  el.replaceChildren();
+  if (!artifacts.length) return;
+  el.append('artifacts: ');
+  artifacts.forEach((artifact, index) => {
+    const link = document.createElement('a');
+    link.href = client.artifactUrl(artifact);
+    link.download = artifact.name;
+    link.textContent = `${artifact.name} (${(artifact.size / 1024).toFixed(0)} kB)`;
+    if (index) el.append(' · ');
+    el.append(link);
+  });
+}
+
+/* ------------------------------------------------------------------ *
+ * Wiring
+ * ------------------------------------------------------------------ */
+
+const autoRun = () => { if ($('auto').checked) run(); };
+
+$('run').addEventListener('click', run);
+$('cancel').addEventListener('click', () => currentJob?.cancel());
+$('field').addEventListener('change', () => { viewer.field = $('field').value; });
+$('fins').addEventListener('input', () => { $('finsval').textContent = $('fins').value; });
+$('finh').addEventListener('input', () => { $('finhval').textContent = `${$('finh').value} mm`; });
+// `change` rather than `input`: one drag of a slider should be one solve, not fifty.
+for (const id of ['fins', 'finh']) $(id).addEventListener('change', autoRun);
+$('params').addEventListener('change', autoRun);
+
+async function selectSolver() {
+  const solvers = await client.listSolvers();
+  const usable = solvers.filter((s) => s.geometry_types.includes('regions2d') && /heat/.test(s.name));
+  if (!usable.length) {
+    $('status').textContent = '⚠ this server has no heat solver installed';
+    return false;
+  }
+  const select = $('solver');
+  select.replaceChildren(...usable.map((s) => new Option(s.title, s.name)));
+  const fenics = usable.find((s) => s.name.startsWith('dolfinx.'));
+  if (fenics) select.value = fenics.name;
+  renderParamsForm(usable.find((s) => s.name === select.value).params_schema);
+  select.onchange = () => {
+    renderParamsForm(usable.find((s) => s.name === select.value).params_schema);
+    autoRun();
+  };
+  return true;
+}
+
+try {
+  if (await selectSolver()) await run();
+} catch (error) {
+  $('status').textContent = `⚠ cannot reach the server — ${describe(error)}`;
+}
+</script>
+<script type="module">
+queueMicrotask(() => {
+  if (!customElements.get('fs-viewer')) document.getElementById('missing').hidden = false;
+});
+</script>
+</body>
+</html>
