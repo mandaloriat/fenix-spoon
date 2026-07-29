@@ -120,7 +120,7 @@ Every region is *filled*; the mesh covers the whole rectangle.
   | solver | reads | default when absent |
   |---|---|---|
   | `mock.magnetostatics2d`, `dolfinx.magnetostatics2d` | `mu_r`, `current_density` | `1.0`, `0.0` |
-  | `mock.heat2d` | `k` (W/m·K), `q` (W/m³) | `1.0`, `0.0` |
+  | `mock.heat2d`, `dolfinx.heat2d` | `k` (W/m·K), `q` (W/m³) | `1.0`, `0.0` |
 
 - `background` applies wherever no region covers — but **what that means is the solver's
   choice, not the protocol's**. `mock.magnetostatics2d` solves the background as another

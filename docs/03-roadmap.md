@@ -214,10 +214,11 @@ Goal: adoption. People find, run, and copy examples.
       exposed 54 model fields with no description at all; filling them in improved the
       OpenAPI page at `/docs` as much as the site.
 - [ ] Example gallery: airfoil potential flow → incompressible Navier–Stokes; solenoid
-      magnetostatics; heat sink; each as a copy-paste-able app (#18) — *in progress: the heat-sink
-      solver (`mock.heat2d`) has landed; its demo page, a FEniCSx counterpart and the gallery
-      index page have not. Navier–Stokes is blocked rather than merely unwritten: the protocol
-      carries no vector field and the viewer cannot draw one.*
+      magnetostatics; heat sink; each as a copy-paste-able app (#18) — *the heat sink is done:
+      `mock.heat2d`, `dolfinx.heat2d` cross-validated against it, a demo page whose controls are
+      generated from `params_schema`, and the [gallery](gallery.md). Navier–Stokes is blocked
+      rather than merely unwritten: the protocol carries no vector field and the viewer cannot
+      draw one.*
 - [ ] "Deploy to Fly.io/Render/self-host" one-clickish guides (#19)
 - [ ] Announce: FEniCS Discourse, r/CFD, Hacker News (#20)
 
