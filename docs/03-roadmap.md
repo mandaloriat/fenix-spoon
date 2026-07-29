@@ -12,7 +12,7 @@ is tracked as a GitHub issue, and each milestone has a tracking issue with the s
 M0–M2 build the browser path: geometry in, job out, field rendered. M3 takes that path to
 production. M2.5 is a different axis: the same core, reachable from a *local* process — a script,
 a CLI, an agent — without a web application. Its number records a dependency, not a date: it sits
-on the M2 core and needs nothing from M3, but it was planned after M3 had landed.
+on the M2 core and needs nothing from M3, and was rebased onto M3 once that landed.
 
 ## M0 — Kickstart (this repository state) ✅
 
@@ -149,7 +149,13 @@ that iterative loop runs end to end.
 
 ## M3 — Production job execution
 
-Goal: multi-user deployments are safe and boring.
+Goal: multi-user deployments are safe and boring. *Everything below has landed except the Helm
+chart, which is deliberately unwritten — see #15.*
+
+Scope note: M3 is the *multi-user, distributed* milestone — queue, separate workers, Redis,
+server-side persistence, authentication, per-user quotas, deployment and load testing. M2.5
+depends on none of it and must not grow a second parallel job system: the job service it extracts
+wraps the same `ExecutionBackend` interface the arq backend already implements.
 
 Scope note: M3 is the *multi-user, distributed* axis — queue, separate workers, Redis,
 server-side persistence, authentication, per-user quotas, object storage, deployment and load
@@ -208,7 +214,10 @@ Goal: adoption. People find, run, and copy examples.
       exposed 54 model fields with no description at all; filling them in improved the
       OpenAPI page at `/docs` as much as the site.
 - [ ] Example gallery: airfoil potential flow → incompressible Navier–Stokes; solenoid
-      magnetostatics; heat sink; each as a copy-paste-able app (#18)
+      magnetostatics; heat sink; each as a copy-paste-able app (#18) — *in progress: the heat-sink
+      solver (`mock.heat2d`) has landed; its demo page, a FEniCSx counterpart and the gallery
+      index page have not. Navier–Stokes is blocked rather than merely unwritten: the protocol
+      carries no vector field and the viewer cannot draw one.*
 - [ ] "Deploy to Fly.io/Render/self-host" one-clickish guides (#19)
 - [ ] Announce: FEniCS Discourse, r/CFD, Hacker News (#20)
 

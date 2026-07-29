@@ -12,8 +12,11 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
+from fenixspoon.backends import InProcessBackend
+from fenixspoon.events import InProcessEventBus
 from fenixspoon.jobs import JobManager
 from fenixspoon.main import create_app
+from fenixspoon.solvers.base import SolverResult
 from fenixspoon.store import JobRecord, MemoryJobStore, SqliteJobStore
 
 GEOMETRY = {
@@ -82,6 +85,55 @@ def test_history_survives_a_restart(data_dir):
                     break
         assert events[0] == {"type": "status", "status": "running"}
         assert any(e["type"] == "progress" for e in events)
+
+
+def test_a_finished_job_is_not_kept_in_memory(data_dir):
+    """The live cache must not become a second, unbounded copy of the result store.
+
+    Results are written to disk precisely so they are not held in RAM — a 512x341 grid is
+    about 3 MB of JSON. But the manager also cached the live ``Job``, and nothing dropped
+    it until the retention sweep, so every finished job's payload stayed resident for the
+    TTL (7 days by default). Twelve solves at resolution 384 cost 82 MB of RSS that was
+    never coming back; a server under real load runs out of memory long before the sweep.
+
+    Asserting on ``_jobs`` rather than on RSS: the private attribute is the mechanism, and
+    a memory measurement in a test is a flake waiting to happen.
+    """
+    with TestClient(create_app()) as client:
+        job_id = run_job(client)
+        manager = client.app.state.jobs
+
+        assert job_id not in manager._jobs, "finished job still cached in memory"
+
+        # …and it is still fully answerable, rehydrated from the store.
+        result = client.get(f"/api/v1/jobs/{job_id}/result")
+        assert result.status_code == 200
+        assert result.json()["data"], "result payload lost with the cache entry"
+        assert client.get(f"/api/v1/jobs/{job_id}").json()["status"] == "done"
+
+
+def test_a_running_job_stays_in_memory(data_dir):
+    """The counter-case, so the eviction above cannot become "never cache anything".
+
+    While a job is running the live entry is what holds its cancel handle and the status
+    that has moved on since the last write. Dropping *that* would break cancellation.
+    """
+    with TestClient(create_app()) as client:
+        body = {"solver": "mock.laplace2d", "geometry": GEOMETRY, "params": {"resolution": 220}}
+        job_id = client.post("/api/v1/jobs", json=body).json()["job_id"]
+        manager = client.app.state.jobs
+        assert job_id in manager._jobs
+
+        assert client.post(f"/api/v1/jobs/{job_id}/cancel").status_code == 202
+        deadline = time.monotonic() + 15
+        while client.get(f"/api/v1/jobs/{job_id}").json()["status"] not in (
+            "done",
+            "failed",
+            "cancelled",
+        ):
+            assert time.monotonic() < deadline, "job did not finish"
+            time.sleep(0.05)
+        assert job_id not in manager._jobs
 
 
 def test_listing_is_paginated_and_newest_first(data_dir):
@@ -222,6 +274,143 @@ def test_stores_agree_on_the_contract(tmp_path, store_factory):
     assert store.purge_before(datetime.now(UTC) - timedelta(days=1)) == ["j-1"]
     assert store.count() == 1
     assert store.get("j-1") is None
+
+
+@pytest.mark.parametrize("store_factory", ["memory", "sqlite"])
+def test_stores_agree_on_partial_loads(tmp_path, store_factory):
+    """`with_result` / `with_events` mean the same thing on both backends.
+
+    They exist because the expensive parts of a record are the parts most callers do not
+    want. The SQLite store genuinely skips a file read and a query; the memory store has
+    nothing to skip but must still honour the contract, or code that works against one
+    backend quietly does the wrong thing against the other.
+    """
+    store = (
+        MemoryJobStore()
+        if store_factory == "memory"
+        else SqliteJobStore(tmp_path / "jobs.db", result_dir=tmp_path)
+    )
+    payload = SolverResult(kind="grid2d", data={"fields": {"psi": [1.0, 2.0]}}, stats={"cells": 2})
+    store.put(JobRecord(id="j-1", solver="s", status="done", result=payload))
+    store.add_event("j-1", {"type": "status", "status": "done"})
+
+    full = store.get("j-1")
+    assert full.result is not None and full.events
+
+    assert store.get("j-1", with_result=False).result is None
+    assert store.get("j-1", with_result=False).events, "events dropped with the payload"
+    assert store.get("j-1", with_events=False).events == []
+    assert store.get("j-1", with_events=False).result is not None, "payload dropped with events"
+
+    # A history page carries neither: it renders six metadata fields per row.
+    listed = store.list_jobs()[0]
+    assert listed.result is None and listed.events == []
+
+    # …and it is a copy too. `Job.from_record` hands `artifacts` straight to a live `Job`,
+    # so a listing that aliased it would let a caller rewrite the stored record.
+    listed.artifacts.append({"name": "bogus"})
+    assert store.get("j-1").artifacts == [], "listing aliased the stored artifact list"
+
+    # A partial record must be safe to mutate — it must not alias what the store holds.
+    partial = store.get("j-1", with_result=False)
+    partial.status = "cancelled"
+    partial.events.append({"type": "bogus"})
+    assert store.get("j-1").status == "done", "mutating a partial record rewrote the store"
+    assert len(store.get("j-1").events) == 1
+
+
+def test_shutdown_releases_the_backend_and_the_bus(tmp_path):
+    """Shutdown closed the store and nothing else, leaving two resources behind.
+
+    It matters most for the worker deployment, where the backend and the bus each hold a
+    Redis connection pool. But it bites the default too: the in-process backend owns a
+    `ThreadPoolExecutor`, and `concurrent.futures` installs an atexit hook that joins its
+    threads, so an abandoned executor makes a process with a long solve in flight refuse
+    to exit.
+    """
+    closed = []
+
+    class SpyBus(InProcessEventBus):
+        async def close(self):
+            closed.append("bus")
+
+    class SpyBackend(InProcessBackend):
+        async def close(self):
+            closed.append("backend")
+            await super().close()
+
+    store = MemoryJobStore()
+    bus = SpyBus()
+    app = create_app()
+    app.state.jobs = JobManager(
+        data_dir=tmp_path,
+        store=store,
+        bus=bus,
+        backend=SpyBackend(store, bus, tmp_path, timeout=5, max_workers=1),
+    )
+    with TestClient(app):
+        pass
+
+    # Backend before bus: nothing new starts solving before delivery stops.
+    assert closed == ["backend", "bus"]
+    assert app.state.jobs.backend._executor._shutdown, "thread pool left running"
+
+
+def test_one_failing_close_does_not_skip_the_others(tmp_path):
+    """The counter-case: a backend that throws must not strand the bus and the store."""
+    closed = []
+
+    class ExplodingBackend(InProcessBackend):
+        async def close(self):
+            raise RuntimeError("redis went away")
+
+    class SpyBus(InProcessEventBus):
+        async def close(self):
+            closed.append("bus")
+
+    class SpyStore(MemoryJobStore):
+        def close(self):
+            closed.append("store")
+
+    store = SpyStore()
+    bus = SpyBus()
+    app = create_app()
+    app.state.jobs = JobManager(
+        data_dir=tmp_path,
+        store=store,
+        bus=bus,
+        backend=ExplodingBackend(store, bus, tmp_path, timeout=5, max_workers=1),
+    )
+    with TestClient(app):
+        pass
+    assert closed == ["bus", "store"]
+
+
+def test_status_and_listing_never_read_a_result_payload(data_dir):
+    """The point of the flags, asserted where it pays: the HTTP layer.
+
+    Answering "is it done yet?" used to load and parse the whole result — 50 ms and a
+    3 MB read for six small fields — and `GET /jobs` did it once per row, so a 50-job
+    page read 150 MB. Counting payload reads rather than timing anything, because a
+    latency assertion in a test suite is a flake.
+    """
+    with TestClient(create_app()) as client:
+        job_id = run_job(client)
+        store = client.app.state.jobs.store
+
+        reads = []
+        original = store._result_path
+        store._result_path = lambda jid: (reads.append(jid), original(jid))[1]
+
+        assert client.get(f"/api/v1/jobs/{job_id}").status_code == 200
+        assert reads == [], f"status poll read the payload: {reads}"
+
+        assert client.get("/api/v1/jobs").status_code == 200
+        assert reads == [], f"listing read the payload: {reads}"
+
+        # …and the endpoint that genuinely needs it still gets it.
+        assert client.get(f"/api/v1/jobs/{job_id}/result").json()["data"]
+        assert reads == [job_id]
 
 
 def test_memory_store_forgets_across_restarts(tmp_path, monkeypatch):

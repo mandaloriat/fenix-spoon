@@ -22,7 +22,7 @@ The browser is the first client, not the only planned one. The same declarative 
 solvers, typed parameters, jobs, results — is meant to be drivable from a local process too:
 scripts, CLI, and software agents on a machine that already has FEniCSx, over a structured local
 interface with compact answers instead of a web app. That direction is designed in
-[M2.5](docs/03-roadmap.md#m25--local-automation-and-agent-interface) and
+[M2.5](docs/03-roadmap.md#m25-local-automation-and-agent-interface) and
 [docs/07-local-agent-interface.md](docs/07-local-agent-interface.md); it is planned work, not a
 shipped feature.
 

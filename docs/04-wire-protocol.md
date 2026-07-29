@@ -1,8 +1,18 @@
-# Wire protocol — draft v0
+# Wire protocol — v1
 
 The contract between clients and a Fenix Spoon server. JSON everywhere; all endpoints under
-`/api/v1`. The pydantic models in `server/fenixspoon/geometry.py` and `solvers/base.py` are the
-source of truth; this document is the human-readable view. Breaking changes bump the path version.
+`/api/v1`. The pydantic models in `server/fenixspoon/geometry.py`, `protocol.py` and
+`solvers/base.py` are the source of truth; this document is the human-readable view, and the
+[protocol models](reference-protocol.md) page is generated from them. Breaking changes bump the
+path version.
+
+!!! note "Versioning is the path, and only the path"
+    `/api/v1` is currently the *whole* of the version signal: no payload carries a protocol
+    version field, and a client cannot ask a server what it speaks beyond trying a path. That is
+    tolerable while there is one version and no third-party servers, and it is tracked as a gap
+    ([#58](https://github.com/mandaloriat/fenix-spoon/issues/58)) — a bump procedure has to exist
+    before anyone else implements this protocol, and the transports planned in M2.5 have no path
+    to carry a version in at all.
 
 ## Scope: domain contract vs HTTP transport
 
@@ -104,13 +114,22 @@ Every region is *filled*; the mesh covers the whole rectangle.
 ```
 
 - `material` is an **open dict of scalars**, not a typed physics model: the protocol stays
-  physics-agnostic and each solver documents the keys it reads (unknown keys are ignored,
-  so one payload can carry properties for several solvers). `mock.magnetostatics2d` reads
-  `mu_r` and `current_density`.
+  physics-agnostic and each solver documents the keys it reads. Unknown keys are ignored, so
+  one payload can carry properties for several solvers and be sent to each in turn:
+
+  | solver | reads | default when absent |
+  |---|---|---|
+  | `mock.magnetostatics2d`, `dolfinx.magnetostatics2d` | `mu_r`, `current_density` | `1.0`, `0.0` |
+  | `mock.heat2d` | `k` (W/m·K), `q` (W/m³) | `1.0`, `0.0` |
+
+- `background` applies wherever no region covers — but **what that means is the solver's
+  choice, not the protocol's**. `mock.magnetostatics2d` solves the background as another
+  material, so its `mu_r` matters. `mock.heat2d` does not solve it at all: the region set *is*
+  the solid, everything else is fluid handled as a convective boundary condition, and the
+  background's keys are ignored. The result's `mask` marks which cells were not solved.
 - Regions may be **nested** (core inside a coil); where they overlap, **later entries in the
   list win**, like painter's order. Regions whose outlines properly *cross* are rejected —
   that describes an ambiguous material assignment rather than nesting.
-- `background` applies wherever no region covers.
 
 ### Common rules
 
@@ -258,7 +277,8 @@ second protocol. Each is driven by
   *cost* of a solve; metrics are its engineering *answer*, and the two should stay distinct.
 - **Diagnostics.** Convergence flag, final residual and warnings have no home today: some of it
   is in `stats`, some only in progress events, some nowhere. A small structured diagnostics object
-  alongside `stats` is the natural place.
+  alongside `stats` is the natural place — note that `stats` is typed `dict[str, float]`, so a
+  convergence flag or a warning string has literally nowhere to go in it today.
 - **Object references.** A geometry that has already been sent should be referenceable rather than
   resent. Whatever identifier scheme the workspace settles on must be expressible in a job request
   on every transport, not only in the local one.
@@ -266,6 +286,8 @@ second protocol. Each is driven by
   requestable levels, so a caller can ask for a summary without the arrays. The HTTP binding is
   likely a query parameter on the result endpoint; it must not change the default payload the
   browser SDK already relies on.
+- **A protocol version on the wire**, per the note at the top of this page
+  ([#58](https://github.com/mandaloriat/fenix-spoon/issues/58)).
 
 Until these land, the result envelope is exactly what is documented above: `job_id`, `kind`,
 `data`, `stats`, `artifacts`.

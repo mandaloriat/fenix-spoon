@@ -172,7 +172,7 @@ def job_result(
     request: Request,
     principal: CurrentPrincipal,
 ) -> dict[str, Any]:
-    job = _manager(request).get(job_id, owner=principal.id)
+    job = _manager(request).get(job_id, owner=principal.id, with_result=True)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
     if job.status in ("failed", "cancelled"):
