@@ -4,7 +4,7 @@ Milestones are ordered so that every one ends with something demonstrable. Every
 is tracked as a GitHub issue, and each milestone has a tracking issue with the suggested order:
 [M1](https://github.com/mandaloriat/fenix-spoon/issues/26) ·
 [M2](https://github.com/mandaloriat/fenix-spoon/issues/27) ·
-M2.5 ·
+[M2.5](https://github.com/mandaloriat/fenix-spoon/issues/52) ·
 [M3](https://github.com/mandaloriat/fenix-spoon/issues/28) ·
 [M4](https://github.com/mandaloriat/fenix-spoon/issues/29) ·
 [M5](https://github.com/mandaloriat/fenix-spoon/issues/30)
@@ -82,49 +82,49 @@ broker, or auth; those stay in M3. The design specification is
 - [ ] **Transport-neutral application core.** Extract from the FastAPI routes a reusable
       application layer — capability catalog, workspace service, object store, job service,
       result query service, study service — and make `api.py` an adapter over it. The HTTP API
-      keeps its current behavior, paths and status codes; only the layering moves.
+      keeps its current behavior, paths and status codes; only the layering moves. (#42)
 - [ ] **Progressive capability discovery.** `environment.inspect`, `capability.list`,
       `capability.describe` with section selection (geometries, params, metrics, artifacts, sweep
       / gradient / MPI support, environment requirements). Full JSON Schemas are fetched by
-      reference or on request, never dumped on every call.
+      reference or on request, never dumped on every call. (#43)
 - [ ] **Local workspace and object references.** An inspectable, reopenable workspace holding
       `geometry`, `material`, `boundary_condition`, `load_case`, `design`, `study`, `result` and
       `artifact` objects under stable identifiers (`geometry:g-42`, `design:d-18`, `study:s-9`,
       `result:r-105`). Iterations reference objects instead of resending geometry; incremental
-      edits go through a standard patch mechanism (JSON Patch is the leading candidate).
+      edits go through a standard patch mechanism (JSON Patch is the leading candidate). (#44)
 - [ ] **JSON-RPC 2.0 over stdio.** A local transport with no mandatory network port: the agent
       spawns `fenix-spoon rpc --stdio` as a child process and speaks structured messages over its
       pipes — documented framing, typed compact errors, long solves as asynchronous jobs, working
       identically against mock solvers and real FEniCSx. This is the base local transport; MCP
-      is layered on it, not the other way round.
+      is layered on it, not the other way round. (#45)
 - [ ] **Compact results: metrics, diagnostics and selective field queries.** Separate the response
       levels `status` / `metrics` / `diagnostics` / `fields` / `artifacts`. Agents get scalar
       engineering metrics (mass, maximum displacement, maximum stress, safety factor, strain
       energy, force, inductance, peak temperature) and solve diagnostics by default; full fields
       travel as artifacts by reference, with selective queries for max, min, mean, integral,
-      point value, region value, section, decimated sampling and hotspot location.
+      point value, region value, section, decimated sampling and hotspot location. (#46)
 - [ ] **Content-addressed cache and provenance.** Deterministic hashing of geometry, solver,
       parameters and environment; local result cache; deduplication of equivalent jobs; full
       provenance on every result and an explicit design → study → job → result relation. The cache
-      cuts both compute cost and the amount an agent has to re-exchange.
+      cuts both compute cost and the amount an agent has to re-exchange. (#47)
 - [ ] **Study abstraction.** One vocabulary under which parameter sweeps, mesh-convergence studies,
       material comparisons, load-case comparisons, parametric optimization and model calibration
       can be expressed. The first slice implements a single small, controlled study kind —
       enough to prove that several jobs can be orchestrated through object references and
-      synthetic results. No universal optimizer here (that stays M5, #22).
+      synthetic results. No universal optimizer here (that stays M5, #22). (#48)
 - [ ] **MCP adapter.** A thin Model Context Protocol server over the same core and the same
       operations as JSON-RPC: a small stable tool vocabulary (inspect environment, list
       capabilities, describe capability, create or patch object, submit job, inspect job, query
       result, run study), progressive discovery, artifacts exposed as resources. No tool per
-      solver, no application logic in the adapter, no MCP dependency in the core.
+      solver, no application logic in the adapter, no MCP dependency in the core. (#49)
 - [ ] **CLI and Python adapters.** `fenix-spoon <command> --json` for shells and reproducible
       scripting, plus a direct in-process Python API — the same models and semantics as HTTP,
-      JSON-RPC and MCP, and the debugging surface for everything an agent can do.
+      JSON-RPC and MCP, and the debugging surface for everything an agent can do. (#50)
 - [ ] **Cross-transport conformance and the vertical slice.** Shared fixtures asserting that an
       equivalent request over HTTP and over JSON-RPC yields the same semantic result, that
       validation errors are represented consistently, that mock and FEniCSx honor the same
       envelopes, that schemas do not diverge between adapters, and that compact responses never
-      leak full numeric arrays.
+      leak full numeric arrays. (#51)
 
 **Exit criterion (demonstrable).** From a local agent process, with no HTTP server running:
 discover the available potential-flow capability, create an airfoil design in a workspace, submit
