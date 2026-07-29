@@ -102,4 +102,15 @@ describe('version.json', () => {
   it('refuses something it cannot parse rather than guessing', () => {
     expect(checkProtocolCompatibility('banana').compatible).toBe(false);
   });
+
+  it.each(['1.banana', '1', '1.2.3', '', 'v1.0'])(
+    'refuses the half-parseable version %o instead of defaulting the minor',
+    (version) => {
+      // The regression: defaulting a missing or unparseable minor to 0 made '1.banana'
+      // compare equal to '1.0', so a server announcing nonsense read as fully compatible.
+      const verdict = checkProtocolCompatibility(version, '1.0');
+      expect(verdict.compatible).toBe(false);
+      expect(verdict.reason).toMatch(/MAJOR\.MINOR/);
+    },
+  );
 });

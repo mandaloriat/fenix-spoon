@@ -39,9 +39,27 @@
     },
     {
       "name": "protocol as a number",
-      "reason": "MAJOR.MINOR is a string; 1.10 as a float would compare below 1.9",
+      "reason": "MAJOR.MINOR is a string; as a float 1.10 would compare below 1.9. Note pydantic v2 refuses this on type alone \u2014 it does not coerce numbers to str \u2014 so this case guards the rule, not a coercion bug.",
       "payload": {
         "protocol": 1.0,
+        "implementation": "0.1.0",
+        "api_path": "/api/v1"
+      }
+    },
+    {
+      "name": "protocol with a non-numeric minor",
+      "reason": "MAJOR.MINOR must be two integers; '1.banana' cannot be compared with anything",
+      "payload": {
+        "protocol": "1.banana",
+        "implementation": "0.1.0",
+        "api_path": "/api/v1"
+      }
+    },
+    {
+      "name": "protocol with only a major",
+      "reason": "'1' leaves the minor implicit, and an implicit minor is a guess",
+      "payload": {
+        "protocol": "1",
         "implementation": "0.1.0",
         "api_path": "/api/v1"
       }

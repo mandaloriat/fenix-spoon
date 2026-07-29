@@ -41,7 +41,12 @@ class ProtocolVersion(BaseModel):
     """
 
     protocol: str = Field(
-        description="Wire-contract version as `MAJOR.MINOR`. MAJOR matches the path segment."
+        # Constrained rather than merely typed. `str` already refuses a JSON number —
+        # pydantic v2 does not coerce one, unlike v1 — but it happily accepts "1.banana",
+        # which a client would then have to parse defensively. The pattern is what lets a
+        # consumer split on "." and trust both halves.
+        pattern=r"^\d+\.\d+$",
+        description="Wire-contract version as `MAJOR.MINOR`. MAJOR matches the path segment.",
     )
     implementation: str = Field(
         description="Version of this server package. Independent of the protocol version."

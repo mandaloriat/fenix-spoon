@@ -45,16 +45,21 @@ export function checkProtocolCompatibility(
   serverVersion: string,
   sdkVersion: string = PROTOCOL_VERSION,
 ): CompatibilityVerdict {
+  // Both halves required, both integers. Defaulting a missing or unparseable minor to 0
+  // was a guess dressed as a parse: `1.banana` came out as `{major: 1, minor: 0}` and
+  // compared *equal* to 1.0, so a server announcing nonsense read as fully compatible.
   const parse = (v: string) => {
-    const [major, minor] = v.split('.').map((part) => Number.parseInt(part, 10));
-    return { major, minor: Number.isFinite(minor) ? minor : 0 };
+    const match = /^(\d+)\.(\d+)$/.exec(v);
+    return match ? { major: Number(match[1]), minor: Number(match[2]) } : null;
   };
   const server = parse(serverVersion);
   const sdk = parse(sdkVersion);
-  if (!Number.isFinite(server.major)) {
+  if (server === null || sdk === null) {
     return {
       compatible: false,
-      reason: `cannot parse the server's protocol version: ${JSON.stringify(serverVersion)}`,
+      reason:
+        `cannot parse ${server === null ? "the server's" : "the SDK's"} protocol version ` +
+        `${JSON.stringify(server === null ? serverVersion : sdkVersion)}; expected MAJOR.MINOR`,
     };
   }
   if (server.major !== sdk.major) {

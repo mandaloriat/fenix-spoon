@@ -223,10 +223,14 @@ Goal: adoption. People find, run, and copy examples.
       adapters already ship `|v|` for exactly this reason. Unblocks flux and current-density
       rendering too, which three adapters currently flatten to a magnitude.*
 - [ ] "Deploy to Fly.io/Render/self-host" one-clickish guides (#19)
-- [ ] A protocol version on the wire, a compatibility rule, and a bump procedure (#58) —
-      *before #20: the pitch is "the protocol is the product", and `/api/v1` in the path is
-      currently the whole of the version signal. Nothing in any payload says what a server
-      speaks, and the M2.5 transports have no path to carry it in.*
+- [x] A protocol version on the wire, a compatibility rule, and a bump procedure (#58) —
+      `GET /api/v1/version`, the one route outside the auth gate, because a client has to
+      know whether it can talk to a server before it can sensibly send anything. An
+      *operation* rather than a header or a payload field, so the M2.5 transports — which
+      have neither headers nor paths — can answer the same question. MAJOR is mirrored in
+      the path; the [breaking-vs-additive rule](04-wire-protocol.md#what-is-a-breaking-change)
+      and the bump checklist are written down, and one version number lives in three places
+      with each side asserting against the shared fixture so none can move quietly.
 - [ ] Announce: FEniCS Discourse, r/CFD, Hacker News (#20)
 
 ## M5 — Advanced / exploratory

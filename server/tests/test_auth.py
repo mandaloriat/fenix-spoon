@@ -135,14 +135,21 @@ def test_version_is_the_one_route_outside_the_gate(keyed_client):
     assert response.status_code == 200
     assert set(response.json()) == {"protocol", "implementation", "api_path"}
 
+    import re
+
     from fenixspoon.api import router
 
+    # Parametrised paths get dummy values rather than being skipped. Skipping them left the
+    # guard blind to exactly the kind of route most likely to be added next — a new
+    # `GET /jobs/{id}/something` that forgets the gate would not have been caught, because
+    # the hard-coded list above only knows today's paths.
     unauthenticated = set()
     for route in router.routes:
         path, methods = route.path, getattr(route, "methods", set())
-        if "GET" not in methods or "{" in path:
-            continue  # parametrised paths are covered above; WS has its own test
-        if keyed_client.get(path).status_code != 401:
+        if "GET" not in methods:
+            continue  # the WebSocket has its own test; nothing else is a GET
+        probe = re.sub(r"\{[^}]+\}", "probe", path)
+        if keyed_client.get(probe).status_code != 401:
             unauthenticated.add(path)
     assert unauthenticated == {"/api/v1/version"}, (
         f"routes reachable without a key: {sorted(unauthenticated)}"
