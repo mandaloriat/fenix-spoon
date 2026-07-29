@@ -6,13 +6,64 @@ The contract between clients and a Fenix Spoon server. JSON everywhere; all endp
 [protocol models](reference-protocol.md) page is generated from them. Breaking changes bump the
 path version.
 
-!!! note "Versioning is the path, and only the path"
-    `/api/v1` is currently the *whole* of the version signal: no payload carries a protocol
-    version field, and a client cannot ask a server what it speaks beyond trying a path. That is
-    tolerable while there is one version and no third-party servers, and it is tracked as a gap
-    ([#58](https://github.com/mandaloriat/fenix-spoon/issues/58)) — a bump procedure has to exist
-    before anyone else implements this protocol, and the transports planned in M2.5 have no path
-    to carry a version in at all.
+## Versioning
+
+The protocol is versioned `MAJOR.MINOR`, currently **1.0**, and a server reports what it
+speaks:
+
+### `GET /api/v1/version`
+
+```json
+{ "protocol": "1.0", "implementation": "0.1.0", "api_path": "/api/v1" }
+```
+
+**The one route that never requires an API key.** A client needs to know whether it can talk
+to a server *before* deciding what to send, and if version discovery needed a credential then
+a misconfigured client could not tell "wrong key" from "wrong protocol". It discloses two
+version strings and a path prefix — the same things the OpenAPI page already serves.
+
+`protocol` is a **string**, not a number: as a float, `1.10` parses to `1.1` and sorts below
+`1.9`.
+
+### What is a breaking change
+
+| | Change | Version |
+|---|---|---|
+| **Additive** | A new optional field | MINOR |
+| | A new member of a discriminated union — a geometry kind, a result kind | MINOR |
+| | A new endpoint, a new solver, a new `stats` key | MINOR |
+| **Breaking** | Removing or renaming a field | MAJOR |
+| | Narrowing a type, or making an optional field required | MAJOR |
+| | Changing a discriminator value (`"domain2d"` → something else) | MAJOR |
+| | Giving a status code a new meaning | MAJOR |
+
+The discriminated unions are what make this answerable rather than a matter of taste: adding
+a union member cannot break a client that never asks for it, whereas changing a tag breaks
+every client that switches on one.
+
+**MAJOR is mirrored in the path.** `/api/v1` serves protocol 1.x, and a 2.0 would be served
+at `/api/v2` — so two majors can coexist during a deprecation window, and a client that
+constructs `/api/v1` URLs is already asserting the major it expects. MINOR shares a path,
+because that is exactly what "additive" buys.
+
+### Why the version is not in every payload
+
+It does not vary within a session, so repeating it on every event and result would be
+per-message overhead for something one call answers. Nor is it a header: the transports
+planned in [M2.5](03-roadmap.md#m25-local-automation-and-agent-interface) have neither headers
+nor paths, and expose the same question as `environment.inspect`. Making it an *operation* is
+what lets one answer serve every transport.
+
+The consequence to know: a **stored** result carries no version. Provenance on stored results
+is [#47](https://github.com/mandaloriat/fenix-spoon/issues/47)'s job, not the envelope's.
+
+### Changing it
+
+One number lives in three places — `PROTOCOL_VERSION` in `server/fenixspoon/protocol.py`,
+`PROTOCOL_VERSION` in `@fenix-spoon/client`, and `protocol_version` in
+`protocol/fixtures/version.json`. Both test suites assert against the fixture, so moving any
+one of them alone turns the other red. The checklist is in
+[CONTRIBUTING.md](https://github.com/mandaloriat/fenix-spoon/blob/main/CONTRIBUTING.md).
 
 ## Scope: domain contract vs HTTP transport
 

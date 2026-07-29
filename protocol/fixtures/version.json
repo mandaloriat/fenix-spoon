@@ -1,0 +1,68 @@
+{
+  "$comment": "The protocol version both sides must agree on, plus conformance cases for the `GET /api/v1/version` payload. `protocol_version` is the assertion that matters: server/tests/test_protocol_fixtures.py checks it against fenixspoon.protocol.PROTOCOL_VERSION and the SDK's conformance suite checks it against PROTOCOL_VERSION in @fenix-spoon/client, so bumping one side without the other fails CI on the other. When a second protocol version exists, this file gains a `superseded` list and the corpus can hold cases for both.",
+  "protocol_version": "1.0",
+  "valid": [
+    {
+      "name": "version payload",
+      "payload": {
+        "protocol": "1.0",
+        "implementation": "0.1.0",
+        "api_path": "/api/v1"
+      }
+    },
+    {
+      "name": "a later minor on the same major",
+      "$comment": "Additive, so a 1.0 client must still accept it.",
+      "payload": {
+        "protocol": "1.7",
+        "implementation": "3.2.1",
+        "api_path": "/api/v1"
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "missing protocol",
+      "reason": "protocol is required: a payload that cannot say what it speaks is useless",
+      "payload": {
+        "implementation": "0.1.0",
+        "api_path": "/api/v1"
+      }
+    },
+    {
+      "name": "missing api_path",
+      "reason": "api_path is required so a client can confirm where this version is served",
+      "payload": {
+        "protocol": "1.0",
+        "implementation": "0.1.0"
+      }
+    },
+    {
+      "name": "protocol as a number",
+      "reason": "MAJOR.MINOR is a string; as a float 1.10 would compare below 1.9. Note pydantic v2 refuses this on type alone \u2014 it does not coerce numbers to str \u2014 so this case guards the rule, not a coercion bug.",
+      "payload": {
+        "protocol": 1.0,
+        "implementation": "0.1.0",
+        "api_path": "/api/v1"
+      }
+    },
+    {
+      "name": "protocol with a non-numeric minor",
+      "reason": "MAJOR.MINOR must be two integers; '1.banana' cannot be compared with anything",
+      "payload": {
+        "protocol": "1.banana",
+        "implementation": "0.1.0",
+        "api_path": "/api/v1"
+      }
+    },
+    {
+      "name": "protocol with only a major",
+      "reason": "'1' leaves the minor implicit, and an implicit minor is a guess",
+      "payload": {
+        "protocol": "1",
+        "implementation": "0.1.0",
+        "api_path": "/api/v1"
+      }
+    }
+  ]
+}

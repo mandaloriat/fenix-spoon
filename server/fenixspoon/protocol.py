@@ -13,6 +13,48 @@ from pydantic import BaseModel, Field, model_validator
 from .geometry import Domain2D, Geometry, Polygon2D  # noqa: F401  (re-export for consumers)
 from .solvers.base import ProgressEvent  # noqa: F401  (re-export for consumers)
 
+#: The version of the wire contract this server speaks, `MAJOR.MINOR`.
+#:
+#: **MAJOR is the compatibility boundary and is mirrored in the path** (`/api/v1`). It
+#: changes only when an existing client would break: a field removed or renamed, a type
+#: narrowed, a discriminator value changed, an optional field made required, a status code
+#: given a new meaning.
+#:
+#: **MINOR changes are additive** and share the path, because a client written against an
+#: earlier minor keeps working: a new optional field, a new member of a discriminated union
+#: (a geometry or result kind), a new endpoint, a new solver, a new `stats` key.
+#:
+#: Deliberately *not* carried in every payload. It does not vary within a session, so
+#: repeating it on each event and result would be per-message overhead for something one
+#: call answers — see `GET /api/v1/version`, and `docs/04-wire-protocol.md` for the
+#: reasoning and the bump procedure.
+PROTOCOL_VERSION = "1.0"
+
+
+class ProtocolVersion(BaseModel):
+    """What this server speaks, as `GET /api/v1/version` returns it.
+
+    An *operation* rather than a header or a payload field, because the version has to be
+    discoverable over transports that have neither. The planned JSON-RPC and MCP adapters
+    (M2.5) expose the same question as `environment.inspect`; a header would have been
+    HTTP-only, and a path alone cannot be read without already having guessed it.
+    """
+
+    protocol: str = Field(
+        # Constrained rather than merely typed. `str` already refuses a JSON number —
+        # pydantic v2 does not coerce one, unlike v1 — but it happily accepts "1.banana",
+        # which a client would then have to parse defensively. The pattern is what lets a
+        # consumer split on "." and trust both halves.
+        pattern=r"^\d+\.\d+$",
+        description="Wire-contract version as `MAJOR.MINOR`. MAJOR matches the path segment.",
+    )
+    implementation: str = Field(
+        description="Version of this server package. Independent of the protocol version."
+    )
+    api_path: str = Field(
+        description="Path prefix this protocol version is served under, e.g. `/api/v1`."
+    )
+
 
 class StatusEvent(BaseModel):
     """A job's lifecycle transition. The stream ends after a terminal one."""

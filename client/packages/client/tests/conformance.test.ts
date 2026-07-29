@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
+import { PROTOCOL_VERSION, checkProtocolCompatibility } from '../src/types.js';
 import {
   validateGeometry,
   validateJobEvent,
@@ -65,3 +66,51 @@ for (const [file, validate] of SUITES) {
     }
   });
 }
+
+describe('version.json', () => {
+  const { protocol_version: declared } = JSON.parse(
+    readFileSync(join(FIXTURES, 'version.json'), 'utf8'),
+  ) as { protocol_version: string };
+
+  it('is the version this SDK is written against', () => {
+    // The other half of the tripwire: the Python suite asserts this same corpus value
+    // against the server's PROTOCOL_VERSION. Bumping one side alone fails on the other.
+    expect(declared).toBe(PROTOCOL_VERSION);
+  });
+
+  it('accepts an older server on the same major, and says so', () => {
+    const verdict = checkProtocolCompatibility('1.0', '1.4');
+    expect(verdict.compatible).toBe(true);
+    expect(verdict.reason).toMatch(/older/);
+  });
+
+  it('accepts a newer server on the same major — additive by definition', () => {
+    expect(checkProtocolCompatibility('1.9', '1.2')).toMatchObject({ compatible: true });
+  });
+
+  it('refuses a different major', () => {
+    const verdict = checkProtocolCompatibility('2.0', '1.0');
+    expect(verdict.compatible).toBe(false);
+    expect(verdict.reason).toMatch(/breaking/);
+  });
+
+  it('treats 1.10 as later than 1.9, not earlier', () => {
+    // The reason `protocol` is a string on the wire: as a float, 1.10 parses to 1.1.
+    expect(checkProtocolCompatibility('1.10', '1.9').reason).toMatch(/newer/);
+  });
+
+  it('refuses something it cannot parse rather than guessing', () => {
+    expect(checkProtocolCompatibility('banana').compatible).toBe(false);
+  });
+
+  it.each(['1.banana', '1', '1.2.3', '', 'v1.0'])(
+    'refuses the half-parseable version %o instead of defaulting the minor',
+    (version) => {
+      // The regression: defaulting a missing or unparseable minor to 0 made '1.banana'
+      // compare equal to '1.0', so a server announcing nonsense read as fully compatible.
+      const verdict = checkProtocolCompatibility(version, '1.0');
+      expect(verdict.compatible).toBe(false);
+      expect(verdict.reason).toMatch(/MAJOR\.MINOR/);
+    },
+  );
+});

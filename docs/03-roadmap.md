@@ -213,13 +213,24 @@ Goal: adoption. People find, run, and copy examples.
       cannot change without the docs changing in the same commit. Writing the generator
       exposed 54 model fields with no description at all; filling them in improved the
       OpenAPI page at `/docs` as much as the site.
-- [ ] Example gallery: airfoil potential flow → incompressible Navier–Stokes; solenoid
-      magnetostatics; heat sink; each as a copy-paste-able app (#18) — *the heat sink is done:
-      `mock.heat2d`, `dolfinx.heat2d` cross-validated against it, a demo page whose controls are
-      generated from `params_schema`, and the [gallery](gallery.md). Navier–Stokes is blocked
-      rather than merely unwritten: the protocol carries no vector field and the viewer cannot
-      draw one.*
+- [x] Example gallery: potential flow, solenoid magnetostatics and a heat sink, each a
+      copy-paste-able app, with a [gallery index](gallery.md) (#18) — *the heat sink ships two
+      adapters, `mock.heat2d` and `dolfinx.heat2d`, cross-validated against each other, and its
+      demo page builds its controls from `params_schema`.*
+- [ ] Vector fields on the wire and in the viewer (#62) — *split out of #18. Navier–Stokes was
+      blocked rather than unwritten: `fields` and `point_fields` are maps of name → scalar, so a
+      velocity cannot be expressed as one thing and the viewer has no glyphs. Both potential-flow
+      adapters already ship `|v|` for exactly this reason. Unblocks flux and current-density
+      rendering too, which three adapters currently flatten to a magnitude.*
 - [ ] "Deploy to Fly.io/Render/self-host" one-clickish guides (#19)
+- [x] A protocol version on the wire, a compatibility rule, and a bump procedure (#58) —
+      `GET /api/v1/version`, the one route outside the auth gate, because a client has to
+      know whether it can talk to a server before it can sensibly send anything. An
+      *operation* rather than a header or a payload field, so the M2.5 transports — which
+      have neither headers nor paths — can answer the same question. MAJOR is mirrored in
+      the path; the [breaking-vs-additive rule](04-wire-protocol.md#what-is-a-breaking-change)
+      and the bump checklist are written down, and one version number lives in three places
+      with each side asserting against the shared fixture so none can move quietly.
 - [ ] Announce: FEniCS Discourse, r/CFD, Hacker News (#20)
 
 ## M5 — Advanced / exploratory

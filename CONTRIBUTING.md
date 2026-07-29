@@ -49,6 +49,45 @@ than one click, so the click stays:
 Until that is set, the workflow builds the site correctly and then fails on the last step
 with `Get Pages site failed`. Everything else in CI is self-contained.
 
+## Changing the wire protocol
+
+The protocol is versioned `MAJOR.MINOR`. Which one you are bumping — if either — is decided by
+the table in [the wire protocol doc](https://mandaloriat.github.io/fenix-spoon/04-wire-protocol/#what-is-a-breaking-change),
+not by how large the change feels. Adding an optional field is a MINOR bump however much code
+it took; renaming one is a MAJOR bump however small the diff.
+
+**Most protocol changes need no bump at all.** A new field description, a clearer error
+message, a new solver — none of those change the contract. Bump only when a client's view of
+it changes.
+
+### A MINOR bump (additive)
+
+1. `PROTOCOL_VERSION` in `server/fenixspoon/protocol.py`.
+2. `PROTOCOL_VERSION` in `client/packages/client/src/types.ts`.
+3. `protocol_version` in `protocol/fixtures/version.json`, plus fixtures covering the new
+   shape — a valid case, and an invalid one showing what the rule rejects.
+4. Regenerate the protocol reference: `make protocol-reference`.
+5. Update `docs/04-wire-protocol.md` prose if the change is visible to a reader.
+
+Steps 1–3 are not optional and not independent: both test suites assert against the fixture,
+so changing one alone fails CI on the other side. That is deliberate — it is the only thing
+stopping the server and the SDK from drifting apart quietly.
+
+### A MAJOR bump (breaking)
+
+Everything above, plus:
+
+1. Change the router prefix in `server/fenixspoon/api.py` — the major version *is* the path
+   segment, and `test_the_major_version_matches_the_path` enforces it.
+2. Keep the previous major mounted alongside the new one for a deprecation window. Two majors
+   are meant to coexist; that is what putting the major in the path is for.
+3. Version the fixture corpus so it holds cases for both, rather than replacing the old ones.
+   A corpus that only describes the current version cannot prove the old one still works.
+4. Say what breaks and what to do about it, in the release notes and in the docs.
+
+An older client meeting a newer major should get a comprehensible refusal, not a parse error.
+`checkProtocolCompatibility` in the SDK is the client-side half of that.
+
 ## Code style
 
 - Python: `ruff` (configured in `server/pyproject.toml`), type hints on public APIs.
