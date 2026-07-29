@@ -42,6 +42,15 @@ Fenix Spoon wire protocol.</p>
     Demonstrates the <code>regions2d</code> geometry (multiple material regions), per-region
     physics on a tagged FEM mesh, and field-line contours.</p>
   </li>
+  <li>
+    <a href="heat-sink-2d/index.html">Heat sink — conduction with convective cooling</a>
+    <p>Add fins to an aluminium heat sink and watch the chip temperature fall — about 5× from
+    none to twelve. The one demo whose <strong>controls are generated from the solver's
+    <code>params_schema</code></strong> rather than written by hand, so a solver that gains a
+    parameter gains a slider here for free. Also shows a solver that treats the background as a
+    boundary condition instead of a region: the air is never solved, and the result's
+    <code>mask</code> says so.</p>
+  </li>
 </ul>
 
 <footer>

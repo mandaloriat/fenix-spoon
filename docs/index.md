@@ -30,6 +30,11 @@ install, no desktop tooling — a browser talking to a FEniCSx server.
     You have physics of your own. A solver is one class; the server needs no changes to
     accept it.
 
+- **[See it working first](gallery.md)**
+
+    Three worked examples with screenshots — potential flow, magnetostatics, and a heat sink
+    whose controls the server generates.
+
 </div>
 
 ## What is actually built
