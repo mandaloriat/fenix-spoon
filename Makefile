@@ -7,7 +7,7 @@ CLIENTS ?= 25
 JOBS   ?= 2
 DATA_DIR ?= $(CURDIR)/.loadtest-data
 
-.PHONY: help test lint loadtest client-test
+.PHONY: help test lint loadtest client-test docs docs-serve protocol-reference
 
 help:
 	@echo "test        run the Python test suite (add -m fenics where dolfinx is installed)"
@@ -15,12 +15,25 @@ help:
 	@echo "client-test build and test the browser packages"
 	@echo "loadtest    start a server, run server/loadtest.py against it, stop it"
 	@echo "            variables: CLIENTS=$(CLIENTS) JOBS=$(JOBS) PORT=$(PORT)"
+	@echo "docs        build the documentation site into site/"
+	@echo "docs-serve  serve the docs with live reload on :8001"
+	@echo "protocol-reference  regenerate docs/reference-protocol.md from the models"
 
 test:
 	cd server && $(PYTHON) -m pytest -q
 
 lint:
 	cd server && $(PYTHON) -m ruff check .
+
+# Regenerate first: the site should never be built from a stale protocol page.
+docs: protocol-reference
+	$(PYTHON) -m mkdocs build
+
+docs-serve: protocol-reference
+	$(PYTHON) -m mkdocs serve --dev-addr 127.0.0.1:8001
+
+protocol-reference:
+	$(PYTHON) server/tools/generate_protocol_reference.py
 
 client-test:
 	npm --prefix client install

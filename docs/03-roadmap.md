@@ -74,7 +74,7 @@ Goal: multi-user deployments are safe and boring.
       a worker entry point, cross-process cancellation, and a compose override for
       API + Redis + N workers. *arq over Celery: async-native, and used purely as a
       dispatcher so the job store stays the single source of truth — reasoning in
-      [architecture](02-architecture.md) and [backends.py](../server/fenixspoon/backends.py).
+      [architecture](02-architecture.md) and [backends.py](https://github.com/mandaloriat/fenix-spoon/blob/main/server/fenixspoon/backends.py).
       Not done: heartbeats, so a job whose worker is killed stays `running` until the
       retention sweep. Postgres would let several API replicas share state; SQLite on a
       shared volume already supports API + N workers.*
@@ -112,7 +112,13 @@ Goal: multi-user deployments are safe and boring.
 
 Goal: adoption. People find, run, and copy examples.
 
-- [ ] Docs site (mkdocs-material) with protocol reference generated from pydantic models (#17)
+- [x] Docs site (mkdocs-material) with protocol reference generated from pydantic models (#17)
+      — published to GitHub Pages on merge, with per-audience getting-started paths (embed
+      the widgets / deploy the server / write a solver adapter). The protocol reference is
+      generated into the repository and CI fails on a stale page, so a field description
+      cannot change without the docs changing in the same commit. Writing the generator
+      exposed 54 model fields with no description at all; filling them in improved the
+      OpenAPI page at `/docs` as much as the site.
 - [ ] Example gallery: airfoil potential flow → incompressible Navier–Stokes; solenoid
       magnetostatics; heat sink; each as a copy-paste-able app (#18)
 - [ ] "Deploy to Fly.io/Render/self-host" one-clickish guides (#19)

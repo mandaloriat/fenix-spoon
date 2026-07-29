@@ -22,6 +22,9 @@ node_modules/
 *.swp
 .DS_Store
 
+# mkdocs build output
+site/
+
 # `make loadtest` scratch: a throwaway data dir and the server PID it stops
 .loadtest-data/
 .loadtest.pid

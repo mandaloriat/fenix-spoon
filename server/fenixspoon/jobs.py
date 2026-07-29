@@ -38,7 +38,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .backends import ExecutionBackend, default_backend
 from .events import EventBus, InProcessEventBus
@@ -168,12 +168,18 @@ class Job:
 
 
 class JobStatus(BaseModel):
-    job_id: str
-    solver: str
-    status: str
-    error: str | None
-    created_at: datetime
-    finished_at: datetime | None
+    """A job's current state, as `GET /api/v1/jobs/{id}` returns it."""
+
+    job_id: str = Field(description="Identifier assigned at submit.")
+    solver: str = Field(description="Which solver is running it.")
+    status: str = Field(
+        description="`queued`, `running`, or the terminal `done` / `failed` / `cancelled`."
+    )
+    error: str | None = Field(description="Why it failed. Null unless `status` is `failed`.")
+    created_at: datetime = Field(description="When the job was accepted (RFC 3339, UTC).")
+    finished_at: datetime | None = Field(
+        description="When it reached a terminal status; null while it is still running."
+    )
 
     @classmethod
     def from_job(cls, job: Job) -> "JobStatus":

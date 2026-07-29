@@ -32,6 +32,12 @@ fenics = [
 redis = [
     "arq>=0.26",
 ]
+# Building the documentation site (mkdocs.yml lives at the repository root).
+docs = [
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.5",
+    "pymdown-extensions>=10",
+]
 
 [tool.setuptools.packages.find]
 include = ["fenixspoon*"]
