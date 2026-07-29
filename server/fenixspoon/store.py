@@ -61,8 +61,14 @@ class JobStore(ABC):
         """Insert or update a job's metadata, result and artifact list (not its events)."""
 
     @abstractmethod
-    def add_event(self, job_id: str, event: dict[str, Any]) -> None:
-        """Append one progress/status event to a job's log."""
+    def add_event(self, job_id: str, event: dict[str, Any]) -> int:
+        """Append one event to a job's log and return its sequence number.
+
+        The seq is what lets a subscriber reconcile replayed history with a live feed:
+        attach to the feed, read the history, drop anything live already seen. Counting
+        instead of comparing breaks as soon as the two sources interleave, which across
+        a process boundary they will.
+        """
 
     @abstractmethod
     def get(self, job_id: str) -> JobRecord | None:
@@ -127,10 +133,12 @@ class MemoryJobStore(JobStore):
             events=events,
         )
 
-    def add_event(self, job_id: str, event: dict[str, Any]) -> None:
+    def add_event(self, job_id: str, event: dict[str, Any]) -> int:
         record = self._records.get(job_id)
-        if record is not None:
-            record.events.append(event)
+        if record is None:
+            return 0
+        record.events.append(event)
+        return len(record.events)
 
     def get(self, job_id: str) -> JobRecord | None:
         return self._records.get(job_id)
@@ -264,17 +272,20 @@ class SqliteJobStore(JobStore):
             )
             self._db.commit()
 
-    def add_event(self, job_id: str, event: dict[str, Any]) -> None:
+    def add_event(self, job_id: str, event: dict[str, Any]) -> int:
         with self._lock:
-            self._db.execute(
+            cursor = self._db.execute(
                 """INSERT INTO events (job_id, seq, payload) VALUES (
                        ?,
                        (SELECT COALESCE(MAX(seq), 0) + 1 FROM events WHERE job_id = ?),
                        ?
-                   )""",
+                   )
+                   RETURNING seq""",
                 (job_id, job_id, json.dumps(event)),
             )
+            seq = int(cursor.fetchone()[0])
             self._db.commit()
+        return seq
 
     def _record(self, row: sqlite3.Row, events: list[dict[str, Any]]) -> JobRecord:
         result = None

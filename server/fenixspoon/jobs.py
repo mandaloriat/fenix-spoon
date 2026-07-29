@@ -43,6 +43,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from .events import EventBus, InProcessEventBus
 from .geometry import Domain2D
 from .solvers.base import JobCancelled, ProgressEvent, Solver, SolverContext, SolverResult
 from .store import JobRecord, JobStore, MemoryJobStore, SqliteJobStore
@@ -111,7 +112,6 @@ class Job:
     artifacts: list[dict[str, Any]] = field(default_factory=list)
     artifact_dir: Path | None = None
     events: list[dict[str, Any]] = field(default_factory=list)
-    subscribers: set[asyncio.Queue] = field(default_factory=set)
     cancel_event: threading.Event = field(default_factory=threading.Event)
 
     def to_record(self) -> JobRecord:
@@ -174,6 +174,7 @@ class JobManager:
         store: JobStore | None = None,
         job_ttl: float | None = None,
         max_workers: int | None = None,
+        bus: EventBus | None = None,
     ) -> None:
         self._jobs: dict[str, Job] = {}
         self._data_dir = data_dir if data_dir is not None else _default_data_dir()
@@ -181,6 +182,7 @@ class JobManager:
         self.max_cells = max_cells if max_cells is not None else _default_max_cells()
         self.job_ttl = job_ttl if job_ttl is not None else _default_ttl()
         self.store = store if store is not None else _default_store(self._data_dir)
+        self.bus = bus if bus is not None else InProcessEventBus()
         self.max_workers = max_workers if max_workers is not None else _default_workers()
         # Its own pool, not asyncio's default executor: solves must not compete for
         # threads with everything else the server hands off (static files, artifact
@@ -189,6 +191,9 @@ class JobManager:
         self._executor = ThreadPoolExecutor(
             max_workers=self.max_workers, thread_name_prefix="fenixspoon-solve"
         )
+        # asyncio keeps only a weak reference to a running task, so a fire-and-forget
+        # task can be collected mid-flight and silently drop its event. Hold them.
+        self._pending: set[asyncio.Task] = set()
 
     def get(self, job_id: str, owner: str | None = None) -> Job | None:
         """A live job if this process owns one, otherwise whatever the store remembers.
@@ -229,7 +234,9 @@ class JobManager:
         job.artifact_dir = self._data_dir / job.id
         self._jobs[job.id] = job
         self.store.put(job.to_record())
-        asyncio.create_task(self._run(job, solver_cls, geometry, params))
+        task = asyncio.create_task(self._run(job, solver_cls, geometry, params))
+        self._pending.add(task)
+        task.add_done_callback(self._pending.discard)
         return job
 
     def cancel(self, job: Job) -> bool:
@@ -278,12 +285,12 @@ class JobManager:
     ) -> None:
         loop = asyncio.get_running_loop()
         job.status = "running"
-        self._publish(job, {"type": "status", "status": "running"})
         self.store.put(job.to_record())
+        await self._publish(job, {"type": "status", "status": "running"})
 
         def on_progress(event: ProgressEvent) -> None:
-            # Called from the worker thread; hop onto the event loop to publish.
-            loop.call_soon_threadsafe(self._publish, job, event.model_dump())
+            # Called from the solver thread; hop onto the event loop to publish.
+            loop.call_soon_threadsafe(self._publish_soon, job, event.model_dump())
 
         ctx = SolverContext(
             progress_cb=on_progress,
@@ -313,32 +320,45 @@ class JobManager:
             job.error = f"{type(exc).__name__}: {exc}"
         job.finished_at = datetime.now(UTC)
         self.store.put(job.to_record())
-        self._publish(job, {"type": "status", "status": job.status, "error": job.error})
+        await self._publish(job, {"type": "status", "status": job.status, "error": job.error})
 
-    def _publish(self, job: Job, event: dict[str, Any]) -> None:
+    async def _publish(self, job: Job, event: dict[str, Any]) -> None:
+        """Record an event, then hand it to the bus. Store first, always: the seq it
+        assigns is what a subscriber uses to reconcile replay with the live feed."""
         job.events.append(event)
-        self.store.add_event(job.id, event)
-        for queue in job.subscribers:
-            queue.put_nowait(event)
+        seq = self.store.add_event(job.id, event)
+        await self.bus.publish(job.id, seq, event)
+
+    def _publish_soon(self, job: Job, event: dict[str, Any]) -> None:
+        """``_publish`` for ``call_soon_threadsafe``, which cannot await."""
+        task = asyncio.get_running_loop().create_task(self._publish(job, event))
+        self._pending.add(task)
+        task.add_done_callback(self._pending.discard)
 
     async def subscribe(self, job: Job) -> AsyncIterator[dict[str, Any]]:
-        """Yield all past events, then live events, until a terminal status event."""
-        queue: asyncio.Queue = asyncio.Queue()
-        job.subscribers.add(queue)
-        try:
-            # No await between registering and snapshotting, so nothing is missed or duplicated.
-            replay = list(job.events)
-            for event in replay:
+        """Yield all past events, then live ones, until a terminal status event.
+
+        Order matters: attach to the live feed *first*, then read the stored history.
+        The reverse loses any event published in between. Overlap is then removed by
+        sequence number rather than by counting, which is what keeps this correct when
+        the publisher is another process.
+        """
+        async with self.bus.subscribe(job.id) as live:
+            replayed = 0
+            record = self.store.get(job.id)
+            history = record.events if record is not None else list(job.events)
+            for event in history:
+                replayed += 1
                 yield event
                 if _is_terminal(event):
                     return
-            while True:
-                event = await queue.get()
+            async for seq, event in live:
+                if seq <= replayed:
+                    continue  # already delivered from the stored history
+                replayed = seq
                 yield event
                 if _is_terminal(event):
                     return
-        finally:
-            job.subscribers.discard(queue)
 
 
 def _is_terminal(event: dict[str, Any]) -> bool:
