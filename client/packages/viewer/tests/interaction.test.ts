@@ -416,6 +416,83 @@ describe('probing and sections', () => {
     expect(element.section).toBeNull();
   });
 
+  it('abandons a section when a second finger turns the gesture into a pinch', () => {
+    // Found in review of #77. A pinch begun in section mode used to leave the degenerate
+    // line from the first touch in place, so the pointerup at the end of the zoom
+    // committed it — and the second finger coming up committed it again. Two `fs-section`
+    // events for a gesture that was a zoom, each carrying a zero-length line.
+    const element = mount({ interactive: '', mode: 'section', colorbar: 'off' });
+    element.result = grid();
+    const seen: { phase: string }[] = [];
+    element.addEventListener('fs-section', (event) => seen.push((event as CustomEvent).detail));
+
+    const canvas = canvasOf(element);
+    canvas.dispatchEvent(pointer('pointerdown', 300, 160, 1));
+    canvas.dispatchEvent(pointer('pointerdown', 340, 160, 2));
+    canvas.dispatchEvent(pointer('pointermove', 260, 160, 1));
+    canvas.dispatchEvent(pointer('pointermove', 380, 160, 2));
+    canvas.dispatchEvent(pointer('pointerup', 260, 160, 1));
+    canvas.dispatchEvent(pointer('pointerup', 380, 160, 2));
+
+    expect(seen).toEqual([]);
+    expect(element.section).toBeNull();
+    expect(element.zoom).toBeGreaterThan(1); // it really was a zoom
+  });
+
+  it('puts back a section the pinch interrupted, rather than destroying it', () => {
+    const element = mount({ interactive: '', mode: 'section', colorbar: 'off' });
+    element.result = grid();
+    element.section = { start: [1, 1], end: [7, 7] };
+
+    const canvas = canvasOf(element);
+    canvas.dispatchEvent(pointer('pointerdown', 300, 160, 1));
+    canvas.dispatchEvent(pointer('pointerdown', 340, 160, 2));
+    canvas.dispatchEvent(pointer('pointerup', 300, 160, 1));
+    canvas.dispatchEvent(pointer('pointerup', 340, 160, 2));
+
+    expect(element.section).toEqual({ start: [1, 1], end: [7, 7] });
+  });
+
+  it('does not commit a section the system cancelled', () => {
+    const element = mount({ interactive: '', mode: 'section', colorbar: 'off' });
+    element.result = grid();
+    const seen: unknown[] = [];
+    element.addEventListener('fs-section', (event) => {
+      if ((event as CustomEvent).detail.phase === 'commit') seen.push(event);
+    });
+
+    const canvas = canvasOf(element);
+    canvas.dispatchEvent(pointer('pointerdown', 0, 320));
+    canvas.dispatchEvent(pointer('pointermove', 320, 320));
+    canvas.dispatchEvent(pointer('pointercancel', 320, 320));
+
+    expect(seen).toEqual([]);
+    expect(element.section).toBeNull();
+  });
+
+  it('commits once per drag, and a later hover reads out instead of redrawing the line', () => {
+    const element = mount({ interactive: '', mode: 'section', colorbar: 'off' });
+    element.result = grid();
+    const commits: { end: number[] }[] = [];
+    element.addEventListener('fs-section', (event) => {
+      const detail = (event as CustomEvent).detail;
+      if (detail.phase === 'commit') commits.push(detail);
+    });
+
+    const canvas = canvasOf(element);
+    canvas.dispatchEvent(pointer('pointerdown', 0, 320));
+    canvas.dispatchEvent(pointer('pointermove', 320, 320));
+    canvas.dispatchEvent(pointer('pointerup', 320, 320));
+    expect(commits).toHaveLength(1);
+
+    // Hovering afterwards must not drag the committed line's end around with the pointer.
+    const before = element.section!.end;
+    canvas.dispatchEvent(pointer('pointermove', 600, 100));
+    expect(element.section!.end).toEqual(before);
+    expect(commits).toHaveLength(1);
+    expect((element.shadowRoot!.querySelector('.readout') as HTMLElement).hidden).toBe(false);
+  });
+
   it('has no section tool when the result carries no scalar field', () => {
     const element = mount();
     expect(element.capabilities.section.available).toBe(false);

@@ -74,6 +74,10 @@ A **two-finger pinch zooms in every mode but `none`**: no application wants two 
 mean "probe twice", and `none` means exactly what it says. The keyboard keeps working in
 `none`, because focus is an unambiguous statement of which widget the user is addressing.
 
+A second finger, or a `pointercancel`, **abandons** a section being dragged rather than
+finishing it: no `fs-section` commit is emitted, and a line drawn earlier comes back. Only a
+drag that ends in a `pointerup` is a section the application asked for.
+
 Keyboard, when `interactive` and focused: arrows pan, `+`/`-` zoom, `0` or `Home` resets, `g`
 fits the geometry, `Escape` clears a section. Only those keys are claimed — `Tab` still moves
 focus out.

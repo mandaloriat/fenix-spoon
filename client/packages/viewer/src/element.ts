@@ -254,6 +254,10 @@ export class FieldViewerElement extends HTMLElement {
   #overlay: ((context: OverlayContext) => void) | null = null;
   #tools: ToolbarTool[] = [];
   #section: { start: Point; end: Point } | null = null;
+  // Non-null exactly while a section is being dragged out. `#section` alone cannot say so:
+  // it also holds a line that was committed earlier and is still on screen, and treating
+  // the two as one state is what let a pinch commit a section nobody drew.
+  #sectionDrag: { previous: { start: Point; end: Point } | null } | null = null;
 
   // Gesture bookkeeping. `#pointers` carries every active pointer so a pinch can be told
   // from a drag without a second event pathway.
@@ -294,7 +298,9 @@ export class FieldViewerElement extends HTMLElement {
     this.#canvas.addEventListener('pointerleave', this.#onPointerLeave);
     this.#canvas.addEventListener('pointerdown', this.#onPointerDown);
     this.#canvas.addEventListener('pointerup', this.#onPointerUp);
-    this.#canvas.addEventListener('pointercancel', this.#onPointerUp);
+    // Not the same handler as `pointerup`: a cancelled pointer is the system taking the
+    // gesture away, which is the one case where a section must *not* be committed.
+    this.#canvas.addEventListener('pointercancel', this.#onPointerCancel);
     this.#canvas.addEventListener('wheel', this.#onWheel, { passive: false });
     this.addEventListener('keydown', this.#onKeyDown);
   }
@@ -776,6 +782,9 @@ export class FieldViewerElement extends HTMLElement {
   }
 
   set section(line: { start: Point; end: Point } | null) {
+    // A programmatic assignment wins over a drag in flight, and ends it — otherwise the
+    // pointerup that follows would commit a line the application had just replaced.
+    this.#sectionDrag = null;
     this.#section = line
       ? { start: [...line.start] as Point, end: [...line.end] as Point }
       : null;
@@ -1443,8 +1452,12 @@ export class FieldViewerElement extends HTMLElement {
 
     if (this.#pointers.size === 2) {
       // A second finger converts the gesture into a pinch, and a pinch is a zoom in every
-      // other mode — no application wants two fingers to mean "probe twice".
+      // other mode — no application wants two fingers to mean "probe twice". Whatever the
+      // first finger had started is abandoned rather than finished: a second finger says
+      // "I meant to zoom", and committing the degenerate line it had drawn so far would
+      // hand the application a section it never asked for.
       this.#dragFrom = null;
+      this.#cancelSectionDrag();
       this.#pinchDistance = this.#pinchSpan();
       return;
     }
@@ -1457,6 +1470,9 @@ export class FieldViewerElement extends HTMLElement {
         break;
       case 'section':
         if (domain) {
+          // Remember what was on screen, so an abandoned drag can put it back instead of
+          // destroying a section the user had already drawn and still wants to see.
+          this.#sectionDrag = { previous: this.#section };
           this.#section = { start: domain, end: domain };
           this.render();
         }
@@ -1502,7 +1518,10 @@ export class FieldViewerElement extends HTMLElement {
       return;
     }
 
-    if (this.#section && this.#interactive && this.#mode === 'section' && this.#pointers.size) {
+    // Gated on the drag being in progress, not merely on a section existing: a section
+    // that was committed earlier is still drawn, and a later hover must read the field out
+    // rather than silently redrawing the line.
+    if (this.#sectionDrag && this.#section) {
       const domain = this.#domainPoint(event);
       if (domain) {
         this.#section = { start: this.#section.start, end: domain };
@@ -1520,7 +1539,29 @@ export class FieldViewerElement extends HTMLElement {
     this.#canvas.releasePointerCapture?.(event.pointerId);
     if (this.#pointers.size < 2) this.#pinchDistance = 0;
     this.#dragFrom = null;
-    if (this.#section && this.#mode === 'section') this.#emitSection('commit');
+    // Only a drag this element started commits. Releasing a finger at the end of a pinch,
+    // or after the drag was cancelled, must not emit a section — and the second finger
+    // coming up must not emit a second one.
+    if (this.#sectionDrag) {
+      this.#sectionDrag = null;
+      this.#emitSection('commit');
+    }
+  };
+
+  /** A cancelled gesture is not a finished one: put back what was there and emit nothing. */
+  #cancelSectionDrag(): void {
+    if (!this.#sectionDrag) return;
+    this.#section = this.#sectionDrag.previous;
+    this.#sectionDrag = null;
+    this.render();
+  }
+
+  #onPointerCancel = (event: PointerEvent): void => {
+    this.#pointers.delete(event.pointerId);
+    this.#canvas.releasePointerCapture?.(event.pointerId);
+    if (this.#pointers.size < 2) this.#pinchDistance = 0;
+    this.#dragFrom = null;
+    this.#cancelSectionDrag();
   };
 
   #onPointerLeave = (): void => {
