@@ -50,6 +50,18 @@ them ours rather than the protocol's. MCP dropped batching for the same reason.
 optional arguments and several have five or more, so positional binding turns "I omitted
 `sections`" into "I passed `sections` where `inline_schemas` goes".
 
+**Params of the wrong JSON type.** A `limit` that arrives as `{}`, a `since` of `-1`, an
+`inline_schemas` of `"false"` — each is a `-32602` naming the parameter, not a coerced value
+and not an internal error. `bool("false")` is `True` in Python and `int(True)` is `1`, so
+coercion here would silently give a caller the opposite of what it asked for. Whole numbers
+sent as JSON floats (`50.0`) *are* accepted: JSON has one number type, so an encoder emitting
+that is being correct rather than sloppy.
+
+**An `id` the specification does not allow.** It is String, Number or Null; an object, array
+or boolean is refused with `id: null` rather than echoed, because echoing it would make the
+*response* non-conformant too — the one error a client would use to find its bug would itself
+be malformed.
+
 **Anything that takes code.** No `run_python`, no command line, no package name, no image
 reference — the
 [security posture](02-architecture.md#security-posture-why-solvers-are-declarative) is not

@@ -118,6 +118,74 @@ def _required(params: dict[str, Any], name: str) -> Any:
     return params[name]
 
 
+def _bool(params: dict[str, Any], name: str, default: bool) -> bool:
+    """A JSON boolean, or a `MethodError` naming what arrived instead.
+
+    Not `bool(params.get(name))`, which was the first implementation and was wrong in the way
+    that matters: `bool("false")` is `True`, so a client sending the string `"false"` — which
+    a shell wrapper or a loosely typed client easily does — would silently get the *opposite*
+    of what it asked for. For `inline_schemas` that means a few kilobytes of JSON Schema
+    arriving in a context window that asked not to have it. Raised in review of #45.
+    """
+    from . import errors as rpc_errors
+
+    if name not in params or params[name] is None:
+        return default
+    value = params[name]
+    if not isinstance(value, bool):
+        raise MethodError(
+            rpc_errors.INVALID_PARAMS,
+            f"{name!r} must be true or false, got {type(value).__name__}",
+            {"type": "WrongParameterType", "parameter": name, "expected": "boolean"},
+        )
+    return value
+
+
+def _int(params: dict[str, Any], name: str, default: int, *, minimum: int = 0) -> int:
+    """A JSON integer at or above ``minimum``, or a `MethodError`.
+
+    `int(params.get(name, default))` was the first implementation, and it turned malformed
+    input into a *server* failure: `int({})` raises `TypeError`, which reaches the dispatcher's
+    last-resort handler and is reported as `-32603 internal error`. That is precisely the
+    distinction :class:`MethodError` exists to keep — the caller sent something wrong, and
+    telling it the server has a bug sends it to the wrong place entirely. Raised in review
+    of #45.
+
+    Two smaller things it also fixes. `True` is an `int` in Python, so `int(True)` is a
+    perfectly good `1` and `limit=true` would have been accepted. And a *negative* `since` or
+    `limit` reaches a list slice, where `stored[-5:]` is a valid expression meaning something
+    nobody asked for — a caller polling with `since=-1` would be handed the end of the log
+    and told it was the beginning.
+    """
+    from . import errors as rpc_errors
+
+    if name not in params or params[name] is None:
+        return default
+    value = params[name]
+    # JSON has one number type, so an encoder emitting `50.0` for fifty is being correct
+    # rather than sloppy — accepted when it is integral, refused when it is not.
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise MethodError(
+            rpc_errors.INVALID_PARAMS,
+            f"{name!r} must be an integer, got {type(value).__name__}",
+            {"type": "WrongParameterType", "parameter": name, "expected": "integer"},
+        )
+    if isinstance(value, float) and not value.is_integer():
+        raise MethodError(
+            rpc_errors.INVALID_PARAMS,
+            f"{name!r} must be a whole number, got {value}",
+            {"type": "WrongParameterType", "parameter": name, "expected": "integer"},
+        )
+    number = int(value)
+    if number < minimum:
+        raise MethodError(
+            rpc_errors.INVALID_PARAMS,
+            f"{name!r} must be at least {minimum}, got {number}",
+            {"type": "ParameterOutOfRange", "parameter": name, "minimum": minimum},
+        )
+    return number
+
+
 def _model(model: type[BaseModel], params: dict[str, Any]) -> Any:
     """Validate params against a model, reporting failure the way the core does.
 
@@ -190,7 +258,7 @@ def capability_describe(core: FenixSpoonCore, principal: Principal, params: dict
     return core.capability_describe(
         _required(params, "name"),
         params.get("sections"),
-        inline_schemas=bool(params.get("inline_schemas", False)),
+        inline_schemas=_bool(params, "inline_schemas", False),
     )
 
 
@@ -259,8 +327,8 @@ def job_get(core: FenixSpoonCore, principal: Principal, params: dict) -> Any:
 
 
 def job_list(core: FenixSpoonCore, principal: Principal, params: dict) -> Any:
-    limit = int(params.get("limit", 50))
-    offset = int(params.get("offset", 0))
+    limit = _int(params, "limit", 50, minimum=1)
+    offset = _int(params, "offset", 0)
     jobs, total = core.history(principal, limit=limit, offset=offset)
     return {
         "jobs": [JobStatus.from_job(job) for job in jobs],
@@ -278,8 +346,8 @@ def job_events(core: FenixSpoonCore, principal: Principal, params: dict) -> Any:
     return core.job_events(
         _required(params, "job_id"),
         principal,
-        since=int(params.get("since", 0)),
-        limit=int(params.get("limit", 200)),
+        since=_int(params, "since", 0),
+        limit=_int(params, "limit", 200, minimum=1),
     )
 
 
@@ -289,7 +357,7 @@ def job_provenance(core: FenixSpoonCore, principal: Principal, params: dict) -> 
 
 def jobs_for_object(core: FenixSpoonCore, principal: Principal, params: dict) -> Any:
     jobs = core.jobs_for_object(
-        _required(params, "ref"), principal, limit=int(params.get("limit", 50))
+        _required(params, "ref"), principal, limit=_int(params, "limit", 50, minimum=1)
     )
     return {"jobs": [JobStatus.from_job(job) for job in jobs]}
 

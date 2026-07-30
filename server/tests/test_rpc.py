@@ -251,7 +251,7 @@ def test_a_spawned_process_solves_over_pipes_alone(tmp_path):
 
 
 def test_the_rpc_adapter_does_not_import_fastapi():
-    """"No HTTP server anywhere" as a property of the code, not of one test's imports.
+    """The issue's "no HTTP server anywhere" as a property of the code, not of one test.
 
     A subprocess for the reason `test_the_core_does_not_import_fastapi` uses one: this test
     process already has FastAPI loaded, so an in-process `sys.modules` check would pass
@@ -397,6 +397,83 @@ def test_an_unknown_method_lists_the_ones_that_exist(core, me):
     assert "job.submit" in reply["error"]["data"]["methods"]
 
 
+@pytest.mark.parametrize("bad_id", [{"a": 1}, [1, 2], True])
+def test_an_id_the_spec_does_not_allow_is_refused_rather_than_echoed(core, me, bad_id):
+    """`id` is String, Number or Null. Anything else cannot be sent back without the
+    *response* becoming non-conformant too — so the one error a client would use to find its
+    bug would itself be malformed. Answered with `id: null`, which is what the spec says to
+    do when the id is unusable. Raised in review of #45.
+
+    Booleans are in here because they are the case a naive check misses: `True` is an `int`
+    in Python, so `isinstance(request_id, int)` accepts an id JSON-RPC does not have.
+    """
+    request = {"jsonrpc": "2.0", "id": bad_id, "method": "rpc.describe"}
+    replies = asyncio.run(_exchange(core, me, framing.encode(request)))
+    assert replies[0]["error"]["code"] == rpc_errors.INVALID_REQUEST
+    assert replies[0]["id"] is None
+    assert "result" not in replies[0], "an unusable id still got the method run"
+
+
+def test_a_fractional_id_is_echoed_rather_than_refused(core, me):
+    """The spec says numbers SHOULD NOT have fractional parts — a recommendation, not a
+    requirement. Refusing over it would be inventing a rule to enforce against a client that
+    is not actually wrong."""
+    request = {"jsonrpc": "2.0", "id": 1.5, "method": "rpc.describe"}
+    replies = asyncio.run(_exchange(core, me, framing.encode(request)))
+    assert replies[0]["id"] == 1.5 and "result" in replies[0]
+
+
+@pytest.mark.parametrize(
+    ("params", "expected"),
+    [
+        ({"limit": {}}, "WrongParameterType"),
+        ({"limit": None, "offset": "3"}, "WrongParameterType"),
+        ({"limit": True}, "WrongParameterType"),
+        ({"limit": 1.5}, "WrongParameterType"),
+        ({"limit": 0}, "ParameterOutOfRange"),
+        ({"offset": -1}, "ParameterOutOfRange"),
+    ],
+)
+def test_a_malformed_numeric_param_is_the_callers_error_not_the_servers(core, me, params, expected):
+    """`int({})` raises `TypeError`, and the first implementation let that reach the
+    dispatcher's last-resort handler — reporting a caller's malformed input as `-32603
+    internal error`, which sends it to look for a bug in the wrong codebase. Raised in
+    review of #45.
+
+    `True` and `1.5` are here because they are the ones a plain `int(...)` accepts silently:
+    `int(True)` is a perfectly good `1`, and `int(1.5)` quietly truncates. `0` and `-1` are
+    here because a negative bound reaches a list slice, where `stored[-1:]` is a valid
+    expression meaning something nobody asked for.
+    """
+    reply = call(core, me, "job.list", params)
+    assert reply["error"]["code"] == rpc_errors.INVALID_PARAMS
+    assert reply["error"]["data"]["type"] == expected
+
+
+def test_a_whole_number_sent_as_a_float_is_accepted(core, me):
+    """JSON has one number type, so an encoder emitting `50.0` for fifty is being correct
+    rather than sloppy."""
+    assert ok(core, me, "job.list", {"limit": 50.0})["limit"] == 50
+
+
+def test_a_non_boolean_flag_does_not_silently_mean_true(core, me):
+    """`bool("false")` is `True`. A client sending the string — which a shell wrapper easily
+    does — would have got the *opposite* of what it asked for, and for `inline_schemas` that
+    means kilobytes of JSON Schema arriving in a context window that asked not to have it.
+    Raised in review of #45."""
+    reply = call(core, me, "capability.describe",
+                 {"name": "mock.laplace2d", "inline_schemas": "false"})
+    assert reply["error"]["code"] == rpc_errors.INVALID_PARAMS
+    assert reply["error"]["data"]["parameter"] == "inline_schemas"
+
+    # …and the flag still works when it is actually a boolean.
+    described = ok(core, me, "capability.describe",
+                   {"name": "mock.laplace2d", "sections": ["params"], "inline_schemas": True})
+    assert described["params"]["json_schema"]["properties"], "inline_schemas returned no schema"
+    assert "json_schema" not in ok(core, me, "capability.describe",
+                                   {"name": "mock.laplace2d", "sections": ["params"]})
+
+
 def test_positional_params_are_refused(core, me):
     """Named only. Binding an array onto methods with five optional arguments is how
     "I omitted `sections`" becomes "I passed `sections` where `inline_schemas` goes"."""
@@ -540,8 +617,8 @@ def test_a_domain_error_arrives_typed_and_compact(core, me):
 
 
 def test_a_validation_failure_carries_the_same_structure_as_http(core, me):
-    """"Validation failures carry the same information as the HTTP 422 detail" — the same
-    pydantic list, so a caller parses one shape rather than two."""
+    """The issue asks that validation failures carry the same information as the HTTP `422`
+    detail. That is the same pydantic list, so a caller parses one shape rather than two."""
     reply = call(core, me, "job.submit", {
         "solver": "mock.laplace2d", "geometry": AIRFOIL, "params": {"resolution": -5}
     })
@@ -598,7 +675,7 @@ def test_an_internal_failure_does_not_put_a_traceback_on_the_wire(core, me, monk
 
 
 def test_one_principals_job_is_not_visible_to_another(core, me):
-    """"Identity is not bypassed" — the local transport is a different door, not a bypass."""
+    """Identity is not bypassed: the local transport is a different door, not a way around."""
     async def run():
         async with Session(core, me) as session:
             return await session.solve()

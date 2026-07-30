@@ -125,6 +125,18 @@ class RpcServer:
         # including when it fails. Failures are logged instead, because dropping them
         # silently would make a misspelled notification indistinguishable from a working one.
         notification = "id" not in message
+        if not notification and not _is_valid_id(request_id):
+            # Refused up front rather than echoed. An `id` the spec does not allow cannot be
+            # sent back in a response without the *response* becoming non-conformant too —
+            # so the one error a client would use to find its bug would itself be malformed.
+            # `null` is what the spec says to answer with when the id is unusable. Raised in
+            # review of #45.
+            await self._send(_error_response(
+                None,
+                rpc_errors.INVALID_REQUEST,
+                f"`id` must be a string, a number or null, got {type(request_id).__name__}",
+            ))
+            return
         try:
             response = await self._invoke(message)
         except Exception:  # noqa: BLE001 — the last line of defence, see below
@@ -226,6 +238,19 @@ class RpcServer:
             # A broken stream must not take the connection with it: the caller can still
             # poll `job.events`, which reads the same log.
             log.exception("progress stream for %s ended early", job.id)
+
+
+def _is_valid_id(request_id: Any) -> bool:
+    """Whether `id` is something the specification allows: String, Number or Null.
+
+    Booleans are excluded deliberately and are the reason this is not a one-line `isinstance`:
+    `True` is an `int` in Python, so the obvious check would accept an id JSON-RPC does not
+    have. Fractional numbers *are* accepted — the spec only says they SHOULD NOT be used, and
+    refusing a client over a recommendation would be inventing a rule to enforce.
+    """
+    return request_id is None or (
+        isinstance(request_id, str | int | float) and not isinstance(request_id, bool)
+    )
 
 
 def _error_response(
