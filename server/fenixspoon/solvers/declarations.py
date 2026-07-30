@@ -416,3 +416,105 @@ ELASTICITY_ASSUMPTIONS = [
     ),
     TWO_DIMENSIONAL,
 ]
+
+
+#: Transient heat: the metrics a start-up answers that a steady solve cannot (#82).
+#:
+#: The interesting one is what is *missing* from the declared reductions. A declared metric
+#: is a reduction of the result payload, and a transient's payload is one instant — so
+#: `t_final_max` can be declared and the peak over the whole history cannot. `t_peak` is
+#: computed by the adapter for exactly that reason, and the pair differ whenever a solve
+#: overshoots. That is the first concrete consequence of the protocol having no time
+#: dimension, and it is why it is written here rather than discovered later.
+TRANSIENT_HEAT_METRICS = [
+    MetricSpec(
+        name="t_final_max",
+        unit="degC",
+        description=(
+            "Peak temperature at the final instant — a reduction of the field that comes "
+            "back, and therefore the one temperature here a caller can verify from the "
+            "payload alone."
+        ),
+        field="T",
+        reduction="max",
+    ),
+    MetricSpec(
+        name="t_peak",
+        unit="degC",
+        description=(
+            "Highest temperature reached at any time during the run, which is the number a "
+            "rating must survive. Equal to `t_final_max` for a monotonic warm-up and larger "
+            "whenever the solve overshoots."
+        ),
+    ),
+    MetricSpec(
+        name="t_rise",
+        unit="K",
+        description="Final peak temperature above ambient — the steady figure, once settled.",
+    ),
+    MetricSpec(
+        name="time_to_90pc",
+        unit="s",
+        description=(
+            "Time to reach 90% of the temperature rise, interpolated between steps so the "
+            "answer is not a property of the step size. Absent when the run never got "
+            "there. This is the quantity `steady_state` puts out of reach, which is the "
+            "whole reason this capability exists."
+        ),
+    ),
+    MetricSpec(
+        name="time_constant",
+        unit="s",
+        description=(
+            "Lumped time constant `rho_cp V / (h A)`: how fast the body would charge if it "
+            "were too conductive to hold a gradient. A closed form, not a measurement — "
+            "compare it with `time_to_90pc` (which is about 2.3 time constants) to see how "
+            "far from lumped the device actually is."
+        ),
+    ),
+]
+
+#: Transient heat: everything the steady set assumes except `steady_state`, which is the one
+#: this capability exists to lift — plus the two the time discretisation introduces.
+TRANSIENT_HEAT_ASSUMPTIONS = [
+    Assumption(
+        name="linear_material",
+        statement=(
+            "Conductivity and heat capacity are constant per region and independent of "
+            "temperature, so the response is linear in the load and the time constant does "
+            "not drift as the device warms."
+        ),
+    ),
+    Assumption(
+        name="convection_coefficient",
+        statement=(
+            "The fluid is not solved. It enters as a single coefficient `h` on exposed "
+            "faces, and it is held constant in time — a real device's natural convection "
+            "strengthens as it warms, which would shorten the tail of the curve."
+        ),
+        excludes=["flow_field", "buoyancy", "local_heat_transfer_coefficient"],
+    ),
+    Assumption(
+        name="no_radiation",
+        statement="Radiative exchange is omitted entirely, as in the steady adapters.",
+        excludes=["emissivity", "radiative_flux"],
+    ),
+    Assumption(
+        name="uniform_initial_temperature",
+        statement=(
+            "The body starts at one temperature everywhere. A device switched on cold is "
+            "exactly that; a device restarted while still warm from the last cycle is not, "
+            "and no initial field can be supplied."
+        ),
+        excludes=["duty_cycle_history", "non_uniform_initial_state"],
+    ),
+    Assumption(
+        name="first_order_in_time",
+        statement=(
+            "Backward Euler: unconditionally stable, and first-order accurate, so the curve "
+            "is damped rather than oscillatory when the step is coarse. Halve `steps` and "
+            "the early rise moves; if it moves much, the step was too coarse to read."
+        ),
+    ),
+    TWO_DIMENSIONAL,
+]

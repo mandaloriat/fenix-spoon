@@ -108,8 +108,16 @@ to place a load somewhere other than a whole edge, and the second of those is th
 question in [#81](https://github.com/mandaloriat/fenix-spoon/issues/81). The capability is
 usable from every transport today; it is the browser story that is missing.
 
+**Transient heat** has adapters and no page for a specific reason worth reading. `mock.transient_heat2d`
+and `dolfinx.transient_heat2d` answer the question the steady pair cannot — *when* does the sink
+reach temperature — and they answer it as a **curve**: `T_max(t)` and `T_mean(t)` come back as a
+`series1d`, and the field is the final instant only. That is enough for a script or an agent, and
+it is not enough for a page: a browser demo wants a time slider, which means fetching the instant
+you are looking at, and the protocol has no way to address one
+([#82](https://github.com/mandaloriat/fenix-spoon/issues/82)). The adapters exist so that design
+has a real consumer instead of a hypothetical one.
+
 **Incompressible Navier–Stokes** was the obvious fourth example when the vector half of the
 protocol did not exist. It does now — protocol 1.1 added vector fields to both result kinds and
 `<fs-viewer>` draws glyphs — so what remains is the solve rather than the wire: a nonlinear
-steady solve, and for anything worth watching a *transient* one, which the protocol still has no
-home for ([#82](https://github.com/mandaloriat/fenix-spoon/issues/82)).
+steady solve, and for anything worth watching the same addressable-instant problem as above.

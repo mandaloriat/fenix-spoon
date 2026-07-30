@@ -36,9 +36,9 @@ Protocol host as thirteen tools, as an optional extra, and the same operations a
 renderings of an operation agree, and the vertical slice runs as a test against both the mock
 and the FEniCSx solver.
 
-> **Status: M1, M2 and M2.5 done, M3 mostly.** Four physics run end to end on real FEniCSx
-> solves (potential flow, magnetostatics, heat conduction, linear elasticity) and three of them
-> have demo pages, the three browser packages — SDK, geometry editor,
+> **Status: M1, M2 and M2.5 done, M3 mostly.** Five physics run end to end on real FEniCSx
+> solves (potential flow, magnetostatics, steady and transient heat conduction, linear
+> elasticity) and three of them have demo pages, the three browser packages — SDK, geometry editor,
 > field viewer — are published from `client/`, and the airfoil demo is built from them.
 > Pure-NumPy mock solvers mirror every FEniCSx one, so the full loop (edit geometry → submit →
 > stream progress → render field) runs without installing FEniCSx at all. Jobs now persist
@@ -60,8 +60,8 @@ see the [state-of-the-art survey](docs/01-state-of-the-art.md). Fenix Spoon is t
 |---|---|---|
 | **Simulation server** — FastAPI app: job submission, WebSocket progress streaming, cancellation, wall-clock timeouts, cell budgets, result + artifact retrieval | [`server/`](server/) | ✅ working |
 | **Solver adapter protocol** — plug any solver (FEniCSx, mock, anything Python) behind the same API via `SolverContext` (progress / cancel / artifacts) | [`server/fenixspoon/solvers/`](server/fenixspoon/solvers/) | ✅ working |
-| **Mock solvers** — potential flow, magnetostatics, heat conduction and linear elasticity in pure NumPy; let you develop the front-end without FEniCSx | [`mock_laplace.py`](server/fenixspoon/solvers/mock_laplace.py), [`mock_magnetostatics.py`](server/fenixspoon/solvers/mock_magnetostatics.py), [`mock_heat.py`](server/fenixspoon/solvers/mock_heat.py), [`mock_elasticity.py`](server/fenixspoon/solvers/mock_elasticity.py) | ✅ working |
-| **FEniCSx adapters** — the same four problems on unstructured Gmsh meshes, cross-validated against the mock solvers and against closed forms — Joukowski circulation, Kirsch stress concentration, `PL³/3EI` | [`dolfinx_poisson.py`](server/fenixspoon/solvers/dolfinx_poisson.py), [`dolfinx_magnetostatics.py`](server/fenixspoon/solvers/dolfinx_magnetostatics.py), [`dolfinx_heat.py`](server/fenixspoon/solvers/dolfinx_heat.py), [`dolfinx_elasticity.py`](server/fenixspoon/solvers/dolfinx_elasticity.py) | ✅ validated on dolfinx 0.11 (`pytest -m fenics`, CI job in the dolfinx image) |
+| **Mock solvers** — potential flow, magnetostatics, steady and transient heat conduction, and linear elasticity in pure NumPy; let you develop the front-end without FEniCSx | [`mock_laplace.py`](server/fenixspoon/solvers/mock_laplace.py), [`mock_magnetostatics.py`](server/fenixspoon/solvers/mock_magnetostatics.py), [`mock_heat.py`](server/fenixspoon/solvers/mock_heat.py), [`mock_elasticity.py`](server/fenixspoon/solvers/mock_elasticity.py), [`mock_transient_heat.py`](server/fenixspoon/solvers/mock_transient_heat.py) | ✅ working |
+| **FEniCSx adapters** — the same five problems on unstructured Gmsh meshes, cross-validated against the mock solvers and against closed forms — Joukowski circulation, Kirsch stress concentration, `PL³/3EI` | [`dolfinx_poisson.py`](server/fenixspoon/solvers/dolfinx_poisson.py), [`dolfinx_magnetostatics.py`](server/fenixspoon/solvers/dolfinx_magnetostatics.py), [`dolfinx_heat.py`](server/fenixspoon/solvers/dolfinx_heat.py), [`dolfinx_elasticity.py`](server/fenixspoon/solvers/dolfinx_elasticity.py), [`dolfinx_transient_heat.py`](server/fenixspoon/solvers/dolfinx_transient_heat.py) | ✅ validated on dolfinx 0.11 (`pytest -m fenics`, CI job in the dolfinx image) |
 | **Wire protocol** — JSON schemas for geometry (`domain2d`, `regions2d`), jobs, events, `grid2d`/`mesh2d`/`series1d` results, artifacts — with a conformance fixture corpus | [`docs/04-wire-protocol.md`](docs/04-wire-protocol.md), [`protocol/fixtures/`](protocol/fixtures/) | ✅ v0 implemented |
 | **Progressive discovery** — ask what an installation *is*, list capabilities in a line each, describe one in the sections you need; solver adapters declare their metrics, artifacts and cost | [`core/discovery.py`](server/fenixspoon/core/discovery.py) | ✅ protocol 1.2 |
 | **Local workspace** — versioned `geometry` / `material` / `design` objects as diffable JSON files under stable ids, edited with RFC 6902 patches, solved by reference | [`objects.py`](server/fenixspoon/objects.py), [`core/workspace.py`](server/fenixspoon/core/workspace.py) | ✅ core API (no HTTP yet) |
