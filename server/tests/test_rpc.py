@@ -251,7 +251,7 @@ def test_a_spawned_process_solves_over_pipes_alone(tmp_path):
 
 
 def test_the_rpc_adapter_does_not_import_fastapi():
-    """The issue's "no HTTP server anywhere" as a property of the code, not of one test.
+    """The issue's requirement — no HTTP server anywhere — as a property of the code.
 
     A subprocess for the reason `test_the_core_does_not_import_fastapi` uses one: this test
     process already has FastAPI loaded, so an in-process `sys.modules` check would pass
