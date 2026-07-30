@@ -89,11 +89,18 @@ is [docs/07-local-agent-interface.md](07-local-agent-interface.md). **This docum
 specification of the HTTP/WebSocket protocol** — the two are not merged here. What they share is
 the models above, plus the conformance corpus both are required to satisfy.
 
-Two pieces of that draft have landed and are HTTP-bound here as well as core-resident: the
-transport-neutral core ([#42](https://github.com/mandaloriat/fenix-spoon/issues/42), invisible on
-the wire) and progressive discovery
-([#43](https://github.com/mandaloriat/fenix-spoon/issues/43), the four routes below). The rest of
-the draft — workspace, JSON-RPC, compact result levels, cache, studies — is still design.
+Three pieces of that draft have landed, and how much of each reaches this document differs. The
+transport-neutral core ([#42](https://github.com/mandaloriat/fenix-spoon/issues/42)) is invisible
+on the wire. Progressive discovery ([#43](https://github.com/mandaloriat/fenix-spoon/issues/43))
+is the four routes below. The **workspace**
+([#44](https://github.com/mandaloriat/fenix-spoon/issues/44)) — versioned objects under ids like
+`geometry:g-1`, RFC 6902 patches, submission by design reference — deliberately has **no HTTP
+binding at all**: its first transport is the JSON-RPC adapter (#45), and binding it here first
+would mean designing an object API that the transport it exists for might want differently. The
+only trace it leaves on this contract is the `workspace` path in `environment.inspect`, which
+[#43](https://github.com/mandaloriat/fenix-spoon/issues/43) had specified and had nothing to point
+at until now. The rest of the draft — JSON-RPC, compact result levels, cache, studies — is still
+design.
 
 ## Authentication
 
@@ -155,10 +162,10 @@ rather than a URL: neither has anything HTTP-shaped in it.
 #### `GET /api/v1/environment`
 
 What this installation *is*: versions, which dependencies imported, execution and event
-backends, the store, the data directory, the configured limits, and **the calling principal's**
-quotas and current usage. No schemas. Behind the auth gate, unlike `/version` — the two version
-strings are not secret, but a data directory, a backend topology and another principal's quota
-position are not free information.
+backends, the store, the data and workspace directories, the configured limits, and **the calling
+principal's** quotas and current usage. No schemas. Behind the auth gate, unlike `/version` — the
+two version strings are not secret, but a data directory, a backend topology and another
+principal's quota position are not free information.
 
 `cache` is reported as an explicit `null`: the content-addressed cache is
 [#47](https://github.com/mandaloriat/fenix-spoon/issues/47) and does not exist yet, and a null

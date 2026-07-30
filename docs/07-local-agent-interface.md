@@ -9,11 +9,16 @@
     [wire protocol](04-wire-protocol.md).
 
     **Landed so far:** the transport-neutral core §11 depends on
-    ([#42](https://github.com/mandaloriat/fenix-spoon/issues/42)), and capability discovery
-    §6 — `environment.inspect`, `capability.list`, `capability.describe`, bound to HTTP in
-    protocol 1.2 ([#43](https://github.com/mandaloriat/fenix-spoon/issues/43)). Where §6
-    below differs from what shipped, the [wire protocol](04-wire-protocol.md#progressive-discovery)
-    is the accurate one; the differences are noted inline.
+    ([#42](https://github.com/mandaloriat/fenix-spoon/issues/42)); capability discovery §6 —
+    `environment.inspect`, `capability.list`, `capability.describe`, bound to HTTP in protocol
+    1.2 ([#43](https://github.com/mandaloriat/fenix-spoon/issues/43)); and the workspace §8 —
+    typed versioned objects, RFC 6902 patches, submission by design reference, reachable
+    through the core only ([#44](https://github.com/mandaloriat/fenix-spoon/issues/44)).
+    Four of §15's open questions are settled as a result, and are marked there.
+
+    Where §6 and §8 below differ from what shipped, the implementation is the accurate one;
+    the differences are noted inline. The transports themselves — JSON-RPC, CLI, MCP — and
+    the compact result levels are still design.
 
 ## 1. Motivation
 
@@ -225,6 +230,17 @@ automatically available to every caller, exactly as
 
 ## 8. Workspace
 
+!!! success "Implemented (#44) — core only, no HTTP binding"
+
+    Six object types under ids like `geometry:g-1`, versioned rather than mutated, patched
+    with RFC 6902, and a `job.submit` that takes a design reference and freezes the revisions
+    it resolved. The four questions this section left open are answered in
+    [§15](#15-open-questions) with the evidence that decided each one.
+
+    Reachable through :class:`FenixSpoonCore` and not over HTTP: the workspace's first
+    transport is the JSON-RPC adapter (#45), and binding it to HTTP now would mean designing
+    an object API that JSON-RPC might want a different shape for. `/api/v1` is unchanged.
+
 A workspace is a directory the caller names (default: `./.fenix-spoon`, or the existing
 `FENIXSPOON_DATA_DIR` when one is configured). It holds the object store, the result cache and the
 artifact files, and it must be:
@@ -415,13 +431,18 @@ end to end, and the same operations are reachable from CLI, Python and MCP.
 Deliberately unresolved. Each needs a decision recorded with its reasoning, and none should be
 settled by picking whatever is fashionable.
 
+**Four are now settled** by #44, and are struck through below with what decided them. The
+reasoning is preserved rather than replaced: a decision whose grounds are deleted is
+indistinguishable from a preference, and the grounds are what a future reader needs in order to
+know whether the decision still holds.
+
 | Question | Options | How to decide |
 |---|---|---|
 | **JSON-RPC framing** | newline-delimited JSON vs `Content-Length` headers (LSP/MCP style) | NDJSON is trivial to implement and debug by hand; `Content-Length` is what MCP hosts already speak and is robust to embedded newlines. Decide by what the MCP adapter needs and by whether any payload can contain a raw newline. Supporting both is cheap and may be the answer. |
-| **Where workspace objects live** | extend the SQLite `JobStore` schema vs a second store vs manifest files on disk | the store already exists, has WAL, retention and an interface with two implementations — extending it keeps one retention story and one thing to back up. Against that: designs and studies are a different lifetime from jobs, and files are diffable and git-friendly in a way a database is not. Decide by whether a workspace is meant to be committed to a repository. |
-| **Patch format** | JSON Patch (RFC 6902) vs JSON Merge Patch vs a domain-specific patch | JSON Patch is standard, precise about arrays (point lists!), and has implementations everywhere; a domain patch (`set_param`, `move_point`) is friendlier to generate and easier to validate. Decide by looking at real geometry edits — moving one control point is the test case. |
-| **Identifiers** | readable short ids (`g-42`) vs UUIDs vs content hashes | readable ids are far cheaper in an agent's context and in a CLI; UUIDs avoid collisions across merged workspaces; content hashes unify identity with caching but change on every edit. Note these can coexist: a readable id naming a content hash. Job ids (`j-<12 hex>`) are already the precedent. |
-| **Object lifetime and GC** | inherit `FENIXSPOON_JOB_TTL` vs a separate policy vs explicit deletion | jobs already expire after 7 days by default, which is *wrong* for a design an agent has been iterating on for a week. Decide what a result means when the objects it names have been swept, and prefer recording provenance inline over keeping everything forever. |
+| ~~**Where workspace objects live**~~ **→ JSON files under the data directory** | extend the SQLite `JobStore` schema vs a second store vs manifest files on disk | the store already exists, has WAL, retention and an interface with two implementations — extending it keeps one retention story and one thing to back up. Against that: designs and studies are a different lifetime from jobs, and files are diffable and git-friendly in a way a database is not. Decide by whether a workspace is meant to be committed to a repository. **It is** — §2's own use cases include "a repository of designs is re-solved on every solver change", and §8 asks for something a human can diff. `git diff` on a SQLite file says `Binary files differ`; on `objects/geometry/g-1/00002.json` it shows the two coordinates that moved. One directory to back up survives, because the files live inside `FENIXSPOON_DATA_DIR` beside `jobs.db`. |
+| ~~**Patch format**~~ **→ JSON Patch (RFC 6902)** | JSON Patch vs JSON Merge Patch vs a domain-specific patch | decided on the named test case, moving one control point: `[{"op":"replace","path":"/obstacle/points/1","value":[0.35,0.14]}]`. Merge patch has no operation for one array element — it replaces arrays whole, so the same edit carries every point, which is the cost this milestone exists to remove. A domain patch would be friendlier to generate but needs a new verb for every edit anyone wants, where RFC 6902 already has them and has implementations in every client language. |
+| ~~**Identifiers**~~ **→ readable, with revisions** | readable short ids (`g-42`) vs UUIDs vs content hashes | `geometry:g-1`, and `geometry:g-1@3` to pin a revision. Readable won on the cost that matters here — an agent carries these strings through every turn — and the type is in the id so a mismatched prefix is caught at parse rather than by a lookup that finds nothing. Ids are allocated by `mkdir` of the next free number, which is atomic, so concurrent creates cannot collide. UUIDs remain the answer if workspaces are ever merged; content hashes are #47's identity and are a different question from *naming*. |
+| ~~**Object lifetime and GC**~~ **→ objects are never swept** | inherit `FENIXSPOON_JOB_TTL` vs a separate policy vs explicit deletion | no object TTL, and the job TTL does not reach them. The asymmetry is the answer rather than a longer number: a job is a computation and losing it costs a re-run, an object is something a person authored and losing it is data loss. That inverts the dangling-reference worry — inputs outlive results, not the other way round — so "what does a result mean when its objects are gone" does not arise, and what survives is enough to recompute. Explicit deletion is still unimplemented; nothing yet needs it. |
 | **Artifact binary format** | keep VTK legacy vs VTU/VTKHDF vs a compact internal format for queries | `result.query` implies something the server can index efficiently; ParaView compatibility implies VTK-family output. These may be two different files with different jobs. |
 | **MCP resource exposure** | artifacts as MCP resources vs tool-returned paths vs both | resources are the idiomatic MCP answer and let a host fetch lazily; paths are simpler and work for hosts with filesystem access. Decide against real MCP host behavior, not against the specification alone. |
 | **Study vs optimization boundary** | how much belongs in the M2.5 study service | a study that enumerates a variation space is clearly in; a study that *chooses* the next point is an optimizer and is M5 (#22). The line should be drawn where an external driver would otherwise have to reimplement job orchestration. |

@@ -14,6 +14,13 @@ dependencies = [
     "uvicorn[standard]>=0.29",
     "numpy>=1.26",
     "pydantic>=2.6",
+    # RFC 6902 patches for workspace objects (roadmap M2.5, #44). A base dependency rather
+    # than an extra: `object.patch` is a core operation, and an optional import would turn
+    # a missing package into a runtime failure on an operation the core advertises. Small
+    # and pure-Python, and the spec has enough corners — `~0`/`~1` escaping, the `-` array
+    # index, `test` semantics — that a hand-rolled subset would be a subset pretending
+    # otherwise.
+    "jsonpatch>=1.33",
 ]
 
 [project.optional-dependencies]

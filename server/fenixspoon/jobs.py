@@ -126,6 +126,7 @@ class Job:
     artifacts: list[dict[str, Any]] = field(default_factory=list)
     artifact_dir: Path | None = None
     events: list[dict[str, Any]] = field(default_factory=list)
+    inputs: dict[str, Any] = field(default_factory=dict)
     cancel_event: threading.Event = field(default_factory=threading.Event)
 
     def to_record(self) -> JobRecord:
@@ -139,6 +140,7 @@ class Job:
             finished_at=self.finished_at,
             result=self.result,
             artifacts=self.artifacts,
+            inputs=self.inputs,
         )
 
     def absorb(self, record: JobRecord) -> None:
@@ -164,6 +166,7 @@ class Job:
             artifacts=record.artifacts,
             artifact_dir=artifact_dir,
             events=record.events,
+            inputs=record.inputs,
         )
 
 
@@ -270,8 +273,14 @@ class JobManager:
         geometry: Domain2D,
         params: BaseModel,
         owner: str = "anonymous",
+        inputs: dict[str, Any] | None = None,
     ) -> Job:
-        job = Job(id=f"j-{uuid.uuid4().hex[:12]}", solver_name=solver_cls.name, owner=owner)
+        job = Job(
+            id=f"j-{uuid.uuid4().hex[:12]}",
+            solver_name=solver_cls.name,
+            owner=owner,
+            inputs=inputs or {},
+        )
         job.artifact_dir = self._data_dir / job.id
         record = job.to_record()
         self.store.put(record)

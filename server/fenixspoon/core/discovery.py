@@ -156,6 +156,13 @@ class EnvironmentInfo(BaseModel):
     data_dir: str = Field(
         description="Absolute path holding the job database, results and artifacts."
     )
+    workspace: str = Field(
+        description=(
+            "Absolute path holding the workspace object files. Under `data_dir` by "
+            "construction — reported anyway because it is the directory a caller would "
+            "commit to a repository, and deriving it from a convention is guesswork."
+        )
+    )
     capabilities: int = Field(description="How many capabilities are installed.")
     limits: LimitsInfo = Field(description="Server-side caps applied to every submission.")
     principal: str = Field(description="Who the server thinks is asking.")
@@ -372,6 +379,7 @@ def environment_info(
     event_bus: str,
     store: str,
     data_dir: str,
+    workspace: str,
     capabilities: int,
     limits: LimitsInfo,
 ) -> EnvironmentInfo:
@@ -387,6 +395,7 @@ def environment_info(
         event_bus=event_bus,
         store=store,
         data_dir=data_dir,
+        workspace=workspace,
         capabilities=capabilities,
         limits=limits,
         principal=principal.id,

@@ -5,7 +5,7 @@ builds a URL — those are an adapter's job. `errors` is the vocabulary an adapt
 its own failure representation.
 """
 
-from . import discovery, errors
+from . import discovery, errors, workspace
 from .discovery import (
     SECTIONS,
     CapabilityDescription,
@@ -14,6 +14,7 @@ from .discovery import (
 )
 from .errors import CoreError
 from .service import ArtifactHandle, FenixSpoonCore, ResultView
+from .workspace import ObjectSummary, ObjectView, ResolvedDesign, Workspace, WorkspaceInfo
 
 __all__ = [
     "SECTIONS",
@@ -23,7 +24,13 @@ __all__ = [
     "CoreError",
     "EnvironmentInfo",
     "FenixSpoonCore",
+    "ObjectSummary",
+    "ObjectView",
+    "ResolvedDesign",
     "ResultView",
+    "Workspace",
+    "WorkspaceInfo",
     "discovery",
     "errors",
+    "workspace",
 ]

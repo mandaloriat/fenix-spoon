@@ -1,5 +1,5 @@
 {
-  "$comment": "Conformance cases for the `environment.inspect` payload (`GET /api/v1/environment`), added by protocol 1.2 with issue #43. Validated against fenixspoon.core.discovery.EnvironmentInfo by server/tests/test_protocol_fixtures.py. Not read by the JS SDK's conformance suite: discovery serves local callers — scripts, a CLI, an agent over JSON-RPC — and the browser SDK does not implement it, so there are no two sides here to drift apart. The moment the SDK grows a typed `inspectEnvironment`, it reads this file and the drift guard applies as it does for the other corpora.",
+  "$comment": "Conformance cases for the `environment.inspect` payload (`GET /api/v1/environment`), added by protocol 1.2 with issues #43 and #44 (the `workspace` path arrived with the workspace it points at). Validated against fenixspoon.core.discovery.EnvironmentInfo by server/tests/test_protocol_fixtures.py. Not read by the JS SDK's conformance suite: discovery serves local callers \u2014 scripts, a CLI, an agent over JSON-RPC \u2014 and the browser SDK does not implement it, so there are no two sides here to drift apart. The moment the SDK grows a typed `inspectEnvironment`, it reads this file and the drift guard applies as it does for the other corpora.",
   "valid": [
     {
       "name": "a mock-only installation",
@@ -10,11 +10,26 @@
         "python": "3.11.15",
         "platform": "Linux-6.8.0-x86_64-with-glibc2.39",
         "packages": [
-          { "name": "numpy", "imported": true, "version": "2.4.6" },
-          { "name": "dolfinx", "imported": false, "version": null },
-          { "name": "gmsh", "imported": false, "version": null }
+          {
+            "name": "numpy",
+            "imported": true,
+            "version": "2.4.6"
+          },
+          {
+            "name": "dolfinx",
+            "imported": false,
+            "version": null
+          },
+          {
+            "name": "gmsh",
+            "imported": false,
+            "version": null
+          }
         ],
-        "mpi": { "available": false, "size": null },
+        "mpi": {
+          "available": false,
+          "size": null
+        },
         "execution_backend": "in-process",
         "event_bus": "in-process",
         "store": "sqlite",
@@ -27,9 +42,18 @@
           "max_workers": 8
         },
         "principal": "anonymous",
-        "quotas": { "concurrent_jobs": 0, "jobs_per_hour": 0, "artifact_bytes": 0 },
-        "usage": { "concurrent_jobs": 0, "jobs_last_hour": 0, "artifact_bytes": 0 },
-        "cache": null
+        "quotas": {
+          "concurrent_jobs": 0,
+          "jobs_per_hour": 0,
+          "artifact_bytes": 0
+        },
+        "usage": {
+          "concurrent_jobs": 0,
+          "jobs_last_hour": 0,
+          "artifact_bytes": 0
+        },
+        "cache": null,
+        "workspace": "/var/lib/fenixspoon/objects"
       }
     },
     {
@@ -41,12 +65,31 @@
         "python": "3.12.3",
         "platform": "Linux-6.8.0-x86_64-with-glibc2.39",
         "packages": [
-          { "name": "numpy", "imported": true, "version": "2.1.3" },
-          { "name": "dolfinx", "imported": true, "version": "0.11.0" },
-          { "name": "gmsh", "imported": true, "version": "4.13.1" },
-          { "name": "mpi4py", "imported": true, "version": "4.0.1" }
+          {
+            "name": "numpy",
+            "imported": true,
+            "version": "2.1.3"
+          },
+          {
+            "name": "dolfinx",
+            "imported": true,
+            "version": "0.11.0"
+          },
+          {
+            "name": "gmsh",
+            "imported": true,
+            "version": "4.13.1"
+          },
+          {
+            "name": "mpi4py",
+            "imported": true,
+            "version": "4.0.1"
+          }
         ],
-        "mpi": { "available": true, "size": 1 },
+        "mpi": {
+          "available": true,
+          "size": 1
+        },
         "execution_backend": "arq",
         "event_bus": "redis",
         "store": "sqlite",
@@ -59,9 +102,18 @@
           "max_workers": 4
         },
         "principal": "alice",
-        "quotas": { "concurrent_jobs": 2, "jobs_per_hour": 60, "artifact_bytes": 1073741824 },
-        "usage": { "concurrent_jobs": 1, "jobs_last_hour": 7, "artifact_bytes": 4194304 },
-        "cache": null
+        "quotas": {
+          "concurrent_jobs": 2,
+          "jobs_per_hour": 60,
+          "artifact_bytes": 1073741824
+        },
+        "usage": {
+          "concurrent_jobs": 1,
+          "jobs_last_hour": 7,
+          "artifact_bytes": 4194304
+        },
+        "cache": null,
+        "workspace": "/data/objects"
       }
     },
     {
@@ -73,7 +125,10 @@
         "python": "3.11.15",
         "platform": "Darwin-24.0.0-arm64",
         "packages": [],
-        "mpi": { "available": false, "size": null },
+        "mpi": {
+          "available": false,
+          "size": null
+        },
         "execution_backend": "in-process",
         "event_bus": "in-process",
         "store": "memory",
@@ -86,8 +141,17 @@
           "max_workers": 1
         },
         "principal": "anonymous",
-        "quotas": { "concurrent_jobs": 0, "jobs_per_hour": 0, "artifact_bytes": 0 },
-        "usage": { "concurrent_jobs": 0, "jobs_last_hour": 0, "artifact_bytes": 0 }
+        "quotas": {
+          "concurrent_jobs": 0,
+          "jobs_per_hour": 0,
+          "artifact_bytes": 0
+        },
+        "usage": {
+          "concurrent_jobs": 0,
+          "jobs_last_hour": 0,
+          "artifact_bytes": 0
+        },
+        "workspace": "/tmp/fenixspoon-jobs/objects"
       }
     }
   ],
@@ -100,7 +164,10 @@
         "python": "3.11.15",
         "platform": "Linux",
         "packages": [],
-        "mpi": { "available": false, "size": null },
+        "mpi": {
+          "available": false,
+          "size": null
+        },
         "execution_backend": "in-process",
         "event_bus": "in-process",
         "store": "sqlite",
@@ -113,29 +180,54 @@
           "max_workers": 8
         },
         "principal": "anonymous",
-        "quotas": { "concurrent_jobs": 0, "jobs_per_hour": 0, "artifact_bytes": 0 },
-        "usage": { "concurrent_jobs": 0, "jobs_last_hour": 0, "artifact_bytes": 0 }
+        "quotas": {
+          "concurrent_jobs": 0,
+          "jobs_per_hour": 0,
+          "artifact_bytes": 0
+        },
+        "usage": {
+          "concurrent_jobs": 0,
+          "jobs_last_hour": 0,
+          "artifact_bytes": 0
+        },
+        "workspace": "/data/objects"
       }
     },
     {
       "name": "limits missing the cell budget",
-      "reason": "Every limit is required, including the ones set to 0. A missing `max_cells` and a `max_cells` of 0 mean opposite things — 'this server did not say' versus 'no budget is enforced' — and a caller sizing a request must not have to guess which it got.",
+      "reason": "Every limit is required, including the ones set to 0. A missing `max_cells` and a `max_cells` of 0 mean opposite things \u2014 'this server did not say' versus 'no budget is enforced' \u2014 and a caller sizing a request must not have to guess which it got.",
       "payload": {
         "implementation": "0.1.0",
         "protocol": "1.2",
         "python": "3.11.15",
         "platform": "Linux",
         "packages": [],
-        "mpi": { "available": false, "size": null },
+        "mpi": {
+          "available": false,
+          "size": null
+        },
         "execution_backend": "in-process",
         "event_bus": "in-process",
         "store": "sqlite",
         "data_dir": "/data",
         "capabilities": 3,
-        "limits": { "job_timeout_seconds": 600.0, "job_ttl_seconds": 604800.0, "max_workers": 8 },
+        "limits": {
+          "job_timeout_seconds": 600.0,
+          "job_ttl_seconds": 604800.0,
+          "max_workers": 8
+        },
         "principal": "anonymous",
-        "quotas": { "concurrent_jobs": 0, "jobs_per_hour": 0, "artifact_bytes": 0 },
-        "usage": { "concurrent_jobs": 0, "jobs_last_hour": 0, "artifact_bytes": 0 }
+        "quotas": {
+          "concurrent_jobs": 0,
+          "jobs_per_hour": 0,
+          "artifact_bytes": 0
+        },
+        "usage": {
+          "concurrent_jobs": 0,
+          "jobs_last_hour": 0,
+          "artifact_bytes": 0
+        },
+        "workspace": "/data/objects"
       }
     },
     {
@@ -147,7 +239,10 @@
         "python": "3.11.15",
         "platform": "Linux",
         "packages": [],
-        "mpi": { "available": false, "size": null },
+        "mpi": {
+          "available": false,
+          "size": null
+        },
         "execution_backend": "in-process",
         "event_bus": "in-process",
         "store": "sqlite",
@@ -160,7 +255,66 @@
           "max_workers": 8
         },
         "principal": "anonymous",
-        "quotas": { "concurrent_jobs": 0, "jobs_per_hour": 0, "artifact_bytes": 0 }
+        "quotas": {
+          "concurrent_jobs": 0,
+          "jobs_per_hour": 0,
+          "artifact_bytes": 0
+        },
+        "workspace": "/data/objects"
+      }
+    },
+    {
+      "name": "no workspace path",
+      "reason": "The workspace directory is where a caller's designs live and what it would commit to a repository. It sits under data_dir by convention, and a convention is not something a client should have to reimplement.",
+      "payload": {
+        "implementation": "0.1.0",
+        "protocol": "1.2",
+        "python": "3.11.15",
+        "platform": "Linux-6.8.0-x86_64-with-glibc2.39",
+        "packages": [
+          {
+            "name": "numpy",
+            "imported": true,
+            "version": "2.4.6"
+          },
+          {
+            "name": "dolfinx",
+            "imported": false,
+            "version": null
+          },
+          {
+            "name": "gmsh",
+            "imported": false,
+            "version": null
+          }
+        ],
+        "mpi": {
+          "available": false,
+          "size": null
+        },
+        "execution_backend": "in-process",
+        "event_bus": "in-process",
+        "store": "sqlite",
+        "data_dir": "/var/lib/fenixspoon",
+        "capabilities": 3,
+        "limits": {
+          "job_timeout_seconds": 600.0,
+          "max_cells": 2000000,
+          "job_ttl_seconds": 604800.0,
+          "max_workers": 8
+        },
+        "principal": "anonymous",
+        "quotas": {
+          "concurrent_jobs": 0,
+          "jobs_per_hour": 0,
+          "artifact_bytes": 0
+        },
+        "usage": {
+          "concurrent_jobs": 0,
+          "jobs_last_hour": 0,
+          "artifact_bytes": 0
+        },
+        "cache": null
       }
     }
   ]

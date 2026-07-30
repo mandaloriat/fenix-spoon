@@ -104,13 +104,32 @@ the seams a second caller needs. The design specification is
       and checks it is really emitted; and the flattened `params` list is **flatter, not
       smaller** — measured, marginally larger than the schema, and what it buys is that no
       `$ref` has to be resolved.* (#43)
-- [ ] **Local workspace and object references.** An inspectable, reopenable workspace holding
-      `geometry`, `material`, `boundary_condition`, `load_case`, `design`, `study`, `result` and
-      `artifact` objects under stable identifiers (`geometry:g-42`, `design:d-18`, `study:s-9`,
-      `result:r-105`). Iterations reference objects instead of resending geometry; incremental
-      edits go through a standard patch mechanism (JSON Patch is the leading candidate). Jobs,
-      results and artifacts are already durable in the `JobStore` — the workspace extends that
-      store, it does not open a second one beside it. (#44)
+- [x] **Local workspace and object references.** Six object types under stable ids
+      (`geometry:g-1`, `design:d-18`), versioned rather than mutated, with `workspace.open`,
+      `workspace.list`, `object.create`, `object.get`, `object.patch` and a `job.submit` that
+      takes a design reference. A job records the exact revisions it ran on, so the
+      design → job → result relation is written down at the one moment it is knowable.
+      Four decisions the issue asked to be *recorded*, each with a test that fails if it is
+      quietly reversed:
+      *Storage is **JSON files** under the data directory, not rows.* The criterion in the
+      design draft was whether a workspace is meant to be committed to a repository, and the
+      draft's own use cases say yes ("a repository of designs is re-solved on every solver
+      change") — so a geometry edit has to show up in a pull request as the two coordinates
+      that moved, which `git diff` on a SQLite file cannot do. Still one directory to mount
+      and back up.
+      *Patches are **JSON Patch (RFC 6902)**.* Decided on the case the issue named: moving one
+      control point. Merge patch replaces arrays wholesale, so the same edit resends every
+      point — the exact cost this milestone exists to remove.
+      *Objects are **not swept by `FENIXSPOON_JOB_TTL`**.* A job is a computation and losing it
+      costs a re-run; an object is authored input. The consequence is the good direction — the
+      workspace outlives the results computed from it, and keeps enough to recompute.
+      *`boundary_condition`, `load_case` and `study` stay **thin and unvalidated**.* No shipped
+      solver has a boundary condition separable from its params, so a generic schema today
+      would generalise from zero examples. Said out loud rather than invented.
+      *Scope: core only, no HTTP routes.* The workspace's first transport is #45; binding it to
+      HTTP now would mean designing an object API that JSON-RPC may want differently, so
+      `/api/v1` is unchanged apart from `environment.inspect` gaining the workspace path #43
+      had specified and could not yet fill in. (#44)
 - [ ] **JSON-RPC 2.0 over stdio.** A local transport with no mandatory network port: the agent
       spawns `fenix-spoon rpc --stdio` as a child process and speaks structured messages over its
       pipes — documented framing, typed compact errors, long solves as asynchronous jobs, working

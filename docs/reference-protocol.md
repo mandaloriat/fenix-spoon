@@ -212,6 +212,7 @@ What `environment.inspect` returns: this installation, in a few hundred bytes.
 | `event_bus` | `str` | yes |  | How progress is delivered: `in-process` or `redis`. Reported next to the backend because the two must agree — the symptom of a mismatch is a progress stream that stays silent. |
 | `store` | `str` | yes |  | Job store backend: `sqlite` or `memory`. |
 | `data_dir` | `str` | yes |  | Absolute path holding the job database, results and artifacts. |
+| `workspace` | `str` | yes |  | Absolute path holding the workspace object files. Under `data_dir` by construction — reported anyway because it is the directory a caller would commit to a repository, and deriving it from a convention is guesswork. |
 | `capabilities` | `int` | yes |  | How many capabilities are installed. |
 | `limits` | `LimitsInfo` | yes |  | Server-side caps applied to every submission. |
 | `principal` | `str` | yes |  | Who the server thinks is asking. |

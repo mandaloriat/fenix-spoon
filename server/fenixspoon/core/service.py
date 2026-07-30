@@ -28,6 +28,7 @@ from pydantic import ValidationError
 
 from ..geometry import Geometry
 from ..jobs import Job, JobManager
+from ..objects import ObjectFileStore
 from ..solvers import available_solvers, get_solver, registered_solvers
 from ..solvers.base import Solver, SolverInfo
 from . import discovery, errors
@@ -40,6 +41,7 @@ from .discovery import (
 )
 from .errors import CoreError  # noqa: F401  (re-export: adapters catch this one class)
 from .identity import Principal, QuotaUsage, check_quotas, hour_ago
+from .workspace import ObjectSummary, ObjectView, ResolvedDesign, Workspace, WorkspaceInfo
 
 
 @dataclass(frozen=True)
@@ -74,8 +76,13 @@ class FenixSpoonCore:
     process; the HTTP app keeps it on `app.state`, and a script can build its own.
     """
 
-    def __init__(self, jobs: JobManager) -> None:
+    def __init__(self, jobs: JobManager, workspace: Workspace | None = None) -> None:
         self.jobs = jobs
+        #: Objects live beside the jobs, in the same data directory (roadmap M2.5, #44).
+        #: Defaulted rather than injected because there is exactly one sensible location and
+        #: making every caller pass it would be ceremony — but it stays a parameter so a
+        #: test can point a workspace somewhere else.
+        self.workspace = workspace or Workspace(ObjectFileStore(jobs.data_dir))
 
     # -------------------------------------------------------------- capabilities
 
@@ -114,6 +121,7 @@ class FenixSpoonCore:
             event_bus=self.jobs.bus.kind,
             store=self.jobs.store.kind,
             data_dir=str(self.jobs.data_dir),
+            workspace=str(self.workspace.store.root),
             capabilities=len(registered_solvers()),
             limits=LimitsInfo(
                 job_timeout_seconds=self.jobs.job_timeout,
@@ -159,7 +167,12 @@ class FenixSpoonCore:
     # ---------------------------------------------------------------------- jobs
 
     async def submit(
-        self, solver: str, geometry: Geometry, params: dict[str, Any], principal: Principal
+        self,
+        solver: str,
+        geometry: Geometry,
+        params: dict[str, Any],
+        principal: Principal,
+        inputs: dict[str, Any] | None = None,
     ) -> Job:
         """Validate, authorize, and hand the job to the execution backend.
 
@@ -168,6 +181,11 @@ class FenixSpoonCore:
         params parse, then cost, and only then quota. A request that is *malformed* should
         hear about that rather than about a quota it also happens to be over — the
         quota message would send the caller to fix the wrong thing.
+
+        ``inputs`` records which workspace object revisions this job came from, when it came
+        from any. It is metadata rather than a second submission path: an inline geometry
+        and a resolved design reach the backend identically, which is what stops the
+        workspace becoming a parallel job system (#44).
         """
         solver_cls = self.capability(solver)
 
@@ -187,7 +205,76 @@ class FenixSpoonCore:
         active, recent, artifact_bytes = self.jobs.store.usage(principal.id, hour_ago())
         check_quotas(principal, QuotaUsage(active, recent, artifact_bytes))
 
-        return await self.jobs.submit(solver_cls, geometry, parsed, owner=principal.id)
+        return await self.jobs.submit(
+            solver_cls, geometry, parsed, owner=principal.id, inputs=inputs
+        )
+
+    async def submit_design(self, design: str, principal: Principal) -> Job:
+        """Solve a design by reference — the iteration loop this milestone is for.
+
+        No parameter overrides, deliberately. An override would produce a job whose inputs
+        are not fully described by any object revision, and "what exactly was solved" is the
+        question the workspace exists to answer. To change a parameter, patch the design:
+        that is one small JSON Patch, it is versioned, and the next solve is reproducible
+        from the workspace alone.
+        """
+        geometry, resolved = self.workspace.resolve_design(design, principal.id)
+        return await self.submit(
+            resolved.solver,
+            geometry,
+            resolved.params,
+            principal,
+            inputs=resolved.model_dump(exclude={"params"}),
+        )
+
+    # ---------------------------------------------------------------- workspace (#44)
+
+    def workspace_info(self) -> WorkspaceInfo:
+        """Where the workspace is and what is in it — `workspace.open`.
+
+        There is no open/close: the workspace is a directory, and this reports on it. A
+        session handle would be state to lose, and the data directory is already configured
+        for the process.
+        """
+        return self.workspace.info()
+
+    def objects(self, principal: Principal, object_type: str | None = None) -> list[ObjectSummary]:
+        """This principal's objects, newest first, without their bodies — `workspace.list`."""
+        return self.workspace.list_objects(principal.id, object_type)
+
+    def create_object(
+        self,
+        object_type: str,
+        body: dict[str, Any],
+        principal: Principal,
+        label: str | None = None,
+    ) -> ObjectView:
+        return self.workspace.create(object_type, body, principal.id, label)
+
+    def object(self, ref: str, principal: Principal) -> ObjectView:
+        """One object: the head, or the exact revision if ``ref`` is pinned."""
+        return self.workspace.get(ref, principal.id)
+
+    def object_revisions(self, ref: str, principal: Principal) -> list[int]:
+        return self.workspace.revisions(ref, principal.id)
+
+    def patch_object(
+        self,
+        ref: str,
+        patch: list[dict[str, Any]],
+        principal: Principal,
+        label: str | None = None,
+    ) -> ObjectView:
+        """Apply an RFC 6902 patch and return the new revision."""
+        return self.workspace.patch(ref, patch, principal.id, label)
+
+    def resolve_design(self, ref: str, principal: Principal) -> ResolvedDesign:
+        """What a design currently resolves to, without submitting anything.
+
+        The dry run: it is how a caller checks that a reference chain is intact, and how it
+        learns which revisions a submission *would* freeze.
+        """
+        return self.workspace.resolve_design(ref, principal.id)[1]
 
     def job(self, job_id: str, principal: Principal, *, with_result: bool = False) -> Job:
         """One job belonging to this principal, or :class:`~.errors.JobNotFound`."""

@@ -95,6 +95,95 @@ class QuotaExceeded(CoreError):
         self.retry_after = retry_after
 
 
+class UnknownObjectType(CoreError):
+    """A workspace operation named a type that does not exist (roadmap M2.5, issue #44)."""
+
+    def __init__(self, name: str, known: list[str]) -> None:
+        super().__init__(f"unknown object type {name!r}: expected one of {known}")
+        self.name = name
+        self.known = known
+
+
+class MalformedReference(CoreError):
+    """An object reference did not parse.
+
+    Separate from :class:`ObjectNotFound` because the two send a caller to different places:
+    a malformed reference is a string it built wrongly, a missing one is a workspace that
+    does not hold what it expected.
+    """
+
+    def __init__(self, ref: str, reason: str) -> None:
+        super().__init__(reason)
+        self.ref = ref
+
+
+class ObjectNotFound(CoreError):
+    """No such object, or it belongs to another principal — indistinguishable, as for jobs."""
+
+    def __init__(self, ref: str) -> None:
+        super().__init__(f"object not found: {ref}")
+        self.ref = ref
+
+
+class WrongObjectType(CoreError):
+    """A reference resolved, but to the wrong kind of thing.
+
+    Distinct from a missing object because it is a much more useful message: the caller
+    passed `material:m-2` where a design was wanted, and saying so beats "not found".
+    """
+
+    def __init__(self, ref: str, expected: str, got: str) -> None:
+        super().__init__(f"{ref} is a {got}, expected a {expected}")
+        self.ref = ref
+        self.expected = expected
+        self.got = got
+
+
+class InvalidObject(CoreError):
+    """An object body failed its type's schema.
+
+    Carries pydantic's structured list for the same reason :class:`InvalidParams` does: a
+    caller fixing a geometry wants the field, not a sentence about it.
+    """
+
+    def __init__(self, object_type: str, errors: list[dict[str, Any]]) -> None:
+        super().__init__(f"body does not match the schema for a {object_type}")
+        self.object_type = object_type
+        self.errors = errors
+
+
+class InvalidPatch(CoreError):
+    """An RFC 6902 patch was malformed, or did not apply to this object."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(f"patch could not be applied: {reason}")
+        self.reason = reason
+
+
+class PatchChangedNothing(CoreError):
+    """A patch applied cleanly and produced an identical body.
+
+    An error rather than a no-op: writing the revision would move the head without changing
+    anything, so every reference pinned afterwards would name a new number for the same
+    content. A caller that believed it was editing something needs to hear that it was not.
+    """
+
+    def __init__(self, ref: str) -> None:
+        super().__init__(f"patch left {ref} unchanged; nothing was written")
+        self.ref = ref
+
+
+class CannotPatchRevision(CoreError):
+    """A patch named a pinned revision. Revisions are immutable and there are no branches."""
+
+    def __init__(self, ref: str) -> None:
+        super().__init__(
+            f"cannot patch {ref}: revisions are immutable. Patch the object itself "
+            f"({ref.split('@')[0]}) to write the next revision."
+        )
+        self.ref = ref
+
+
 class JobNotFound(CoreError):
     """No such job, or it belongs to another principal.
 
