@@ -5,10 +5,17 @@ in CI, and useful as **the debugging surface for exactly what an agent sees**, w
 part that decides the design:
 
 **Every command dispatches through the JSON-RPC method table**, exactly as the MCP adapter
-does. So `--json` output is not *comparable* to the JSON-RPC result for the same request, it
-is the same bytes, and `test_the_json_output_is_the_json_rpc_result` asserts that rather than
-trusting it. Running the CLI to see what an agent would get is only worth doing if the answer
-is the same object.
+does. So `--json` output is not merely *comparable* to the JSON-RPC result for the same
+request — it is the same value, field for field, and
+`test_the_json_output_is_the_json_rpc_result` asserts equality rather than trusting it.
+Running the CLI to see what an agent would get is only worth doing if the answer is the same
+object.
+
+*Value*, not bytes: this pretty-prints and the transport frames compactly, so the two encode
+the same document differently. The wording said "the same bytes" until review of #50 pointed
+out that it was literally false — and pretty-printing is worth keeping, because the reason
+this exists is a human reading what an agent received. `json.loads` on both sides is the
+comparison that means something.
 
 Two things follow from that and are worth stating plainly.
 
@@ -123,7 +130,7 @@ def add_subcommands(subparsers) -> None:
         command.add_argument(
             "--json",
             action="store_true",
-            help="print the raw result — byte-identical to what JSON-RPC returns",
+            help="print the raw result — the same value JSON-RPC returns, pretty-printed",
         )
         if (noun, verb) in (("job", "submit"), ("study", "run")):
             command.add_argument(
@@ -143,6 +150,12 @@ def add_subcommands(subparsers) -> None:
             help="an extra parameter, JSON-decoded when it parses as JSON",
         )
         for flag, (kind, flag_help) in FLAGS.items():
+            if flag in positionals:
+                # `object create` takes `type` positionally, and `--type` is the workspace
+                # listing filter. Registering both would let `object create geometry --type
+                # design` build a request whose `type` disagrees with the body on stdin — a
+                # command that succeeds and creates the wrong thing. Raised in review of #50.
+                continue
             option = f"--{flag.replace('_', '-')}"
             if kind == "append":
                 command.add_argument(option, action="append", dest=flag, help=flag_help)
@@ -172,10 +185,17 @@ def collect_params(args, positionals: list[str]) -> dict[str, Any]:
             continue
         params[flag] = value
     for item in args.param:
-        key, _, raw = item.partition("=")
+        key, sep, raw = item.partition("=")
+        if not sep or not key:
+            # Silently accepting `--param foo` set an empty-named parameter to `""`, which the
+            # server then refused for a reason that had nothing to do with the typo. Raised in
+            # review of #50.
+            raise ValueError(f"--param needs KEY=VALUE, got {item!r}")
         try:
             params[key] = json.loads(raw)
         except json.JSONDecodeError:
+            # Not an error: `--param field=psi` is a bare string, and quoting every one of
+            # those for JSON's benefit would be a worse command line than the one it protects.
             params[key] = raw
 
     if _wants_stdin(args) and not sys.stdin.isatty():
@@ -187,7 +207,12 @@ def collect_params(args, positionals: list[str]) -> dict[str, Any]:
             elif (args.noun, args.verb) == ("object", "patch"):
                 params["patch"] = document
             else:  # job submit: the geometry, or a whole request
-                params.update(document if isinstance(document, dict) else {})
+                if not isinstance(document, dict):
+                    raise ValueError(
+                        f"`job submit` expects a JSON object on stdin, got a "
+                        f"{type(document).__name__}"
+                    )
+                params.update(document)
     return params
 
 
@@ -207,6 +232,12 @@ def run_command(args, core: FenixSpoonCore, principal: Principal) -> int:
     except json.JSONDecodeError as exc:
         print(f"the JSON on stdin did not parse: {exc}", file=sys.stderr)
         return 3
+    except ValueError as exc:
+        # A malformed `--param`, or a stdin document of the wrong shape. The caller sent
+        # something wrong, so it is an invalid request like any other rather than a traceback
+        # about an argument it can see. Raised in review of #50.
+        print(str(exc), file=sys.stderr)
+        return EXIT_CODES[rpc_errors.INVALID_PARAMS]
 
     try:
         result = _invoke(method, core, principal, params, detach=getattr(args, "detach", False))

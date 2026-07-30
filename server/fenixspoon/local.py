@@ -69,7 +69,11 @@ class Job:
         self.id = job_id
 
     def __repr__(self) -> str:
-        return f"<Job {self.id} {self.status().status}>"
+        # Local data only. `__repr__` runs in debuggers, logs and tracebacks — often while
+        # something is already wrong — so a version that called `status()` would raise from
+        # inside the report of the original failure, on a closed session or a swept job.
+        # Raised in review of #50.
+        return f"<Job {self.id}>"
 
     def status(self) -> JobStatus:
         return JobStatus.from_job(self.session.core.job(self.id, self.session.principal))
@@ -147,13 +151,27 @@ class Session:
     # ------------------------------------------------------------------ lifecycle
 
     def close(self) -> None:
-        """Stop the loop and release the store. Idempotent."""
+        """Release the backend, the bus and the store, then stop the loop. Idempotent.
+
+        The sequence is :meth:`JobManager.aclose`, not one of mine: it is a property of the
+        manager, and it exists because an abandoned `ThreadPoolExecutor` turns a long solve
+        into a process that will not exit — `concurrent.futures` registers an atexit hook that
+        *joins* its threads. A session that closed only the store would reintroduce exactly
+        that, in the one place where the caller is a notebook that stays alive. Two shutdown
+        sequences would be two chances to get the order wrong. Raised in review of #50.
+        """
         if self._loop.is_closed():
             return
-        self._loop.call_soon_threadsafe(self._loop.stop)
-        self._thread.join(timeout=5)
-        self._loop.close()
-        self.core.jobs.store.close()
+        # On the session's loop, because that is where the backend's tasks live — and while
+        # it is still running, because `aclose` is a coroutine.
+        try:
+            asyncio.run_coroutine_threadsafe(self.core.jobs.aclose(), self._loop).result(
+                timeout=30
+            )
+        finally:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            self._thread.join(timeout=5)
+            self._loop.close()
 
     def __enter__(self) -> "Session":
         return self

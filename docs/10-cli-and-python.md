@@ -19,11 +19,16 @@ mock.heat2d            Heat sink (mock, NumPy)       heat-conduction  mock
 ```
 
 **Every command dispatches through the JSON-RPC method table**, exactly as the
-[MCP adapter](09-mcp.md) does. So `--json` output is not *comparable* to what an agent gets
-over [JSON-RPC](08-json-rpc.md) — it is the same bytes, and a test asserts that rather than
-trusting it. That is what makes the CLI worth reaching for as **the debugging surface for
-exactly what an agent sees**: a CLI that reformatted, rounded or renamed anything would be
-showing you something the protocol does not say.
+[MCP adapter](09-mcp.md) does. So `--json` output is not merely *comparable* to what an agent
+gets over [JSON-RPC](08-json-rpc.md) — it is the same value, field for field, and a test
+asserts equality rather than trusting it. That is what makes the CLI worth reaching for as
+**the debugging surface for exactly what an agent sees**: a CLI that reformatted, rounded or
+renamed anything would be showing you something the protocol does not say.
+
+The one difference is encoding, not content: this pretty-prints and the transport frames
+compactly, so the two write the same document differently. Pretty-printing is worth keeping
+precisely because the reason to run it is a human reading what an agent received; pipe it
+through `jq` and the two are indistinguishable.
 
 Human-readable output is a *rendering* of that JSON, never a different answer. There is no
 command that computes something for humans a machine caller cannot get.
@@ -85,7 +90,7 @@ with local.open_workspace() as fs:
 
     job = fs.submit(design=design.ref).wait()
     print(job.metrics())                      # {'speed_max': 1.29, 'c_l': 0.09, ...}
-    print(job.query("psi", "op").result)      # one bounded question, no arrays
+    print(job.query("psi", "max").result)      # one bounded question, no arrays
 
     fs.patch(design.ref, [{"op": "replace", "path": "/params/resolution", "value": 128}])
     print(fs.submit(design=design.ref).wait().metrics())

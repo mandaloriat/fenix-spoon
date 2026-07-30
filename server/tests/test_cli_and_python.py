@@ -5,7 +5,9 @@ script and as a Python script* — :func:`test_the_slice_runs_as_a_shell_script`
 :func:`test_the_slice_runs_as_a_python_script`. And *the CLI's `--json` output for a solve is
 byte-comparable in meaning to the JSON-RPC result for the same request* —
 :func:`test_the_json_output_is_the_json_rpc_result`, which asserts something stronger than
-the criterion asks: not comparable in meaning, identical.
+the criterion asks: the same *value*, field for field. Not the same bytes — the CLI
+pretty-prints and the transport frames compactly — and saying "bytes" was an overclaim until
+review of #50 caught it.
 
 The shell test really runs a shell. That is slow and it is the point: the thing being claimed
 is that somebody can paste these lines into CI, and a test that called the functions directly
@@ -270,6 +272,46 @@ def test_every_exit_code_is_reachable():
     )
 
 
+def test_a_flag_cannot_shadow_a_positional_of_the_same_command(workspace):
+    """`object create` takes `type` positionally, and `--type` is the listing filter.
+
+    Registering both would let `object create geometry --type design` build a request whose
+    `type` disagrees with the body on stdin — a command that *succeeds* and creates the wrong
+    thing, which is the worst outcome available. Raised in review of #50.
+    """
+    assert "--type" not in run(workspace, "object", "create", "--help").stdout
+    # …and it is still there where it means something.
+    assert "--type" in run(workspace, "workspace", "list", "--help").stdout
+
+
+@pytest.mark.parametrize("param", ["notakeyvalue", "=novalue"])
+def test_a_malformed_param_is_an_invalid_request_not_an_empty_key(workspace, param):
+    """Accepting `--param foo` silently set an empty-named parameter to `""`, which the server
+    then refused for a reason that had nothing to do with the typo. Raised in review of #50."""
+    result = run(workspace, "capability", "list", "--param", param)
+    assert result.returncode == EXIT_CODES[rpc_errors.INVALID_PARAMS]
+    assert "KEY=VALUE" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_a_bare_string_param_still_works(workspace):
+    """The counter-case: `--param field=psi` must not need JSON quoting. Requiring it would be
+    a worse command line than the one the refusal above protects."""
+    geometry = ok(workspace, "object", "create", "geometry", stdin=json.dumps(AIRFOIL))
+    assert geometry["type"] == "geometry"
+    listed = ok(workspace, "workspace", "list", "--param", "type=geometry")
+    assert [item["ref"] for item in listed] == [geometry["ref"]]
+
+
+def test_stdin_of_the_wrong_shape_is_refused_with_a_reason(workspace):
+    """A JSON array where an object belongs was silently dropped, turning a caller's mistake
+    into a confusing "missing parameter" further down. Raised in review of #50."""
+    result = run(workspace, "job", "submit", stdin="[1, 2, 3]")
+    assert result.returncode == EXIT_CODES[rpc_errors.INVALID_PARAMS]
+    assert "object on stdin" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
 def test_human_output_is_a_rendering_not_a_different_answer(workspace):
     """`--json` switches the presentation. Anything a human can see, a script can get."""
     human = run(workspace, "capability", "list").stdout
@@ -359,6 +401,44 @@ def test_a_study_runs_and_reports_through_the_python_api(session):
     report = session.wait_for_study(study.ref)
     assert [rung.status for rung in report.rungs] == ["done", "done"]
     assert report.convergence
+
+
+def test_a_job_repr_does_not_reach_into_the_core(tmp_path):
+    """`__repr__` runs in debuggers, logs and tracebacks — often while something is already
+    wrong — so one that called `status()` would raise from inside the report of the original
+    failure. Checked against a *closed* session, which is the case that would break it.
+    Raised in review of #50."""
+    session = local.open_workspace(tmp_path / "ws")
+    job = local.Job(session, "j-whatever")
+    session.close()
+    assert "j-whatever" in repr(job)
+
+
+def test_closing_a_session_releases_the_execution_backend(tmp_path):
+    """Not just the store. The in-process backend holds a `ThreadPoolExecutor`, and
+    `concurrent.futures` registers an atexit hook that *joins* its threads — so an abandoned
+    executor turns a long solve into a process that will not exit. A notebook is exactly where
+    that bites. Raised in review of #50.
+
+    Asserted on the executor's own state rather than on process behaviour, because "does the
+    interpreter exit" is not something a test can ask without becoming a subprocess test for a
+    one-line property.
+    """
+    session = local.open_workspace(tmp_path / "ws")
+    executor = session.core.jobs.backend._executor
+    session.close()
+    assert executor._shutdown, "the solver thread pool outlived the session"
+
+
+def test_the_python_api_does_not_import_fastapi():
+    """An in-process entrypoint has no business needing a web framework — and the shutdown
+    sequence it shares with the HTTP app is the seam where that nearly happened, which is why
+    the sequence moved onto `JobManager`. Raised in review of #50."""
+    code = "import sys; import fenixspoon.local; sys.exit(1 if 'fastapi' in sys.modules else 0)"
+    result = subprocess.run(
+        [sys.executable, "-c", code], cwd=REPO_SERVER, capture_output=True, text=True
+    )
+    assert result.returncode == 0, f"fenixspoon.local imported fastapi\n{result.stderr}"
 
 
 def test_closing_a_session_twice_is_harmless(tmp_path):

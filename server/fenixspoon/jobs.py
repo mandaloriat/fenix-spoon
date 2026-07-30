@@ -30,6 +30,7 @@ Configuration (environment):
   deterministic are ever cached, whatever this is set to.
 """
 
+import logging
 import os
 import shutil
 import tempfile
@@ -48,6 +49,8 @@ from .events import EventBus, InProcessEventBus
 from .geometry import Domain2D
 from .solvers.base import Solver, SolverResult
 from .store import JobRecord, JobStore, MemoryJobStore, ResultSummary, SqliteJobStore
+
+log = logging.getLogger(__name__)
 
 TERMINAL = ("done", "failed", "cancelled")
 
@@ -355,6 +358,37 @@ class JobManager:
             return False
         await self.backend.cancel(job.id)
         return True
+
+    async def aclose(self) -> None:
+        """Release the three things this manager owns, innermost last.
+
+        The backend first so nothing new starts solving, then the bus so nothing new is
+        published, then the store. Each is guarded: a backend that fails to close must not
+        leave a Redis connection and a database handle open behind it.
+
+        Closing the store alone mattered more than it looks, which is why this exists. The
+        in-process backend holds a `ThreadPoolExecutor`, and `concurrent.futures` registers an
+        atexit hook that *joins* its threads — so an abandoned executor turns a long solve
+        into a process that will not exit. The arq backend and the Redis bus each hold a
+        connection pool.
+
+        It lives here rather than in the HTTP app because it is a property of the manager, not
+        of a transport: the Python API (#50) needs the identical sequence, and importing it
+        from `main` would have pulled FastAPI into an in-process entrypoint that has no
+        business needing a web framework. Raised in review of #50.
+        """
+        for label, close in (
+            ("execution backend", self.backend.close),
+            ("event bus", self.bus.close),
+        ):
+            try:
+                await close()
+            except Exception:
+                log.exception("failed to close the %s", label)
+        try:
+            self.store.close()
+        except Exception:
+            log.exception("failed to close the job store")
 
     def reconcile(self) -> list[str]:
         """Fail jobs the store left running: after a restart, nobody is solving them.
