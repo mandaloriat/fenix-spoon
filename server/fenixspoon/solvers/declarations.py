@@ -316,3 +316,103 @@ HEAT_METRICS = [
         reduction="max",
     ),
 ]
+
+
+#: Linear elasticity: what a structural check reads off a static solve (#81).
+#:
+#: `sigma_vm_max` is the load-bearing one, and the one whose declaration has to be honest: it
+#: is a *nodal-averaged* peak, so a coarse mesh under-reports it, and the very place it is
+#: read — a re-entrant corner or a hole edge — is where the discretization error is largest.
+#: That is not a caveat this pair can hide behind a number, so it is in the description.
+ELASTICITY_METRICS = [
+    MetricSpec(
+        name="u_max",
+        unit="m",
+        description=(
+            "Largest displacement magnitude anywhere in the body. The stiffness number: what "
+            "a deflection limit is checked against."
+        ),
+        field="u_mag",
+        reduction="max",
+    ),
+    MetricSpec(
+        name="sigma_vm_max",
+        unit="Pa",
+        description=(
+            "Peak von Mises equivalent stress, compared against a yield strength to decide "
+            "whether the part holds. Averaged from the elements to the nodes, so a coarse "
+            "mesh under-reports it — and a stress concentration is exactly where that error "
+            "is worst. Refine before quoting it."
+        ),
+        field="sigma_vm",
+        reduction="max",
+    ),
+    MetricSpec(
+        name="compliance",
+        unit="J/m",
+        description=(
+            "External work done by the applied traction, f·u, per unit depth. The scalar a "
+            "stiffness optimisation minimises — and, unlike a peak, a global quantity that "
+            "converges quickly with mesh refinement."
+        ),
+        # Needs the load vector, which is not in the result payload, so the adapter computes it.
+    ),
+]
+
+#: Linear elasticity: what the model leaves out. Four of these are the standard linear-static
+#: envelope; the fifth is a limitation of *this implementation* rather than of the physics, and
+#: it is declared for the same reason as the rest — a caller should not have to read the source
+#: to discover that a boundary condition can only be placed on an edge of the bounding box.
+ELASTICITY_ASSUMPTIONS = [
+    Assumption(
+        name="linear_elastic",
+        statement=(
+            "Stress is proportional to strain everywhere, with no yield surface. Past the "
+            "material's proof stress the reported numbers describe a body that would in fact "
+            "have deformed permanently, and they overstate the stress rather than redistribute "
+            "it. Compare `sigma_vm_max` against a yield strength yourself — nothing here does."
+        ),
+        excludes=["plastic_strain", "residual_stress", "limit_load"],
+    ),
+    Assumption(
+        name="small_strain",
+        statement=(
+            "Equilibrium is written on the undeformed shape and strain is the linearised "
+            "measure, so the solve cannot know that a deflected structure carries load "
+            "differently. Buckling in particular is invisible: a slender member in compression "
+            "returns a perfectly reasonable stress right through the load that would collapse it."
+        ),
+        excludes=["buckling_load", "large_rotation", "geometric_stiffening"],
+    ),
+    Assumption(
+        name="static",
+        statement=(
+            "No inertia and no time: the answer is the equilibrium reached under a load applied "
+            "slowly. Natural frequencies, impact and any dynamic amplification are outside it."
+        ),
+        excludes=["natural_frequency", "transient_response", "dynamic_amplification"],
+    ),
+    Assumption(
+        name="plane_idealisation",
+        statement=(
+            "Either plane stress (a thin plate loaded in its plane, out-of-plane stress zero) "
+            "or plane strain (a long prismatic body, out-of-plane strain zero), chosen by the "
+            "`plane` parameter. Neither is a thin *bending* plate, and the two differ by terms "
+            "of order nu in every stress — picking the wrong one is a quiet error, not a "
+            "refusal."
+        ),
+        excludes=["plate_bending", "out_of_plane_load"],
+    ),
+    Assumption(
+        name="edge_aligned_boundary_conditions",
+        statement=(
+            "The clamped and loaded boundaries are named as edges of the bounding rectangle "
+            "(`xmin`, `xmax`, `ymin`, `ymax`) and the traction is uniform along the loaded "
+            "one. A load on part of an edge, on the hole boundary, or on an arbitrary curve "
+            "cannot be expressed — no geometry kind here can name such a boundary, which is "
+            "the open design question in issue #81."
+        ),
+        excludes=["partial_edge_load", "hole_boundary_load", "point_load"],
+    ),
+    TWO_DIMENSIONAL,
+]

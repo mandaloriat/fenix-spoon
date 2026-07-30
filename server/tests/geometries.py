@@ -68,3 +68,53 @@ def naca4(
 
 #: A chord-1 symmetric section in a domain with room for a circulation contour around it.
 NACA0012 = Domain2D(bounds=(-1.5, -1.5, 2.5, 1.5), obstacle=Polygon2D(points=naca4()))
+
+
+def circle(radius: float, n: int = 48, centre: tuple[float, float] = (0.0, 0.0)) -> Polygon2D:
+    """A polygonal circle. `n` is a compromise: the analytical stress concentration it stands
+    in for is a *circle*, and every facet is somewhere the curvature is wrong."""
+    angle = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False)
+    return Polygon2D(
+        points=[
+            (float(centre[0] + radius * np.cos(a)), float(centre[1] + radius * np.sin(a)))
+            for a in angle
+        ]
+    )
+
+
+#: A cantilever: length 1 m, depth 100 mm, aluminium with a steel insert at mid-span so the
+#: per-region material path is exercised rather than merely available. The region has to sit
+#: strictly inside `bounds`, which is why a *uniform* plate cannot be written down at all —
+#: `regions2d` requires at least one region and it cannot cover the domain. That is a real
+#: finding for issue #81, not a quirk of this fixture.
+BEAM = Regions2D(
+    bounds=(0.0, -0.05, 1.0, 0.05),
+    regions=[
+        Region2D(
+            name="insert",
+            shape=rect(0.45, -0.04, 0.55, 0.04),
+            material={"youngs_modulus": 2.1e11, "poisson_ratio": 0.3},
+        )
+    ],
+    background={"youngs_modulus": 7.0e10, "poisson_ratio": 0.33},
+)
+
+#: The same beam with one material everywhere, for the cases with a closed form to check
+#: against. The region is present because the schema demands one and carries the background's
+#: material so nothing varies.
+UNIFORM_BEAM = Regions2D(
+    bounds=(0.0, -0.05, 1.0, 0.05),
+    regions=[
+        Region2D(
+            name="body",
+            shape=rect(0.45, -0.04, 0.55, 0.04),
+            material={"youngs_modulus": 2.1e11, "poisson_ratio": 0.3},
+        )
+    ],
+    background={"youngs_modulus": 2.1e11, "poisson_ratio": 0.3},
+)
+
+#: A wide plate with a small circular hole: the Kirsch problem, whose peak stress is three
+#: times the far field. The hole is a tenth of the plate half-width, which is "wide" enough
+#: for the infinite-plate solution to be the right comparison.
+PLATE_WITH_HOLE = Domain2D(bounds=(-1.0, -1.0, 1.0, 1.0), obstacle=circle(0.1))

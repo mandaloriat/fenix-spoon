@@ -100,8 +100,16 @@ air as a conducting region instead and the fins stop working entirely: air condu
 
 ## Not here yet
 
-**Incompressible Navier–Stokes** is the obvious fourth example and is
-[blocked rather than unwritten](https://github.com/mandaloriat/fenix-spoon/issues/18): its
-interesting output is a velocity *vector* field, and neither the protocol's result kinds nor the
-viewer carries one. Adding it means a vector result kind and glyph rendering first — see the
-[planned extensions](04-wire-protocol.md#planned-extensions-to-the-domain-contract).
+**Linear elasticity** has adapters but no page. `mock.elasticity2d` and
+`dolfinx.elasticity2d` solve a clamped, loaded plate — displacement, von Mises stress, the
+classical `K_t = 3` around a hole — and they are the first capabilities here whose unknown is a
+*vector*. What they do not have is a demo: a structural page wants to draw a deformed shape and
+to place a load somewhere other than a whole edge, and the second of those is the open design
+question in [#81](https://github.com/mandaloriat/fenix-spoon/issues/81). The capability is
+usable from every transport today; it is the browser story that is missing.
+
+**Incompressible Navier–Stokes** was the obvious fourth example when the vector half of the
+protocol did not exist. It does now — protocol 1.1 added vector fields to both result kinds and
+`<fs-viewer>` draws glyphs — so what remains is the solve rather than the wire: a nonlinear
+steady solve, and for anything worth watching a *transient* one, which the protocol still has no
+home for ([#82](https://github.com/mandaloriat/fenix-spoon/issues/82)).

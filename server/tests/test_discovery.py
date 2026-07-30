@@ -15,7 +15,7 @@ import json
 
 import pytest
 from fastapi.testclient import TestClient
-from geometries import SOLENOID
+from geometries import SOLENOID, UNIFORM_BEAM
 from pydantic import ValidationError
 
 from fenixspoon.core import FenixSpoonCore, discovery, errors
@@ -39,6 +39,7 @@ SMOKE = {
     "mock.laplace2d": (AIRFOIL, {"resolution": 40, "iterations": 60}),
     "mock.magnetostatics2d": (SOLENOID, {"resolution": 40, "iterations": 60}),
     "mock.heat2d": (SOLENOID, {"resolution": 40, "iterations": 60}),
+    "mock.elasticity2d": (UNIFORM_BEAM, {"resolution": 32, "iterations": 200}),
 }
 
 #: The FEniCSx half, exercised only by `pytest -m fenics` in the dolfinx image. Without
@@ -55,6 +56,7 @@ FENICS_SMOKE = {
     "dolfinx.potential_flow2d": (AIRFOIL, {"mesh_size": 0.08, "output": "mesh2d"}),
     "dolfinx.magnetostatics2d": (SOLENOID, {"mesh_size": 0.01}),
     "dolfinx.heat2d": (SOLENOID, {"mesh_size": 0.004}),
+    "dolfinx.elasticity2d": (UNIFORM_BEAM, {"mesh_size": 0.03, "degree": 1}),
 }
 
 
@@ -286,6 +288,30 @@ def _requires(solver: str):
         cls.name for cls in registered_solvers()
     }:
         pytest.skip("requires dolfinx (FEniCSx)")
+
+
+def test_every_registered_capability_is_covered_by_the_smoke_table():
+    """The guard on the guards.
+
+    The three tests below are parametrised over a hand-written table, so an adapter that
+    nobody added to it is silently exempt from every declaration-versus-reality check — and
+    exempt in the direction that matters, because a brand-new adapter is exactly the one
+    whose declaration has never been compared against a solve. Adding a capability must
+    therefore mean adding a case here.
+
+    `registered_solvers()` reports what this interpreter has, so the FEniCSx half only
+    participates where dolfinx is installed; `FENICS_SMOKE` is checked as a set of names so
+    the plain-virtualenv run still fails if a FEniCSx adapter is missing from the table.
+    """
+    registered = {cls.name for cls in registered_solvers()}
+    covered = set(SMOKE) | set(FENICS_SMOKE)
+    assert registered <= covered, (
+        f"no smoke case for {sorted(registered - covered)}; add one so the declaration "
+        "tests below actually cover it"
+    )
+    assert covered - registered <= set(FENICS_SMOKE), (
+        f"the smoke table names capabilities that do not exist: {sorted(covered - registered)}"
+    )
 
 
 @pytest.mark.parametrize(
