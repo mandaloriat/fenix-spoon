@@ -61,6 +61,9 @@ nav:
       - State of the art: 01-state-of-the-art.md
       - Roadmap: 03-roadmap.md
       - Local agent interface (draft): 07-local-agent-interface.md
+      - Decision records:
+          - Index: adr/index.md
+          - 0001 — An explorable viewer: adr/0001-explorable-viewer.md
 
 # Every warning is an error: a broken internal link in the docs is a bug like any other,
 # and the whole point of this site is that following it gets you somewhere.

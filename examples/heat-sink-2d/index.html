@@ -63,11 +63,17 @@ without anyone editing HTML. Add fins and watch the chip temperature fall.</p>
   <!-- `plasma`, not `inferno`: the viewer ships viridis/plasma/coolwarm/greyscale and falls
        back to viridis for anything else, silently. Asking for a colormap that does not exist
        looks exactly like asking for the default. -->
-  <fs-viewer id="viewer" field="T" colormap="plasma" contours="10"></fs-viewer>
+  <!-- `interactive` is what wires up wheel/drag/pinch/keyboard; without it the viewer draws
+       and probes on hover exactly as it always did. The toolbar is composed from tool ids,
+       so a page shows the buttons it wants and no others. -->
+  <fs-viewer id="viewer" field="T" colormap="plasma" contours="10"
+             interactive mode="pan" toolbar="pan,probe,zoom-in,zoom-out,fit-geometry,reset"
+  ></fs-viewer>
 </div>
 <div class="legend">
   <span>colour = temperature (°C)</span>
   <span>grey = air, not solved — it is a boundary condition, not a region</span>
+  <span>scroll to zoom · drag to pan · hover to probe · <kbd>0</kbd> resets</span>
 </div>
 
 <div class="readout">
@@ -86,6 +92,7 @@ without anyone editing HTML. Add fins and watch the chip temperature fall.</p>
     <output id="finhval">35 mm</output></label>
   <label>solver <select id="solver"></select></label>
   <label>field <select id="field"></select></label>
+  <label><input type="checkbox" id="lockscale"> lock colour scale</label>
   <progress id="prog" value="0" max="1" hidden></progress>
 </div>
 
@@ -324,6 +331,11 @@ async function run() {
     });
 
     viewer.result = result;
+    // The result carries arrays and a bounding box, never an outline — so the page, which
+    // built the geometry, hands it over. That is what "fit geometry" frames and what the
+    // outline overlay draws, and why the button is disabled (with a reason in its tooltip)
+    // until this line has run.
+    viewer.geometry = buildGeometry();
     syncFieldOptions();
     showStats(result.metrics ?? {}, result.stats ?? {});
     showArtifacts(result.artifacts);
@@ -399,6 +411,18 @@ const autoRun = () => { if ($('auto').checked) run(); };
 $('run').addEventListener('click', run);
 $('cancel').addEventListener('click', () => currentJob?.cancel());
 $('field').addEventListener('change', () => { viewer.field = $('field').value; });
+
+// Units per field, not one global caption: `T` is in °C and `flux` is in W/m², and a picker
+// that switched between them under a fixed caption would be lying about one of the two. The
+// page could equally read these from `GET /capabilities/{name}?sections=metrics`.
+viewer.fieldUnits = { T: '°C', flux: 'W/m²' };
+
+// Locking the scale is what makes two designs comparable. Auto-scaled, five fins and eight
+// fins produce two pictures whose colours mean different things — which is the exact
+// comparison this demo exists to invite, and the exact way to get it wrong.
+$('lockscale').addEventListener('change', (event) => {
+  viewer.range = event.target.checked ? viewer.autoRange : null;
+});
 $('fins').addEventListener('input', () => { $('finsval').textContent = $('fins').value; });
 $('finh').addEventListener('input', () => { $('finhval').textContent = `${$('finh').value} mm`; });
 // `change` rather than `input`: one drag of a slider should be one solve, not fifty.

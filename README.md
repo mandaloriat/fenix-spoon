@@ -65,7 +65,7 @@ see the [state-of-the-art survey](docs/01-state-of-the-art.md). Fenix Spoon is t
 | **Browser demos** — the airfoil built from the three packages, plus zero-dependency versions of both airfoil and solenoid kept as protocol references | [`examples/airfoil-2d/`](examples/airfoil-2d/), [`examples/solenoid-2d/`](examples/solenoid-2d/) | ✅ working |
 | **JS/TS SDK** — `@fenix-spoon/client`: typed protocol client with progress streaming, reconnection and runtime validators | [`client/packages/client/`](client/packages/client/) | ✅ working |
 | **Geometry editor widget** — `<fs-geometry-2d>`: SVG-based parametric profile editor, keyboard-operable, emits protocol JSON | [`client/packages/geometry-2d/`](client/packages/geometry-2d/) | ✅ working |
-| **Field viewer widget** — `<fs-viewer>`: canvas renderer for `grid2d`/`mesh2d` with colormaps, contours and a hover probe | [`client/packages/viewer/`](client/packages/viewer/) | ✅ working |
+| **Field viewer widget** — `<fs-viewer>`: canvas renderer *and explorer* for `grid2d`/`mesh2d` — colormaps, contours, probe, sections, zoom/pan, vector glyphs, integral curves, capability-driven tools, all on data already received | [`client/packages/viewer/`](client/packages/viewer/) | ✅ working |
 | **Docker deployment** — one image with dolfinx + server, `docker compose up`; a worker override for API + Redis + N solver containers | [`Dockerfile`](server/Dockerfile), [`docker-compose.yml`](docker-compose.yml), [`docker-compose.workers.yml`](docker-compose.workers.yml) | ✅ working |
 | **Distributed job execution** — `ExecutionBackend` with an in-process pool and an arq/Redis backend; progress crosses processes over pub/sub | [`backends.py`](server/fenixspoon/backends.py), [`worker.py`](server/fenixspoon/worker.py) | ✅ working |
 
@@ -190,6 +190,11 @@ files; `make docs-serve` previews it locally.
 9. [Local agent interface](docs/07-local-agent-interface.md) — design draft for driving the same
    core from a local process (M2.5; the core, discovery, workspace, results, cache and the
    stdio transport have landed — the CLI, Python and MCP adapters have not)
+10. [Decision records](docs/adr/index.md) — the few decisions that set a boundary rather than
+    living next to one file's code
+
+[CHANGELOG.md](CHANGELOG.md) records what changed for the people building on the toolkit; the
+wire protocol's own history is in [docs/04-wire-protocol.md](docs/04-wire-protocol.md).
 
 ## Contributing
 

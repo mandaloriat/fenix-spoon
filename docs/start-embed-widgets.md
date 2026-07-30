@@ -87,6 +87,56 @@ Canvas, not vtk.js: every result kind is 2D today, and a multi-megabyte WebGL to
 would dominate the embed footprint. The drawing surface is isolated so a WebGL backend
 can land when a 3D result kind does.
 
+### Making it explorable
+
+Add `interactive` and the viewer gains wheel and pinch zoom, drag pan, and keyboard
+navigation. Everything works on the arrays the page already has — **no operation submits a
+job**, and none needs a newer server:
+
+```html
+<fs-viewer interactive mode="pan" toolbar="pan,probe,fit-domain,reset"
+           vectors="velocity" streamlines="velocity"></fs-viewer>
+```
+
+```js
+viewer.geometry = editor.value;         // "fit geometry" and the outline overlay
+viewer.fieldUnits = { T: 'degC', flux: 'W/m^2' };
+viewer.range = { min: 20, max: 120 };   // pin the scale to compare two solves
+const cut = viewer.sampleSection([0, -0.5], [0, 0.5], { samples: 200 });
+```
+
+Three things are worth knowing before you wire a toolbar:
+
+- **Navigation is opt-in.** Without `interactive` the element behaves exactly as it did
+  before: it draws, and it reads out on hover. A page that layers the editor over the viewer
+  is the one that has to decide which of the two owns a drag, which is what `mode` is for —
+  set `viewer.mode = 'none'` while the user edits the profile.
+- **Ask before you offer a tool.** `viewer.capabilities` gives each one an `available` flag
+  and, when it is false, a sentence to show. A result with no vector field cannot have
+  integral curves, and the viewer says why instead of drawing nothing.
+- **Curves are integral curves, not "flow lines".** The viewer integrates a *vector* field
+  and refuses to invent one from a scalar. Your application submitted the job, so it is the
+  one that knows the vector is a velocity and can call them flow lines on screen.
+
+The full surface — properties, attributes and the `fs-*` events — is in the
+[viewer package README](https://github.com/mandaloriat/fenix-spoon/tree/main/client/packages/viewer),
+and the boundary between what the viewer does and what your application supplies is
+[ADR 0001](adr/0001-explorable-viewer.md).
+
+### Keeping the two widgets in step
+
+When the viewer is zoomed, an editor layered over it has to follow, or its control points
+stop landing where the user sees them:
+
+```js
+viewer.addEventListener('fs-viewport-change', (event) => {
+  editor.viewBox = event.detail.viewport;   // display only — `bounds` stays the domain
+});
+```
+
+`viewBox` reframes what the editor draws without touching the geometry. `bounds` is still
+the protocol's domain rectangle, and changing *that* re-clamps the points.
+
 ## Validators, when you do not trust the source
 
 The SDK exports the runtime validators used by the conformance suite:

@@ -206,6 +206,18 @@ toolkit would have dominated the download for capability nothing yet uses.
 `@fenix-spoon/viewer` draws both kinds, with colormaps, a colorbar, iso-contours and a hover
 probe, in a fraction of that.
 
+It also *explores* them: pointer-anchored zoom, drag and pinch pan, fit-domain and
+fit-geometry, a probe and a section that sample the arrays already in the page, a pinnable
+colour scale for comparing two solves, vector glyphs, and integral curves of a vector field.
+**None of that touched the wire protocol**, which is the interesting part of the decision and
+is recorded in [ADR 0001](adr/0001-explorable-viewer.md): every one of those operations is a
+function of data `grid2d` and `mesh2d` have carried since protocol 1.1, so a result from an
+older server explores exactly as well as a new one, and no solver adapter acquired a view on
+how a browser draws its output. What the viewer deliberately does *not* do is infer: it will
+not build a vector field out of a scalar one to draw curves, and it will not derive a geometry
+outline from the `grid2d` mask — the application supplies the geometry, and an unavailable
+tool carries a sentence saying why rather than quietly drawing nothing.
+
 Protocol 1.4's `series1d` is the first kind that is not a field at all, and it did not get a
 renderer. A curve wants axes, a legend, a hover readout and — for `C_p` — an inverted `y`, none
 of which is a *mode* of a field viewer; it is a second small widget, and the protocol carrying the
@@ -213,8 +225,11 @@ shape is what makes writing one a contained job rather than a convention each co
 `<fs-viewer>` refuses a `series1d` and says so rather than drawing it badly.
 
 The drawing surface is isolated, so a WebGL backend can land with the first result kind that needs
-it — 3D (#25), or vector fields, which the protocol does not yet carry and which is why the
-Navier–Stokes example in #18 is blocked rather than merely unwritten.
+it — 3D (#25). The rest of the widget is arranged for that: the coloured field is rasterised once
+per (field, colormap, range) and blitted thereafter, contours and integral curves are computed in
+domain coordinates and cached, and a pan or a zoom only re-projects them. That is what makes
+60 fps navigation over a 175k-point grid a matter of one `drawImage` rather than of the
+rendering backend.
 
 Server-side rendering (trame-style image streaming) remains an escape hatch for huge models, not
 the default: client-side keeps interaction latency low and the server stateless between jobs.

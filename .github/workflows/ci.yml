@@ -47,6 +47,15 @@ jobs:
         run: npm test --prefix client
       - name: Build
         run: npm run build --prefix client
+      # Gestures need a real browser: layout, a real canvas, and pointer events the
+      # renderer synthesises rather than the test constructing them. The harness drives
+      # the runner image's Chrome over CDP — no Playwright, so no browser download on
+      # every `npm ci` in a package whose selling point is a small embed footprint.
+      - name: Guard against a silently skipped browser suite
+        # Same reasoning as the fenics and redis jobs: a skip here would look like a pass.
+        run: test -x /usr/bin/google-chrome || test -x /usr/bin/chromium
+      - name: Test (browser gestures)
+        run: npm run test:browser --prefix client --workspace @fenix-spoon/viewer
 
   fenics:
     runs-on: ubuntu-latest
