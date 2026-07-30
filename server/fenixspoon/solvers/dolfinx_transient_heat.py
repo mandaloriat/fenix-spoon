@@ -60,7 +60,8 @@ class DolfinxTransientHeat2D(Solver):
     requires = ["dolfinx", "gmsh", "mpi4py", "petsc4py"]
     metrics = TRANSIENT_HEAT_METRICS
     assumptions = TRANSIENT_HEAT_ASSUMPTIONS
-    #: One matrix, one factorisation, a fixed number of steps: same inputs, same answer (#47).
+    #: A direct solve on a mesh Gmsh builds deterministically, repeated a fixed number of
+    #: times, with no randomness anywhere: same inputs, same answer. Safe to cache (#47).
     deterministic = True
     artifacts = [VTK_ARTIFACT]
     examples = [
@@ -155,6 +156,15 @@ class DolfinxTransientHeat2D(Solver):
         except TypeError:  # older dolfinx without the prefix keyword
             problem = LinearProblem(a, rhs, bcs=[], petsc_options=petsc_options)
 
+        # Volume-weighted forms, built once and assembled per step. A plain mean over the
+        # dof vector would be a property of where the mesh put its nodes: refine one corner
+        # and the reported average moves, with the temperature field unchanged. `previous`
+        # is the Function the loop copies into, so one form serves every step.
+        one = fem.Constant(msh, dolfinx.default_scalar_type(1.0))
+        volume_form = fem.form(one * ufl.dx)
+        mean_form = fem.form(previous * ufl.dx)
+        volume = float(fem.assemble_scalar(volume_form).real)
+
         times = [0.0]
         peak = [float(initial)]
         mean = [float(initial)]
@@ -167,8 +177,10 @@ class DolfinxTransientHeat2D(Solver):
             previous.x.array[:] = current.x.array
             values = np.asarray(current.x.array.real, dtype=float)
             times.append(index * step)
+            # The peak is a nodal maximum — the hottest place in the body, which is what a
+            # rating is read against. The mean is an integral, for the reason above.
             peak.append(float(values.max()))
-            mean.append(float(values.mean()))
+            mean.append(float(fem.assemble_scalar(mean_form).real) / volume)
             ctx.progress(
                 ProgressEvent(
                     iteration=index, total=params.steps, message=f"t = {index * step:.3g} s"
@@ -186,12 +198,10 @@ class DolfinxTransientHeat2D(Solver):
         rise = history[-1] - initial
         settled = abs(history[-1] - history[-2]) < 0.01 * max(abs(rise), 1e-12)
         reached = crossing_time(np.asarray(times), history, initial + 0.9 * rise)
-        capacity_values = np.asarray(capacity.x.array.real, dtype=float)
-
         metrics = {
             "t_rise": float(t_nodal.max() - params.t_ambient),
             "t_peak": float(history.max()),
-            "time_constant": _lumped_time_constant(msh, capacity_values, params.h),
+            "time_constant": _lumped_time_constant(msh, capacity, params.h),
         }
         if reached is not None:
             metrics["time_to_90pc"] = reached
@@ -240,16 +250,23 @@ class DolfinxTransientHeat2D(Solver):
         )
 
 
-def _lumped_time_constant(msh, capacity: np.ndarray, h: float) -> float:
-    """`rho_cp V / (h A)` on the mesh: cell volumes for the store, boundary facets for the loss.
+def _lumped_time_constant(msh, capacity, h: float) -> float:
+    """`integral(rho_cp dV) / (h * integral(dA))`: the lumped time constant, both terms as
+    integrals.
 
-    Computed with UFL measures rather than by counting raster faces, because on an
-    unstructured mesh the exposed area *is* the boundary integral — and `ds` covers the whole
-    boundary here for the same reason the Robin condition does: the mesh is the solid.
+    Written this way rather than as `mean(rho_cp) * V` because neither factor survives that
+    shortcut on an unstructured mesh with more than one material: the DG0 dof vector holds
+    one value per cell and cells differ in area, so an unweighted mean is the average over
+    *cells*, not over the body. The reference heat sink has a chip at 1.6e6 and a base at
+    2.42e6 J/(m^3 K), and the chip is much the smaller — exactly the case that shortcut gets
+    wrong.
+
+    `ds` covers the whole boundary here for the same reason the Robin condition does: the
+    mesh is the solid, so every exterior facet is an exposed face.
     """
     one = fem.Constant(msh, dolfinx.default_scalar_type(1.0))
-    volume = float(fem.assemble_scalar(fem.form(one * ufl.dx)).real)
+    stored = float(fem.assemble_scalar(fem.form(capacity * ufl.dx)).real)
     area = float(fem.assemble_scalar(fem.form(one * ufl.ds)).real)
     if area <= 0.0:
         return float("inf")
-    return float(np.mean(capacity)) * volume / (h * area)
+    return stored / (h * area)
