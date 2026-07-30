@@ -72,6 +72,12 @@ from .rpc.methods import METHODS, MethodError, SubmitParams
 #: than silently read some *other* file that happens to exist at the same path.
 SCHEME = "fenix-spoon"
 
+#: Above this, a text artifact is described rather than inlined. 64 kB is roughly the point
+#: where a file stops being something a model can read and starts being something it should
+#: open — and it is a module constant rather than a literal so a test can move the boundary
+#: instead of generating a megabyte to cross it.
+INLINE_LIMIT = 64_000
+
 
 def _schema(properties: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
     """A JSON Schema object for a tool's arguments.
@@ -91,6 +97,20 @@ def _schema(properties: dict[str, Any], required: list[str] | None = None) -> di
 
 _REF = {"type": "string", "description": "A workspace reference, e.g. `design:d-1`."}
 _JOB = {"type": "string", "description": "A job id, as `submit_job` returned it."}
+
+
+def _with_job_id(schema: dict[str, Any]) -> dict[str, Any]:
+    """A model's schema plus the `job_id` the RPC handler takes separately, marked required.
+
+    The first version merged `properties` by hand and left `required` alone, so a host was
+    told `job_id` was optional while `result.query` refuses without it — a tool that fails at
+    call time for a reason its own schema said would not happen. Raised in review of #49.
+    """
+    return {
+        **schema,
+        "properties": {**schema.get("properties", {}), "job_id": _JOB},
+        "required": [*schema.get("required", []), "job_id"],
+    }
 
 
 #: The tool vocabulary: MCP tool name → (RPC method, description, input schema).
@@ -204,10 +224,7 @@ TOOLS: dict[str, tuple[str, str, dict[str, Any]]] = {
         "Ask one bounded question of one result field — max, min, mean, integral, value at a "
         "point, statistics over a named region, a section, a decimated sample, or hotspots. "
         "The answer is a number and a coordinate; the array stays on the server.",
-        {**FieldQuery.model_json_schema(), "properties": {
-            **FieldQuery.model_json_schema()["properties"],
-            "job_id": _JOB,
-        }},
+        _with_job_id(FieldQuery.model_json_schema()),
     ),
     "get_artifact": (
         "artifact.get",
@@ -286,8 +303,17 @@ async def call_tool(
 
 
 def _error(data: dict[str, Any], message: str) -> CallToolResult:
+    """A failure in both forms, for the same reason a success is in both.
+
+    The first version set only `content`, which quietly made the "both forms" rule apply to
+    the happy path alone — so a host that reads structured content would have received
+    successes it could parse and failures it could not, which is the wrong way round. Raised
+    in review of #49.
+    """
+    body = {"error": message, **data}
     return CallToolResult(
-        content=[TextContent(type="text", text=json.dumps({"error": message, **data}))],
+        content=[TextContent(type="text", text=json.dumps(body))],
+        structured_content=body,
         is_error=True,
     )
 
@@ -326,23 +352,44 @@ def read_resource(core: FenixSpoonCore, principal: Principal, uri: str) -> ReadR
     """
     job_id, _, name = uri.removeprefix(f"{SCHEME}://job/").partition("/")
     handle = core.artifact(job_id, name, principal)
-    text = handle.content_type.startswith("text/") or handle.path.suffix in (".vtk", ".json")
-    if text and handle.size <= 64_000:
-        body = handle.path.read_text(errors="replace")
-    else:
-        body = json.dumps(
-            {
-                "path": str(handle.path),
-                "size": handle.size,
-                "content_type": handle.content_type,
-                "note": (
-                    "not inlined: read it from `path`. Inlining would cost a third more than "
-                    "the file and land in a context window that cannot use it."
-                ),
-            }
+    inline = (
+        handle.content_type.startswith("text/") or handle.path.suffix in (".vtk", ".json")
+    ) and handle.size <= INLINE_LIMIT
+    if inline:
+        # Explicit UTF-8 rather than the locale default: an artifact written on one machine
+        # and read on another must not decode differently because of `LANG`. `errors` is
+        # still permissive because a solver's log is not guaranteed clean and a mojibake
+        # character is a better outcome than a failed read.
+        return ReadResourceResult(
+            contents=[
+                TextResourceContents(
+                    uri=uri,
+                    mimeType=handle.content_type,
+                    text=handle.path.read_text(encoding="utf-8", errors="replace"),
+                )
+            ]
         )
+    described = {
+        "path": str(handle.path),
+        "size": handle.size,
+        "content_type": handle.content_type,
+        "note": (
+            "not inlined: read it from `path`. Inlining would cost a third more than the "
+            "file and land in a context window that cannot use it."
+        ),
+    }
     return ReadResourceResult(
-        contents=[TextResourceContents(uri=uri, mimeType=handle.content_type, text=body)]
+        contents=[
+            TextResourceContents(
+                uri=uri,
+                # `application/json`, because that is what this *is*. Keeping the artifact's
+                # own type here would label a JSON description as `model/vnd.vtk` and hand a
+                # host something that fails the moment it believes the label. The artifact's
+                # real type is inside, under `content_type`. Raised in review of #49.
+                mimeType="application/json",
+                text=json.dumps(described),
+            )
+        ]
     )
 
 

@@ -72,14 +72,16 @@ def test_the_cli_says_how_to_install_the_extra_rather_than_crashing():
     extra — otherwise the test would silently stop checking anything the moment CI installed
     it.
     """
+    # `ModuleNotFoundError` with `name` set, because that is what Python actually raises for
+    # an absent package — and `name` is exactly what the CLI switches on. A hook that raised a
+    # bare `ImportError` would be simulating something that never happens, and would have this
+    # test failing over the difference rather than over the behaviour.
     code = (
         "import sys\n"
         "class Block:\n"
-        "    def find_module(self, name, path=None):\n"
-        "        return self if name == 'mcp' or name.startswith('mcp.') else None\n"
         "    def find_spec(self, name, path=None, target=None):\n"
         "        if name == 'mcp' or name.startswith('mcp.'):\n"
-        "            raise ImportError('No module named mcp')\n"
+        "            raise ModuleNotFoundError(f'No module named {name!r}', name=name)\n"
         "        return None\n"
         "sys.meta_path.insert(0, Block())\n"
         "from fenixspoon.cli import main\n"
@@ -91,6 +93,31 @@ def test_the_cli_says_how_to_install_the_extra_rather_than_crashing():
     assert result.returncode == 3, result.stderr
     assert "pip install" in result.stderr
     assert "Traceback" not in result.stderr, "a missing extra should not be a traceback"
+
+
+def test_a_bug_inside_the_adapter_is_not_reported_as_a_missing_extra():
+    """Catching every `ImportError` would send whoever hit a real bug to install something
+    they already have. Only a failure to import `mcp` itself means the extra is absent.
+
+    Simulated by making `mcp_adapter` fail on a *different* module, which is what a typo in an
+    import or a moved dependency would look like. Raised in review of #49.
+    """
+    code = (
+        "import sys\n"
+        "class Block:\n"
+        "    def find_spec(self, name, path=None, target=None):\n"
+        "        if name == 'numpy':\n"
+        "            raise ModuleNotFoundError('No module named numpy', name='numpy')\n"
+        "        return None\n"
+        "sys.meta_path.insert(0, Block())\n"
+        "from fenixspoon.cli import main\n"
+        "sys.exit(main(['mcp', '--stdio']))\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code], cwd=REPO_SERVER, capture_output=True, text=True
+    )
+    assert result.returncode != 3, "a bug inside the adapter was reported as a missing extra"
+    assert "pip install" not in result.stderr
 
 
 mcp_types = pytest.importorskip("mcp.types", reason="requires the `mcp` extra")
@@ -235,6 +262,22 @@ def test_every_tool_names_a_method_that_exists():
         assert schema["type"] == "object", f"{tool} takes something other than named arguments"
 
 
+def test_a_tool_schema_requires_what_its_handler_requires():
+    """A schema that says an argument is optional when the handler refuses without it is a
+    tool that fails at call time for a reason its own schema said would not happen.
+
+    `query_result` is the case that was wrong: its schema is `FieldQuery`'s plus the `job_id`
+    the handler takes separately, and the first version merged `properties` by hand and left
+    `required` alone. Raised in review of #49.
+    """
+    _method, _description, schema = mcp_adapter.TOOLS["query_result"]
+    assert "job_id" in schema["properties"]
+    assert "job_id" in schema["required"]
+    assert "field" in schema["required"] and "op" in schema["required"], (
+        "the model's own required fields were lost in the merge"
+    )
+
+
 def test_every_tool_is_advertised_with_a_schema():
     tools = {tool.name: tool for tool in mcp_adapter.tool_list()}
     assert set(tools) == set(mcp_adapter.TOOLS)
@@ -295,6 +338,17 @@ def test_a_malformed_argument_is_reported_the_way_the_rpc_transport_reports_it(c
     assert body["parameter"] == "inline_schemas"
 
 
+def test_an_error_carries_structured_content_too(core, me):
+    """"Both forms" has to mean both outcomes. Setting only `content` on failures would give a
+    host successes it can parse and failures it cannot, which is the wrong way round. Raised
+    in review of #49."""
+    result = call(core, me, "describe_capability", {"name": "physics.from_the_future"})
+    assert result.is_error
+    assert result.structured_content is not None
+    assert result.structured_content == json.loads(result.content[0].text)
+    assert result.structured_content["type"] == "UnknownCapability"
+
+
 def test_an_unknown_tool_lists_the_ones_that_exist(core, me):
     result = call(core, me, "solve_magnetostatics", {})
     assert result.is_error
@@ -343,7 +397,7 @@ def test_a_resource_list_is_scoped_to_its_principal(core, me):
     assert mcp_adapter.artifact_resources(core, stranger) == []
 
 
-def test_a_large_artifact_is_described_rather_than_base64_encoded(core, me):
+def test_a_large_artifact_is_described_rather_than_base64_encoded(core, me, monkeypatch):
     """The deliberate refusal, and the reason it is not a missing feature.
 
     Base64 makes a file a third larger and lands it in a context window that cannot use it.
@@ -351,17 +405,30 @@ def test_a_large_artifact_is_described_rather_than_base64_encoded(core, me):
     """
     job_id = solve_with_artifact(core, me)
     uri = f"{mcp_adapter.SCHEME}://job/{job_id}/solution.vtk"
+    handle = core.artifact(job_id, "solution.vtk", me)
+
+    # The boundary is moved rather than crossed. A test that relied on the fixture's artifact
+    # happening to exceed 64 kB would exercise whichever branch the mock solver's resolution
+    # left it on — and this one sat on the *inline* side, so the assertion below was passing
+    # without ever running the code it describes. Both branches are checked explicitly now.
+    monkeypatch.setattr(mcp_adapter, "INLINE_LIMIT", handle.size - 1)
     read = mcp_adapter.read_resource(core, me, uri)
     body = read.contents[0].text
 
-    handle = core.artifact(job_id, "solution.vtk", me)
-    if handle.size > 64_000:
-        described = json.loads(body)
-        assert Path(described["path"]).is_file()
-        assert described["size"] == handle.size
-        assert "not inlined" in described["note"]
-    else:
-        assert body.startswith("# vtk DataFile"), "a small text artifact should arrive inline"
+    described = json.loads(body)
+    assert Path(described["path"]).is_file()
+    assert described["size"] == handle.size
+    assert "not inlined" in described["note"]
+    # The description is JSON and must say so. Keeping the artifact's own type here would
+    # label it `model/vnd.vtk` and hand a host something that breaks the moment it believes
+    # the label; the real type is inside, under `content_type`. Raised in review of #49.
+    assert read.contents[0].mime_type == "application/json"
+    assert described["content_type"] == handle.content_type
+    # …and below the limit the same artifact arrives inline, with its own type.
+    monkeypatch.setattr(mcp_adapter, "INLINE_LIMIT", handle.size)
+    inline = mcp_adapter.read_resource(core, me, uri)
+    assert inline.contents[0].text.startswith("# vtk DataFile")
+    assert inline.contents[0].mime_type == handle.content_type
 
 
 def test_reading_an_artifact_that_does_not_exist_is_a_domain_error(core, me):

@@ -95,6 +95,13 @@ def _run_mcp(args: argparse.Namespace) -> int:
     try:
         from .mcp_adapter import serve_stdio
     except ImportError as exc:
+        # Only a failure to import `mcp` itself means "the extra is not installed". Catching
+        # every `ImportError` would report a genuine bug inside `mcp_adapter` — a typo in an
+        # import, a dependency that moved — as a missing extra, sending whoever hit it to
+        # install something they already have. Anything else is re-raised with its traceback
+        # intact. Raised in review of #49.
+        if (exc.name or "").partition(".")[0] != "mcp":
+            raise
         print(
             f"the MCP extra is not installed ({exc}).\n"
             "Install it with:  pip install 'fenixspoon[mcp]'\n"
