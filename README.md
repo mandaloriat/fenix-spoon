@@ -23,14 +23,16 @@ solvers, typed parameters, jobs, results — is meant to be drivable from a loca
 scripts, CLI, and software agents on a machine that already has FEniCSx, over a structured local
 interface with compact answers instead of a web app. That direction is
 [M2.5](docs/03-roadmap.md#m25-local-automation-and-agent-interface), designed in
-[docs/07-local-agent-interface.md](docs/07-local-agent-interface.md). Seven of its ten items have
+[docs/07-local-agent-interface.md](docs/07-local-agent-interface.md). Eight of its ten items have
 landed — the transport-neutral core, progressive capability discovery, the local workspace,
-compact results, the result cache, the study abstraction, and **the local transport itself**. `fenix-spoon rpc --stdio`
+compact results, the result cache, the study abstraction, and **both local transports**. `fenix-spoon rpc --stdio`
 speaks [JSON-RPC 2.0 over pipes](docs/08-json-rpc.md) with no port opened and no web framework
 imported, so a script can ask what this installation can simulate, keep its designs under stable
 ids, patch one control point of a geometry, re-solve by reference, read back an answer in a few
 hundred bytes instead of a few hundred kilobytes, and have an unchanged design cost a lookup
-rather than a solve. The remaining transports (CLI, Python, MCP) are still design.
+rather than a solve. An [MCP adapter](docs/09-mcp.md) puts the same operations in front of a Model Context
+Protocol host as thirteen tools, as an optional extra. The CLI and Python adapters are still
+design.
 
 > **Status: M1 and M2 done, M3 mostly.** Two physics examples run end to end on real FEniCSx
 > solves (potential flow, magnetostatics), the three browser packages — SDK, geometry editor,
@@ -187,7 +189,8 @@ files; `make docs-serve` previews it locally.
 6. [Load test](docs/06-load-test.md) — the tested envelope, and how to reproduce it
 7. [Protocol reference](docs/reference-protocol.md) — every model, generated from the code that validates it
 8. [JSON-RPC over stdio](docs/08-json-rpc.md) — the local transport: methods, framing, errors
-9. [Local agent interface](docs/07-local-agent-interface.md) — design draft for driving the same
+9. [MCP adapter](docs/09-mcp.md) — the tool vocabulary for Model Context Protocol hosts
+10. [Local agent interface](docs/07-local-agent-interface.md) — design draft for driving the same
    core from a local process (M2.5; the core, discovery, workspace, results, cache and the
    stdio transport have landed — the CLI, Python and MCP adapters have not)
 

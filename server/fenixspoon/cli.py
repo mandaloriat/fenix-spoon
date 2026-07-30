@@ -1,9 +1,10 @@
 """The `fenix-spoon` command (roadmap M2.5, issue #45).
 
-One subcommand so far — `fenix-spoon rpc --stdio`, the entry point the JSON-RPC transport
-documents. The broader CLI, where every operation is a subcommand printing JSON, is #50; this
-is deliberately not that. Adding half of it here would mean designing the command vocabulary
-twice, and the JSON-RPC adapter needs exactly one command to be startable.
+Two subcommands: `fenix-spoon rpc --stdio`, the entry point the JSON-RPC transport documents,
+and `fenix-spoon mcp --stdio`, the same operations for a Model Context Protocol host (#49).
+The broader CLI, where every *operation* is a subcommand printing JSON, is #50; this is
+deliberately not that. Adding half of it here would mean designing the command vocabulary
+twice, and each transport needs exactly one command to be startable.
 
     $ printf '{"jsonrpc":"2.0","id":1,"method":"capability.list"}\\n' | fenix-spoon rpc --stdio
 
@@ -81,6 +82,36 @@ def _run_rpc(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_mcp(args: argparse.Namespace) -> int:
+    """Serve MCP over stdio, or say plainly that the extra is not installed.
+
+    The import is inside the function and the failure is a sentence rather than a traceback:
+    MCP is an optional extra by design (#49), so "you have not installed it" is an ordinary
+    outcome of running this command, not a crash.
+    """
+    if not args.stdio:
+        print("fenix-spoon mcp currently serves stdio only; pass --stdio.", file=sys.stderr)
+        return 2
+    try:
+        from .mcp_adapter import serve_stdio
+    except ImportError as exc:
+        print(
+            f"the MCP extra is not installed ({exc}).\n"
+            "Install it with:  pip install 'fenixspoon[mcp]'\n"
+            "Everything else — the HTTP API, `fenix-spoon rpc --stdio` — works without it.",
+            file=sys.stderr,
+        )
+        return 3
+
+    core = _build_core()
+    core.jobs.reconcile()
+    try:
+        asyncio.run(serve_stdio(core, _principal()))
+    except KeyboardInterrupt:
+        return 130
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="fenix-spoon",
@@ -120,6 +151,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="job and workspace directory (default: $FENIXSPOON_DATA_DIR, else ./.fenix-spoon)",
     )
     rpc.set_defaults(handler=_run_rpc)
+
+    mcp = sub.add_parser(
+        "mcp",
+        help="serve Model Context Protocol over stdio (needs the `mcp` extra)",
+        description=(
+            "Serve the MCP tool vocabulary on stdin/stdout, for a host that speaks MCP. The "
+            "same operations as `rpc`, through a curated tool set. Requires "
+            "`pip install 'fenixspoon[mcp]'`."
+        ),
+    )
+    mcp.add_argument("--stdio", action="store_true", help="serve on this process's pipes")
+    mcp.add_argument(
+        "--data-dir",
+        type=Path,
+        default=None,
+        help="job and workspace directory (default: $FENIXSPOON_DATA_DIR, else ./.fenix-spoon)",
+    )
+    mcp.set_defaults(handler=_run_mcp)
     return parser
 
 
