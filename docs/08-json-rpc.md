@@ -136,6 +136,11 @@ stays under the tolerance** — which is the sentence a convergence study exists
 
 Three things worth knowing before you write one:
 
+- **A name the study gets wrong is refused, not tabulated.** Both the parameter and the
+  metric names are checked against what the capability declares, on the run path and the read
+  path alike. A metric column of nulls would read as "this capability reports `c_1` and the
+  solve did not produce it" — confident and wrong — where a refusal naming `c_l` sends you to
+  the typo.
 - **The parameter is named, not inferred.** No capability declares which of its parameters
   controls the mesh, and guessing from the name would be wrong for the first adapter that
   spells it differently. A name the capability does not have is refused — a solver's params

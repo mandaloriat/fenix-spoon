@@ -57,6 +57,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from . import errors
+
 #: Study kinds this server implements. One, deliberately — see the module docstring.
 KINDS = ("mesh_convergence",)
 
@@ -270,15 +272,39 @@ def convergence_of(
 
 
 def tabulated_metrics(body: StudyBody, declared: list[str]) -> list[str]:
-    """Which metrics to put in the table, and refuse the ones that do not exist.
+    """Which metrics to put in the table, refusing the ones that do not exist.
 
-    An unknown metric name is an error rather than an empty column, for the reason
-    `capability.describe` refuses an unknown section: a caller that asks for `c_1` and gets a
-    table without it would conclude the capability does not report it, when in fact the name
-    was `c_l`.
+    An unknown metric name is an error rather than a column of nulls, for the reason
+    `capability.describe` refuses an unknown section and `result.get` refuses an unknown
+    level: a caller that asks for `c_1` when the name is `c_l` must not be handed something
+    that looks like an answer.
+
+    A column of nulls is *worse* than a missing column, which is why the first implementation
+    of this — returning the names unchecked, while this docstring already claimed otherwise —
+    was not a harmless gap. A missing column at least prompts "did I spell that right"; a
+    column of nulls reads as "this capability reports `c_1` and the solve did not produce
+    it", which is a specific, confident and wrong conclusion. Raised in review of #48.
+
+    Raised from here rather than checked by the caller so the rule lives with the sentence
+    that states it — that mismatch is exactly what went wrong the first time.
     """
     if body.metrics is None:
         return list(declared)
+    unknown = [name for name in body.metrics if name not in declared]
+    if unknown:
+        raise errors.InvalidObject(
+            "study",
+            [
+                {
+                    "type": "unknown_metric",
+                    "loc": ["metrics"],
+                    "msg": (
+                        f"this capability does not declare {unknown}; "
+                        f"it declares {sorted(declared)}"
+                    ),
+                }
+            ],
+        )
     return list(body.metrics)
 
 

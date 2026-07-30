@@ -326,15 +326,37 @@ def test_a_relative_change_against_zero_is_undefined_not_infinite():
     assert studies.relative_changes([0.0, 1.0, 1.0]) == [None, 0.0]
 
 
-def test_a_metric_the_capability_does_not_declare_is_not_a_silent_empty_column(core, me):
-    """The same rule `capability.describe` follows for sections: a caller that asks for `c_1`
-    and gets a table without it would conclude the capability does not report it, when the
-    name was `c_l`."""
+def test_a_metric_the_capability_does_not_declare_is_refused(core, me):
+    """The same rule `capability.describe` follows for sections and `result.get` for levels.
+
+    This test asserted the opposite until the review of #48, and the way it was wrong is worth
+    keeping: the docstring on `tabulated_metrics` already *said* unknown names were refused,
+    the implementation returned them unchecked, and this test asserted the unchecked behaviour
+    while claiming it followed the rule. Three statements, two of them wrong, and they agreed
+    with each other well enough that nothing failed.
+
+    A column of nulls is worse than a missing column, which is why "harmless gap" is not the
+    right reading. A missing column prompts "did I spell that right"; a column of nulls reads
+    as "this capability reports `c_1` and the solve did not produce it" — a specific,
+    confident and wrong conclusion.
+    """
     study = study_of(core, me, design_of(core, me), metrics=["c_1"])
+    with pytest.raises(errors.InvalidObject) as caught:
+        asyncio.run(core.run_study(study, me))
+    assert "c_l" in json.dumps(caught.value.errors), "the message should list the real names"
+
+    # Refused on the read path too, so a study that cannot be tabulated does not spend the
+    # compute first and say so afterwards.
+    with pytest.raises(errors.InvalidObject):
+        core.study_report(study, me)
+
+
+def test_omitting_the_metric_list_tabulates_every_declared_one(core, me):
+    """The counter-case, so the refusal above cannot quietly become "you must list them"."""
+    study = study_of(core, me, design_of(core, me))
     _, report = run_to_completion(core, me, study)
-    column = next(c for c in report.convergence if c.metric == "c_1")
-    assert column.values == [None, None, None]
-    assert column.settled_at is None
+    declared = {spec.name for spec in core.capability("mock.laplace2d").metrics}
+    assert {column.metric for column in report.convergence} == declared
 
 
 # ------------------------------------------------------------------------ transport

@@ -381,6 +381,10 @@ class FenixSpoonCore:
                     }
                 ],
             )
+        # Same rule for the metric names, and checked here so it applies to `study.run` as
+        # well as `study.get` — a study that cannot be tabulated should not spend compute
+        # first and say so afterwards.
+        studies.tabulated_metrics(body, [spec.name for spec in solver_cls.metrics])
         return record, body, geometry, resolved, solver_cls
 
     async def run_study(self, ref: str, principal: Principal) -> studies.StudyRun:
