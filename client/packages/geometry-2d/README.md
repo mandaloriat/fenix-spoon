@@ -84,6 +84,7 @@ so a convex outline can bulge modestly outside its hull. That is expected, and b
 | `outlinePoints()` | `[number, number][]` | What the solver receives: the control points, or the sampled spline. |
 | `mode` | `'polygon' \| 'spline'` | Also settable as an attribute. |
 | `bounds` | `[number, number, number, number]` | `[xmin, ymin, xmax, ymax]`; also the `bounds="…"` attribute. |
+| `viewBox` | `[number, number, number, number] \| null` | The part of the domain drawn — **display only**; also the `view-box="…"` attribute. `null` shows all of it. |
 | `readOnly` | `boolean` | Also the `readonly` attribute. Hides midpoints, drops handle focusability. |
 | `undo()` / `redo()` / `canUndo()` / `canRedo()` | | |
 | `insertPointAfter(i)` / `removePoint(i)` | | `removePoint` refuses below 3 points, which the protocol rejects anyway. |
@@ -93,6 +94,23 @@ so a convex outline can bulge modestly outside its hull. That is expected, and b
 `change`.
 
 Points are always clamped strictly inside `bounds`, because the protocol requires it.
+
+### `viewBox` is not a second `bounds`
+
+`bounds` is the protocol's domain rectangle: changing it re-clamps the geometry and clears the
+undo history, because an undo that restored a point outside the new box would produce geometry
+the server rejects. `viewBox` changes nothing but the projection — the same points, drawn at a
+different magnification, with handles that keep their size on screen.
+
+It exists so an editor layered over `<fs-viewer>` can follow that viewer's zoom, which is the
+difference between "the two widgets can be combined" and "a control point still lands on the
+feature it was placed on":
+
+```js
+viewer.addEventListener('fs-viewport-change', (event) => {
+  editor.viewBox = event.detail.viewport;
+});
+```
 
 ## Styling
 
