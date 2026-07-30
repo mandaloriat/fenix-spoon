@@ -61,6 +61,7 @@ from .dolfinx_poisson import (
 from .mock_elasticity import (
     Edge,
     constitutive,
+    nodal_average,
     sample_material,
     strain_displacement,
     von_mises,
@@ -285,7 +286,7 @@ class DolfinxElasticity2D(Solver):
         modulus, poisson = sample_material(
             geometry, centroids, params.youngs_modulus, params.poisson_ratio
         )
-        b_matrix, _ = strain_displacement(points, triangles)
+        b_matrix, area = strain_displacement(points, triangles)
         d_matrix = constitutive(modulus, poisson, params.plane)
         flat = vectors.reshape(-1)
         dofs = np.repeat(triangles * 2, 2, axis=1)
@@ -293,10 +294,9 @@ class DolfinxElasticity2D(Solver):
         strain = np.einsum("eij,ej->ei", b_matrix, flat[dofs])
         equivalent = von_mises(np.einsum("eij,ej->ei", d_matrix, strain), poisson, params.plane)
 
-        counts = np.bincount(triangles.ravel(), minlength=len(points))
-        nodal_stress = np.bincount(
-            triangles.ravel(), weights=np.repeat(equivalent, 3), minlength=len(points)
-        ) / np.maximum(counts, 1)
+        # Area-weighted, and here the weighting matters: a Gmsh mesh is not uniform, so a
+        # plain average would let a sliver count for as much as the cell beside it.
+        nodal_stress = nodal_average(triangles, equivalent, area, len(points))
 
         magnitude = np.hypot(vectors[:, 0], vectors[:, 1])
         fields = {"u_mag": magnitude, "sigma_vm": nodal_stress}

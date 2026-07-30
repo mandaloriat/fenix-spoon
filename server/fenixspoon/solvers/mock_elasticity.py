@@ -137,6 +137,30 @@ def sample_material(
     return modulus, poisson
 
 
+def nodal_average(
+    triangles: np.ndarray, cell_values: np.ndarray, area: np.ndarray, n_points: int
+) -> np.ndarray:
+    """Area-weighted average of a per-element quantity at each node.
+
+    Weighted rather than plain, to match `_nodal_speed` in the potential-flow adapter and
+    because it is the local L2 representative of a piecewise-constant field: a node's value
+    should not swing on how many slivers happen to touch it.
+
+    On the mock's structured grid every triangle has the same area, so the weights are
+    uniform and this is arithmetic averaging — the weighting earns its keep on the Gmsh mesh
+    the FEniCSx adapter shares this helper with.
+
+    It smooths, and a peak is what it smooths most: `sigma_vm_max` is under-reported on a
+    coarse mesh, which is stated in the metric's own description rather than left for a
+    caller to discover.
+    """
+    weighted = np.bincount(
+        triangles.ravel(), weights=np.repeat(cell_values * area, 3), minlength=n_points
+    )
+    total = np.bincount(triangles.ravel(), weights=np.repeat(area, 3), minlength=n_points)
+    return weighted / np.maximum(total, 1e-300)
+
+
 def edge_nodes(points: np.ndarray, bounds, edge: str, tol: float) -> np.ndarray:
     """Indices of the nodes lying on one edge of the bounding rectangle, ordered along it."""
     xmin, ymin, xmax, ymax = bounds
@@ -341,13 +365,8 @@ class MockElasticity2D(Solver):
         stress = np.einsum("eij,ej->ei", d_matrix, strain)
         equivalent = von_mises(stress, poisson, params.plane)
 
-        # Element stresses averaged to the nodes, which is what a viewer draws. Nodal
-        # averaging is the cheap smoother; it under-reports a peak on a coarse mesh, which is
-        # the other reason the FEniCSx adapter is the one to quote.
-        counts = np.bincount(triangles.ravel(), minlength=len(points))
-        nodal_stress = np.bincount(
-            triangles.ravel(), weights=np.repeat(equivalent, 3), minlength=len(points)
-        ) / np.maximum(counts, 1)
+        # Element stresses averaged to the nodes, which is what a viewer draws.
+        nodal_stress = nodal_average(triangles, equivalent, area, len(points))
 
         keep = ~hole
         grids = {name: np.zeros((ny, nx)) for name in ("u_mag", "sigma_vm")}
