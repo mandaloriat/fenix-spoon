@@ -36,7 +36,7 @@ Protocol host as thirteen tools, as an optional extra, and the same operations a
 renderings of an operation agree, and the vertical slice runs as a test against both the mock
 and the FEniCSx solver.
 
-> **Status: M1 and M2 done, M3 mostly.** Two physics examples run end to end on real FEniCSx
+> **Status: M1, M2 and M2.5 done, M3 mostly.** Two physics examples run end to end on real FEniCSx
 > solves (potential flow, magnetostatics), the three browser packages — SDK, geometry editor,
 > field viewer — are published from `client/`, and the airfoil demo is built from them.
 > Pure-NumPy mock solvers mirror every FEniCSx one, so the full loop (edit geometry → submit →
@@ -66,6 +66,11 @@ see the [state-of-the-art survey](docs/01-state-of-the-art.md). Fenix Spoon is t
 | **Local workspace** — versioned `geometry` / `material` / `design` objects as diffable JSON files under stable ids, edited with RFC 6902 patches, solved by reference | [`objects.py`](server/fenixspoon/objects.py), [`core/workspace.py`](server/fenixspoon/core/workspace.py) | ✅ core API (no HTTP yet) |
 | **Compact results** — five response levels, declared engineering metrics, diagnostics, and nine bounded field queries (peak + location, integral, section, hotspots) that never move the array | [`core/results.py`](server/fenixspoon/core/results.py), [`fields.py`](server/fenixspoon/fields.py) | ✅ protocol 1.3 |
 | **Result cache + provenance** — an identical resubmission is answered from the solve that already ran, opt-in per adapter, with `cached` and the pinned input revisions on every result | [`cache.py`](server/fenixspoon/cache.py) | ✅ protocol 1.4 |
+| **Studies** — a sequence of solves that answers one question: mesh convergence refines until the metrics settle and reports the rung it settled at, rather than leaving a caller to run four jobs and eyeball them | [`core/studies.py`](server/fenixspoon/core/studies.py) | ✅ mesh convergence |
+| **JSON-RPC 2.0 over stdio** — `fenix-spoon rpc --stdio`: 26 methods, no port opened and no web framework imported, NDJSON out and both framings in | [`rpc/`](server/fenixspoon/rpc/), [`docs/08-json-rpc.md`](docs/08-json-rpc.md) | ✅ working |
+| **MCP adapter** — the same operations as 13 tools for a Model Context Protocol host, bound to the RPC method table rather than to the core, so it cannot drift from the other transports | [`mcp_adapter.py`](server/fenixspoon/mcp_adapter.py), [`docs/09-mcp.md`](docs/09-mcp.md) | ✅ optional extra (`pip install "fenix-spoon[mcp]"`) |
+| **CLI and Python API** — `fenix-spoon capability list`, `job submit`, `study run`… and the same operations in-process via `from fenixspoon import local` | [`commands.py`](server/fenixspoon/commands.py), [`local.py`](server/fenixspoon/local.py), [`docs/10-cli-and-python.md`](docs/10-cli-and-python.md) | ✅ working |
+| **Cross-transport conformance** — one request rendered five ways must produce one answer, and one refusal must mean the same thing on each; the error partition lives in the shared fixture corpus | [`tests/test_conformance.py`](server/tests/test_conformance.py), [`protocol/fixtures/errors.json`](protocol/fixtures/errors.json) | ✅ working |
 | **Browser demos** — the airfoil built from the three packages, plus zero-dependency versions of both airfoil and solenoid kept as protocol references | [`examples/airfoil-2d/`](examples/airfoil-2d/), [`examples/solenoid-2d/`](examples/solenoid-2d/) | ✅ working |
 | **JS/TS SDK** — `@fenix-spoon/client`: typed protocol client with progress streaming, reconnection and runtime validators | [`client/packages/client/`](client/packages/client/) | ✅ working |
 | **Geometry editor widget** — `<fs-geometry-2d>`: SVG-based parametric profile editor, keyboard-operable, emits protocol JSON | [`client/packages/geometry-2d/`](client/packages/geometry-2d/) | ✅ working |
