@@ -110,11 +110,50 @@ vocabulary costs a few hundred bytes rather than every method's schema.
 | `result.get` | a finished job's answer, at the levels asked for |
 | `result.query` | one bounded question about one field |
 | `artifact.get` | resolve an artifact to a path on this machine |
+| `study.run` | submit every rung of a study |
+| `study.get` | the (variation → metric) table, and where each metric settled |
 
-`study.run` and `study.get` are in the design draft's table and are deliberately absent: the
-study object does not exist yet ([#48](https://github.com/mandaloriat/fenix-spoon/issues/48)).
-Binding a method to nothing so the vocabulary looks complete would be a caller asking what
+That is the design draft's operation table in full. `study.run` and `study.get` were absent
+until [#48](https://github.com/mandaloriat/fenix-spoon/issues/48) gave the study object a body
+— binding a method to nothing so the vocabulary looks complete would be a caller asking what
 exists and being told about something that does not.
+
+### Studies
+
+A study **enumerates** a variation space: a base design, one parameter, and a ladder of values.
+One kind is implemented, `mesh_convergence`, and the object says which.
+
+```json
+{"kind": "mesh_convergence", "design": "design:d-1", "parameter": "resolution",
+ "values": [24, 32, 48, 64], "tolerance": 0.01}
+```
+
+`study.run` submits each rung and returns immediately with how many started, how many the
+result cache answered for free, and how many the server refused. `study.get` returns the
+table: per rung the value, the job id, the status and the metrics; then per metric the values
+up the ladder, the relative change between rungs, and **the value from which every later change
+stays under the tolerance** — which is the sentence a convergence study exists to produce.
+
+Three things worth knowing before you write one:
+
+- **A name the study gets wrong is refused, not tabulated.** Both the parameter and the
+  metric names are checked against what the capability declares, on the run path and the read
+  path alike. A metric column of nulls would read as "this capability reports `c_1` and the
+  solve did not produce it" — confident and wrong — where a refusal naming `c_l` sends you to
+  the typo.
+- **The parameter is named, not inferred.** No capability declares which of its parameters
+  controls the mesh, and guessing from the name would be wrong for the first adapter that
+  spells it differently. A name the capability does not have is refused — a solver's params
+  model ignores unknown fields, so an unchecked typo would submit every rung identically, the
+  cache would collapse them onto one job, and the table would show a *perfectly converged*
+  answer that is entirely fabricated.
+- **Each rung is an ordinary submission.** It obeys the cell budget and the quota per job, not
+  per study, and an already-computed rung costs nothing. A rung the server refuses does not
+  fail the study — rung 4 exceeding the budget says nothing about rungs 1–3.
+- **It does not choose the next point.** That is an optimizer and it is M5
+  ([#22](https://github.com/mandaloriat/fenix-spoon/issues/22)). The line is drawn at a
+  concrete place: a study's job list is a pure function of its object revision, so you can say
+  which solves it implies without running any of them. An optimizer cannot promise that.
 
 ### Progress: poll or subscribe
 

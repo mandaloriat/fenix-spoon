@@ -32,7 +32,7 @@ from ..jobs import TERMINAL, Job, JobManager
 from ..objects import ObjectFileStore, parse_ref
 from ..solvers import available_solvers, get_solver, registered_solvers
 from ..solvers.base import Solver, SolverInfo
-from . import discovery, errors, results
+from . import discovery, errors, results, studies
 from .discovery import (
     CapabilityDescription,
     CapabilitySummary,
@@ -340,6 +340,178 @@ class FenixSpoonCore:
             resolved.params,
             principal,
             inputs=resolved.model_dump(exclude={"params"}),
+        )
+
+    # -------------------------------------------------------------------- studies (#48)
+
+    def _study_plan(self, ref: str, principal: Principal):
+        """Everything both study operations need: the spec, the design it varies, the solver.
+
+        Shared because `study.run` and `study.get` must agree on what the study *means* down
+        to the parameters of every rung — they resolve the same design, apply the same
+        overrides and, in `get`'s case, recompute the same cache keys. Two copies of that
+        would be two chances to disagree, and the symptom would be a report about jobs the
+        run never submitted.
+        """
+        record = self.workspace.get_typed(ref, principal.id, "study")
+        try:
+            body = studies.StudyBody.model_validate(record.body)
+        except ValidationError as exc:  # pragma: no cover - create() already validated it
+            raise errors.InvalidObject("study", json.loads(exc.json())) from exc
+
+        geometry, resolved = self.workspace.resolve_design(body.design, principal.id)
+        solver_cls = self.capability(resolved.solver)
+
+        # The guard that earns its place. A solver's `Params` ignores unknown fields, so a
+        # study varying `resolutoin` would submit every rung with identical parameters, the
+        # result cache would collapse them onto one job, and the report would show the same
+        # metric at every rung — a *perfectly converged* answer that is entirely fabricated.
+        # A study is exactly the operation where that failure is invisible.
+        if body.parameter not in solver_cls.Params.model_fields:
+            raise errors.InvalidObject(
+                "study",
+                [
+                    {
+                        "type": "unknown_parameter",
+                        "loc": ["parameter"],
+                        "msg": (
+                            f"{solver_cls.name!r} has no parameter {body.parameter!r}; "
+                            f"it accepts {sorted(solver_cls.Params.model_fields)}"
+                        ),
+                    }
+                ],
+            )
+        # Same rule for the metric names, and checked here so it applies to `study.run` as
+        # well as `study.get` — a study that cannot be tabulated should not spend compute
+        # first and say so afterwards.
+        studies.tabulated_metrics(body, [spec.name for spec in solver_cls.metrics])
+        return record, body, geometry, resolved, solver_cls
+
+    async def run_study(self, ref: str, principal: Principal) -> studies.StudyRun:
+        """Submit every rung of a study — `study.run` (roadmap M2.5, #48).
+
+        Returns as soon as the work is accepted, not when it is done: solving a five-rung
+        mesh ladder takes minutes and this is one call on a channel that must stay usable.
+        The table appears in :meth:`study_report`.
+
+        Each rung goes through :meth:`submit` like any other job, which is what makes a study
+        obey the cell budget and the quota per job rather than per study, and what makes an
+        already-computed rung free — the result cache answers it without solving.
+
+        A rung the server refuses does not fail the study. Rung 4 exceeding the cell budget
+        says nothing about rungs 1–3, and reporting the whole run as failed would throw away
+        work that succeeded; the refusal is recorded and shows up against that rung in the
+        report.
+        """
+        record, body, geometry, resolved, solver_cls = self._study_plan(ref, principal)
+
+        jobs: list[str] = []
+        submitted = reused = refused = 0
+        for index, value in enumerate(body.values):
+            try:
+                job = await self.submit(
+                    resolved.solver,
+                    geometry,
+                    {**resolved.params, body.parameter: value},
+                    principal,
+                    inputs=studies.variation_inputs(record.pinned, index, value, resolved),
+                )
+            except errors.CoreError:
+                refused += 1
+                continue
+            jobs.append(job.id)
+            if job.reused > 0:
+                reused += 1
+            else:
+                submitted += 1
+        return studies.StudyRun(
+            study=record.pinned,
+            jobs=jobs,
+            submitted=submitted,
+            reused=reused,
+            refused=refused,
+        )
+
+    def study_report(self, ref: str, principal: Principal) -> studies.StudyReport:
+        """The (variation → metric) table — `study.get` (roadmap M2.5, #48).
+
+        Built by resolving each rung back to its job rather than by reading a stored run
+        record, because there is no stored run record: the study says what to solve, the jobs
+        are the answer, and a third thing tracking which is which is a third thing that can
+        be wrong.
+
+        Two resolution paths, and the second is not defensive padding. The **cache key** is
+        the normal one: it is deterministic, and it finds a rung that was answered by a solve
+        somebody ran standalone last week — which is the whole point of reusing the cache and
+        which no `inputs` lookup can find, because that job's inputs never mentioned this
+        study. When there is no key (caching off, or the adapter does not declare itself
+        deterministic) the recorded `inputs` answer instead.
+        """
+        record, body, geometry, resolved, solver_cls = self._study_plan(ref, principal)
+        by_input = {
+            job.inputs.get("variation_index"): job
+            for job in self.jobs_for_object(record.pinned, principal, limit=len(body.values) * 4)
+        }
+
+        rungs: list[studies.StudyRung] = []
+        declared = [spec.name for spec in solver_cls.metrics]
+        columns: dict[str, list[float | None]] = {
+            name: [] for name in studies.tabulated_metrics(body, declared)
+        }
+        for index, value in enumerate(body.values):
+            job = self._rung_job(solver_cls, geometry, resolved, body, value, principal)
+            if job is None:
+                job = by_input.get(index)
+            rungs.append(self._rung(value, job))
+            metrics = rungs[-1].metrics
+            for name, column in columns.items():
+                column.append(metrics.get(name))
+
+        return studies.StudyReport(
+            study=record.pinned,
+            kind=body.kind,
+            design=resolved.design,
+            parameter=body.parameter,
+            solver=resolved.solver,
+            rungs=rungs,
+            convergence=studies.convergence_of(body.values, columns, body.tolerance),
+            complete=all(rung.status in (*TERMINAL, "refused") for rung in rungs),
+        )
+
+    def _rung_job(self, solver_cls, geometry, resolved, body, value, principal) -> Job | None:
+        """This rung's job by content address, or None when it has no address to look up."""
+        try:
+            parsed = solver_cls.Params.model_validate(
+                {**resolved.params, body.parameter: value}
+            )
+        except ValidationError:
+            # The rung's parameters do not validate — the same refusal `run_study` recorded.
+            # Reported as a missing rung rather than raised, because one bad value must not
+            # take the whole table with it.
+            return None
+        key = self.cache_key_for(solver_cls, geometry, parsed)
+        if key is None:
+            return None
+        found = self.jobs.store.find_cached(key, principal.id)
+        return Job.from_record(found, self.jobs.data_dir / found.id) if found else None
+
+    @staticmethod
+    def _rung(value: float, job: Job | None) -> studies.StudyRung:
+        if job is None:
+            return studies.StudyRung(
+                value=value,
+                status="refused",
+                error="this rung was not accepted; run the study to see why",
+            )
+        return studies.StudyRung(
+            value=value,
+            job_id=job.id,
+            status=job.status,
+            cached=job.reused > 0,
+            # From the summary, which is database columns rather than the payload file — a
+            # five-rung study reads five rows instead of five multi-megabyte JSON documents.
+            metrics=dict(job.summary.metrics) if job.summary else {},
+            error=job.error,
         )
 
     # ---------------------------------------------------------------- workspace (#44)

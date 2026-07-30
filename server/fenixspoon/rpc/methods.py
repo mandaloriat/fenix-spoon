@@ -362,6 +362,14 @@ def jobs_for_object(core: FenixSpoonCore, principal: Principal, params: dict) ->
     return {"jobs": [JobStatus.from_job(job) for job in jobs]}
 
 
+async def study_run(core: FenixSpoonCore, principal: Principal, params: dict) -> Any:
+    return await core.run_study(_required(params, "ref"), principal)
+
+
+def study_get(core: FenixSpoonCore, principal: Principal, params: dict) -> Any:
+    return core.study_report(_required(params, "ref"), principal)
+
+
 def result_get(core: FenixSpoonCore, principal: Principal, params: dict) -> Any:
     return core.result_levels(_required(params, "job_id"), principal, params.get("levels"))
 
@@ -425,15 +433,16 @@ METHODS: dict[str, Any] = {
     "job.events": job_events,
     "job.provenance": job_provenance,
     "job.for_object": jobs_for_object,
+    "study.run": study_run,
+    "study.get": study_get,
     "result.get": result_get,
     "result.query": result_query,
     "artifact.get": artifact_get,
 }
 
-# `study.run` and `study.get` are in the design draft's table and are deliberately absent:
-# the study object does not exist yet (#48). Binding a method to nothing so the vocabulary
-# looks complete would be the discovery failure `capability.describe` refuses to commit —
-# a caller asking what exists and being told about something that does not.
+# The vocabulary is now the design draft's table in full: #48 defined the study object, so
+# `study.run` and `study.get` stopped being names with nothing behind them. One study kind is
+# implemented, which `study.run` says plainly rather than implying a framework.
 
 #: Methods whose effect is on the connection rather than on the core, so they have no handler
 #: here — :class:`~fenixspoon.rpc.server.RpcServer` owns them. They are still part of the

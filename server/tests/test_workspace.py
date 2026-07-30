@@ -439,12 +439,20 @@ def test_the_thin_types_are_stored_exactly_as_given(core, me):
     No shipped solver has a boundary condition separable from its params, so there is
     nothing to validate against yet. Storing the body faithfully — including a shape nobody
     has agreed on — is the honest behaviour until a capability needs one.
+
+    `study` used to be in this list and left it in #48, which is the pattern working as
+    intended rather than an exception to it: the type got a schema at the moment it had a
+    concrete use case to generalise from. These two still do not, so they are still here, and
+    the assertion below keeps that a decision rather than an omission.
     """
-    for object_type in ("boundary_condition", "load_case", "study"):
+    for object_type in ("boundary_condition", "load_case"):
         body = {"kind": "whatever-the-caller-decided", "nested": {"values": [1, 2, 3]}}
         stored = core.create_object(object_type, body, me)
         assert stored.body == body
         assert core.object(stored.ref, me).body == body
+
+    with pytest.raises(errors.InvalidObject):
+        core.create_object("study", {"kind": "whatever-the-caller-decided"}, me)
 
 
 def test_an_unknown_object_type_is_refused(core, me):

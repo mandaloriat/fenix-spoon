@@ -23,9 +23,9 @@ solvers, typed parameters, jobs, results — is meant to be drivable from a loca
 scripts, CLI, and software agents on a machine that already has FEniCSx, over a structured local
 interface with compact answers instead of a web app. That direction is
 [M2.5](docs/03-roadmap.md#m25-local-automation-and-agent-interface), designed in
-[docs/07-local-agent-interface.md](docs/07-local-agent-interface.md). Six of its ten items have
+[docs/07-local-agent-interface.md](docs/07-local-agent-interface.md). Seven of its ten items have
 landed — the transport-neutral core, progressive capability discovery, the local workspace,
-compact results, the result cache, and **the local transport itself**. `fenix-spoon rpc --stdio`
+compact results, the result cache, the study abstraction, and **the local transport itself**. `fenix-spoon rpc --stdio`
 speaks [JSON-RPC 2.0 over pipes](docs/08-json-rpc.md) with no port opened and no web framework
 imported, so a script can ask what this installation can simulate, keep its designs under stable
 ids, patch one control point of a geometry, re-solve by reference, read back an answer in a few

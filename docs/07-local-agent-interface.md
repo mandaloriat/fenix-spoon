@@ -21,12 +21,14 @@
     ([#47](https://github.com/mandaloriat/fenix-spoon/issues/47)); and the **JSON-RPC over
     stdio transport** §11 — twenty-four methods, no port, no FastAPI
     ([#45](https://github.com/mandaloriat/fenix-spoon/issues/45)), documented at
-    [JSON-RPC over stdio](08-json-rpc.md). Five of §15's open questions are settled as a
-    result, and are marked there.
+    [JSON-RPC over stdio](08-json-rpc.md); and the **study abstraction** §7 — one kind,
+    `mesh_convergence`, orchestrated through object references and compact results
+    ([#48](https://github.com/mandaloriat/fenix-spoon/issues/48)). Six of §15's open questions
+    are settled as a result, and are marked there.
 
-    Where §6 and §8–§11 below differ from what shipped, the implementation is the accurate
-    one; the differences are noted inline. The remaining transports — CLI, Python, MCP — and
-    the study abstraction are still design.
+    Where §6–§11 below differ from what shipped, the implementation is the accurate one; the
+    differences are noted inline. What remains design is the CLI, Python and MCP adapters, and
+    the study kinds beyond the first.
 
 ## 1. Motivation
 
@@ -227,8 +229,8 @@ The whole vocabulary should stay small enough to hold in one page. A first cut:
 | `job.cancel` | cooperative cancellation |
 | `result.query` | compact queries over a result's fields |
 | `artifact.get` | resolve an artifact reference to a path or bytes |
-| `study.run` | run a study over a design |
-| `study.get` | study status and its per-job result references |
+| `study.run` | run a study over a design *(implemented, #48 — one kind)* |
+| `study.get` | study status and its per-job result references *(implemented, #48)* |
 
 Deliberately absent: anything that takes code, a command line, a package name or an image
 reference. Deliberately *not* per-physics: there is no `solve_magnetostatics` — the physics is a
@@ -463,7 +465,7 @@ end to end, and the same operations are reachable from CLI, Python and MCP.
 Deliberately unresolved. Each needs a decision recorded with its reasoning, and none should be
 settled by picking whatever is fashionable.
 
-**Five are now settled** — four by #44 and the framing question by #45 — and are struck through below with what decided them. The
+**Six are now settled** — four by #44, the framing question by #45 and the study/optimizer boundary by #48 — and are struck through below with what decided them. The
 reasoning is preserved rather than replaced: a decision whose grounds are deleted is
 indistinguishable from a preference, and the grounds are what a future reader needs in order to
 know whether the decision still holds.
@@ -477,7 +479,7 @@ know whether the decision still holds.
 | ~~**Object lifetime and GC**~~ **→ objects are never swept** | inherit `FENIXSPOON_JOB_TTL` vs a separate policy vs explicit deletion | no object TTL, and the job TTL does not reach them. The asymmetry is the answer rather than a longer number: a job is a computation and losing it costs a re-run, an object is something a person authored and losing it is data loss. That inverts the dangling-reference worry — inputs outlive results, not the other way round — so "what does a result mean when its objects are gone" does not arise, and what survives is enough to recompute. Explicit deletion is still unimplemented; nothing yet needs it. |
 | **Artifact binary format** | keep VTK legacy vs VTU/VTKHDF vs a compact internal format for queries | `result.query` implies something the server can index efficiently; ParaView compatibility implies VTK-family output. These may be two different files with different jobs. |
 | **MCP resource exposure** | artifacts as MCP resources vs tool-returned paths vs both | resources are the idiomatic MCP answer and let a host fetch lazily; paths are simpler and work for hosts with filesystem access. Decide against real MCP host behavior, not against the specification alone. |
-| **Study vs optimization boundary** | how much belongs in the M2.5 study service | a study that enumerates a variation space is clearly in; a study that *chooses* the next point is an optimizer and is M5 (#22). The line should be drawn where an external driver would otherwise have to reimplement job orchestration. |
+| ~~**Study vs optimization boundary**~~ **→ a study's job list is a pure function of its object revision** | how much belongs in the M2.5 study service | settled by the first study kind, as this row asked. The test is not "does it enumerate" — that is a description, and descriptions blur — but a property you can check: given `study:s-1@2` you can say which solves it implies **without running any of them**. An optimizer cannot promise that, because its second point depends on the first one's answer. The line lands where this row wanted it: everything an external driver would otherwise reimplement (fan-out, cache reuse, per-job budget and quota, collecting compact results) is inside, and choosing the next point is outside. It also does real work — it is why a study stays reproducible under §8's rules while overriding a design's parameters, which `job.submit` may not do: the override is `values[i]` applied to `parameter`, both frozen in the study revision, so a rung's parameters are a pure function of *(study revision, rung index)*. |
 
 Two further questions are worth naming even though they are not blocking: how a capability declares
 its metrics without every adapter reimplementing the plumbing, and whether `boundary_condition` and
