@@ -32,6 +32,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .series import Series1DData, curves_of
 from .solvers.base import SolverResult
 
 
@@ -53,6 +54,14 @@ class ResultSummary:
     converged: bool | None = None
     residual: float | None = None
     warnings: list[str] = field(default_factory=list)
+    series: list[Series1DData] = field(default_factory=list)
+    """The result's curves (protocol 1.4, issue #69).
+
+    Here rather than in `result.json` for the same reason the metrics are: a curve is the
+    *compact* half of an answer — a few hundred numbers with axis labels — and the whole point
+    of #69 was that reaching it should not cost a multi-megabyte read of the field arrays it
+    happens to sit beside. :data:`~fenixspoon.series.MAX_SERIES_POINTS` is what keeps that
+    trade sound; without a ceiling this column would eventually be the arrays again."""
 
 
 @dataclass
@@ -131,8 +140,18 @@ class JobRecord:
                 converged=self.result.converged,
                 residual=self.result.residual,
                 warnings=list(self.result.warnings),
+                # `curves_of`, not `result.series`: a `series1d` adapter puts its curves in
+                # `data`, and this column is what the compact `series` level reads. Storing them
+                # here duplicates them for that one kind — `result.json` has the same bytes — and
+                # that is the price of the level costing a row read instead of a payload read.
+                series=curves_of(self.result.kind, self.result.data, self.result.series),
             )
         return self.summary
+
+
+def _without_series(summary: "ResultSummary | None") -> "ResultSummary | None":
+    """A summary with its curves removed, for a listing that will not report them."""
+    return None if summary is None else replace(summary, series=[])
 
 
 def _references(inputs: dict[str, Any], reference: str) -> bool:
@@ -337,6 +356,11 @@ class MemoryJobStore(JobStore):
         # `artifacts` is copied for the same reason as in `get()`: `replace` copies the
         # dataclass, not the lists inside it, and `Job.from_record` hands this list straight
         # to a live `Job` — so a caller appending to it would rewrite the stored record.
+        #
+        # `series` is dropped to match the SQLite store, which does not parse the column for a
+        # listing. Nothing is saved by withholding it here — the objects are already in memory —
+        # but a backend-dependent answer to "does a history page carry curves?" is worse than
+        # either answer, and this interface exists so the two are interchangeable.
         return [
             replace(
                 r,
@@ -344,7 +368,7 @@ class MemoryJobStore(JobStore):
                 events=[],
                 artifacts=list(r.artifacts),
                 inputs=dict(r.inputs),
-                summary=r.summarize(),
+                summary=_without_series(r.summarize()),
             )
             for r in ordered[offset : offset + limit]
         ]
@@ -418,7 +442,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     diagnostics    TEXT NOT NULL DEFAULT '{}',
     cache_key      TEXT,
     reused         INTEGER NOT NULL DEFAULT 0,
-    provenance     TEXT NOT NULL DEFAULT '{}'
+    provenance     TEXT NOT NULL DEFAULT '{}',
+    series         TEXT NOT NULL DEFAULT '[]'
 );
 CREATE TABLE IF NOT EXISTS events (
     job_id  TEXT NOT NULL,
@@ -445,6 +470,10 @@ _MIGRATIONS = {
     # Solver version and environment fingerprint together, for the reason `diagnostics`
     # shares a column: they are read together, always, and neither is a thing to index on.
     "provenance": "ALTER TABLE jobs ADD COLUMN provenance TEXT NOT NULL DEFAULT '{}'",
+    # A column of its own rather than a key inside `diagnostics`: curves are the answer, and
+    # the separation between what a solve answered and how it went is the distinction #46
+    # spent a protocol version establishing.
+    "series": "ALTER TABLE jobs ADD COLUMN series TEXT NOT NULL DEFAULT '[]'",
 }
 
 _INDEXES = """
@@ -535,17 +564,20 @@ class SqliteJobStore(JobStore):
             self._db.execute(
                 """INSERT INTO jobs (id, solver, status, error, created_at, finished_at,
                                      result_kind, stats, artifacts, owner, artifact_bytes,
-                                     inputs, metrics, diagnostics, cache_key, provenance)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                   -- `cache_key`, `reused` and `provenance` are absent from this list on
-                   -- purpose: they are facts about the submission, written once, and a
-                   -- later status update must not be able to walk them back.
+                                     inputs, metrics, diagnostics, cache_key, provenance,
+                                     series)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   -- `cache_key`, `reused` and `provenance` are absent from the UPDATE list
+                   -- on purpose: they are facts about the submission, written once, and a
+                   -- later status update must not be able to walk them back. `series` is
+                   -- not — it arrives with the result, like `metrics`.
                    ON CONFLICT(id) DO UPDATE SET
                        status=excluded.status, error=excluded.error,
                        finished_at=excluded.finished_at, result_kind=excluded.result_kind,
                        stats=excluded.stats, artifacts=excluded.artifacts,
                        artifact_bytes=excluded.artifact_bytes,
-                       metrics=excluded.metrics, diagnostics=excluded.diagnostics""",
+                       metrics=excluded.metrics, diagnostics=excluded.diagnostics,
+                       series=excluded.series""",
                 (
                     record.id,
                     record.solver,
@@ -571,6 +603,16 @@ class SqliteJobStore(JobStore):
                     ),
                     record.cache_key,
                     json.dumps(record.provenance),
+                    json.dumps(
+                        [
+                            entry.model_dump()
+                            for entry in curves_of(
+                                record.result.kind, record.result.data, record.result.series
+                            )
+                        ]
+                        if record.result
+                        else []
+                    ),
                 ),
             )
             self._db.commit()
@@ -591,9 +633,24 @@ class SqliteJobStore(JobStore):
         return seq
 
     def _record(
-        self, row: sqlite3.Row, events: list[dict[str, Any]], *, with_result: bool = True
+        self,
+        row: sqlite3.Row,
+        events: list[dict[str, Any]],
+        *,
+        with_result: bool = True,
+        with_series: bool = True,
     ) -> JobRecord:
         stored_diagnostics = json.loads(row["diagnostics"] or "{}")
+        # `with_series` exists for the same reason `with_result` does: the expensive parts of a
+        # record are rarely the parts a caller wants. Curves are the one summary field that is
+        # not a handful of scalars — a surface distribution is tens of kilobytes of JSON and a
+        # few hundred pydantic models — so parsing them for every row of a history page that
+        # discards the result costs ~0.3 ms a row against ~2 us for the diagnostics beside it.
+        stored_series = (
+            [Series1DData.model_validate(entry) for entry in json.loads(row["series"] or "[]")]
+            if with_series
+            else []
+        )
         result = None
         if row["result_kind"] and with_result:
             path = self._result_path(row["id"])
@@ -608,6 +665,7 @@ class SqliteJobStore(JobStore):
                     converged=stored_diagnostics.get("converged"),
                     residual=stored_diagnostics.get("residual"),
                     warnings=stored_diagnostics.get("warnings") or [],
+                    series=stored_series,
                 )
         summary = None
         if row["result_kind"]:
@@ -621,6 +679,7 @@ class SqliteJobStore(JobStore):
                 converged=stored_diagnostics.get("converged"),
                 residual=stored_diagnostics.get("residual"),
                 warnings=stored_diagnostics.get("warnings") or [],
+                series=stored_series,
             )
         return JobRecord(
             id=row["id"],
@@ -673,7 +732,9 @@ class SqliteJobStore(JobStore):
                 "LIMIT ? OFFSET ?",
                 (*params, limit, offset),
             ).fetchall()
-        return [self._record(row, [], with_result=False) for row in rows]
+        # No series either: a listing is `JobStatus` per row — id, solver, status, timestamps —
+        # and nothing downstream of here can reach a curve.
+        return [self._record(row, [], with_result=False, with_series=False) for row in rows]
 
     def count(self, owner: str | None = None) -> int:
         where, params = ("WHERE owner = ?", [owner]) if owner is not None else ("", [])

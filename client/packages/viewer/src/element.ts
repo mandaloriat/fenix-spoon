@@ -19,7 +19,7 @@
  * ```
  */
 
-import type { JobResult } from '@fenix-spoon/client';
+import { type FieldResult, type JobResult, isFieldResult } from '@fenix-spoon/client';
 
 import {
   type ColormapName,
@@ -69,7 +69,7 @@ export class FieldViewerElement extends HTMLElement {
   #canvas: HTMLCanvasElement;
   #readout: HTMLDivElement;
 
-  #result: JobResult | null = null;
+  #result: FieldResult | null = null;
   #field: string | null = null;
   #colormap: ColormapName = 'viridis';
   #contours = 0;
@@ -98,12 +98,34 @@ export class FieldViewerElement extends HTMLElement {
 
   // ------------------------------------------------------------------ public API
 
-  /** The result to display. Setting it re-renders. */
-  get result(): JobResult | null {
+  /**
+   * The result to display. Setting it re-renders.
+   *
+   * Accepts any `JobResult` but only *stores* a field one. A `series1d` result (protocol 1.4)
+   * is curves, and this widget draws a coloured 2-D domain: it has no bounds to fit, no
+   * topology to interpolate over and no field to contour. Handing one over clears the view and
+   * says so, rather than throwing or drawing a one-pixel picture of a curve — the axes, legend
+   * and inverted-y convention a `C_p` plot needs belong to a separate widget.
+   */
+  get result(): FieldResult | null {
+    // Deliberately narrower than the setter accepts. The setter takes any `JobResult`,
+    // because a custom-element property is reachable from untyped JS and plain HTML; by the
+    // time a value is stored it is known to be a field result, and saying so here saves every
+    // reader re-narrowing a union the setter has already made impossible.
     return this.#result;
   }
 
   set result(result: JobResult | null) {
+    if (result && !isFieldResult(result)) {
+      console.warn(
+        `<fs-viewer> draws 2-D fields; a "${result.kind}" result carries curves. ` +
+          'Read them with `resultSeries(result)` and plot them separately.',
+      );
+      this.#result = null;
+      this.#field = null;
+      this.render();
+      return;
+    }
     this.#result = result;
     // Keep the current field if the new result still has it; otherwise fall back to
     // the first one, so swapping solvers doesn't blank the view.

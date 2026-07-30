@@ -201,9 +201,16 @@ are deliberately out of the core: heavy, and the mesh must be produced server-si
 
 ### Visualization: client-side rendering, on canvas rather than vtk.js
 The plan here was vtk.js; M2 shipped canvas instead, and the reason is the embed footprint. Every
-result kind is 2D — `grid2d` and `mesh2d`, both scalar — so a multi-megabyte WebGL toolkit would
-have dominated the download for capability nothing yet uses. `@fenix-spoon/viewer` draws both
-kinds, with colormaps, a colorbar, iso-contours and a hover probe, in a fraction of that.
+*field* result kind is 2D — `grid2d` and `mesh2d`, both scalar — so a multi-megabyte WebGL
+toolkit would have dominated the download for capability nothing yet uses.
+`@fenix-spoon/viewer` draws both kinds, with colormaps, a colorbar, iso-contours and a hover
+probe, in a fraction of that.
+
+Protocol 1.4's `series1d` is the first kind that is not a field at all, and it did not get a
+renderer. A curve wants axes, a legend, a hover readout and — for `C_p` — an inverted `y`, none
+of which is a *mode* of a field viewer; it is a second small widget, and the protocol carrying the
+shape is what makes writing one a contained job rather than a convention each consumer invents.
+`<fs-viewer>` refuses a `series1d` and says so rather than drawing it badly.
 
 The drawing surface is isolated, so a WebGL backend can land with the first result kind that needs
 it — 3D (#25), or vector fields, which the protocol does not yet carry and which is why the

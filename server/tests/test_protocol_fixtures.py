@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
+from fenixspoon import series
 from fenixspoon.api import JobRequest, router
 from fenixspoon.core.discovery import (
     CapabilityDescription,
@@ -66,6 +67,22 @@ def test_the_major_version_matches_the_path():
     assert router.prefix == f"/api/v{major}", (
         f"protocol {PROTOCOL_VERSION} is served under {router.prefix}"
     )
+
+
+def test_the_corpus_and_the_server_agree_on_the_series_ceilings():
+    """The other tripwire, on the same model as the version one.
+
+    The three `MAX_SERIES_*` limits are mirrored into the SDK's `validate.ts`, because that file
+    promises "where the server rejects, these reject". Mirroring with no check is how the two
+    drift: lowering a limit here would leave the SDK accepting payloads this server refuses,
+    which is the single failure mode the shared corpus exists to prevent. The SDK suite asserts
+    against the same four numbers.
+    """
+    declared = json.loads((FIXTURES / "results.json").read_text())["series_limits"]
+    assert declared["max_points_per_trace"] == series.MAX_SERIES_POINTS
+    assert declared["max_traces_per_series"] == series.MAX_SERIES_TRACES
+    assert declared["max_series_per_result"] == series.MAX_SERIES_PER_RESULT
+    assert declared["max_total_points"] == series.MAX_SERIES_TOTAL_POINTS
 
 
 def _cases(kind: str):

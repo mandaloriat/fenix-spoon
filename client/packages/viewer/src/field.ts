@@ -5,30 +5,36 @@
  * which it got. These helpers normalise both to "values at positions" plus the topology
  * needed to interpolate between them — all without touching a canvas, so they're
  * directly testable.
+ *
+ * They take a `FieldResult` rather than a `JobResult`: protocol 1.4 added `series1d`, whose
+ * answer is curves and which has no bounds, no topology and nothing to contour. That is a
+ * *narrowing of the type*, not a runtime check — a curve is a different widget, not a mode of
+ * this one, and the compiler is the right place to say so.
  */
 
-import type { Grid2DData, JobResult, Mesh2DData } from '@fenix-spoon/client';
+import {
+  type FieldResult,
+  type Grid2DData,
+  type Mesh2DData,
+  fieldNames,
+  fieldValues,
+} from '@fenix-spoon/client';
 
 export type Point = [number, number];
 export type Segment = [Point, Point];
 
-export function resultBounds(result: JobResult): [number, number, number, number] {
+export function resultBounds(result: FieldResult): [number, number, number, number] {
   return result.data.bounds;
 }
 
-export function resultFieldNames(result: JobResult): string[] {
-  return Object.keys(
-    result.kind === 'grid2d' ? result.data.fields : result.data.point_fields,
-  );
-}
+// Delegated rather than reimplemented. These were a byte-for-byte copy of the client
+// package's pair, and this widget already imports values from it — so the copy bought
+// nothing and cost a lockstep edit every time the result kinds change, which protocol 1.4
+// duly demanded. Re-exported under the `result*` names the rest of this module uses.
+export const resultFieldNames = fieldNames;
+export const resultFieldValues = fieldValues;
 
-export function resultFieldValues(result: JobResult, field: string): number[] | undefined {
-  return result.kind === 'grid2d'
-    ? result.data.fields[field]
-    : result.data.point_fields[field];
-}
-
-export function resultMask(result: JobResult): number[] | undefined {
+export function resultMask(result: FieldResult): number[] | undefined {
   return result.kind === 'grid2d' ? result.data.mask : undefined;
 }
 
@@ -39,7 +45,7 @@ export function resultMask(result: JobResult): number[] | undefined {
  * containing triangle, which is what makes a probe readout on an unstructured mesh
  * agree with what the colours show rather than snapping to the nearest vertex.
  */
-export function probe(result: JobResult, field: string, at: Point): number | undefined {
+export function probe(result: FieldResult, field: string, at: Point): number | undefined {
   const values = resultFieldValues(result, field);
   if (!values) return undefined;
   return result.kind === 'grid2d'
@@ -102,7 +108,7 @@ export function barycentric(
  * splitting keeps one implementation and sidesteps the saddle-point ambiguity that
  * plain marching squares has to special-case.
  */
-export function contourSegments(result: JobResult, field: string, level: number): Segment[] {
+export function contourSegments(result: FieldResult, field: string, level: number): Segment[] {
   const values = resultFieldValues(result, field);
   if (!values) return [];
   return result.kind === 'mesh2d'
@@ -201,14 +207,14 @@ export interface Glyph {
   magnitude: number;
 }
 
-export function resultVectorFieldNames(result: JobResult): string[] {
+export function resultVectorFieldNames(result: FieldResult): string[] {
   const map =
     result.kind === 'grid2d' ? result.data.vector_fields : result.data.point_vector_fields;
   return Object.keys(map ?? {});
 }
 
 export function resultVectorValues(
-  result: JobResult,
+  result: FieldResult,
   field: string,
 ): [number, number][] | undefined {
   const map =
@@ -217,7 +223,7 @@ export function resultVectorValues(
 }
 
 /** Domain coordinates of sample `i`, for either result kind. */
-function samplePoint(result: JobResult, index: number): [number, number] {
+function samplePoint(result: FieldResult, index: number): [number, number] {
   if (result.kind !== 'grid2d') return result.data.points[index]!;
   const [ny, nx] = result.data.shape;
   const [xmin, ymin, xmax, ymax] = result.data.bounds;
@@ -244,7 +250,7 @@ function samplePoint(result: JobResult, index: number): [number, number] {
  * dominate the direction shown. Masked samples are excluded entirely, so arrows stop at
  * a hole's edge instead of being dragged toward zero by the interior.
  */
-export function glyphSamples(result: JobResult, field: string, across = 24): Glyph[] {
+export function glyphSamples(result: FieldResult, field: string, across = 24): Glyph[] {
   const vectors = resultVectorValues(result, field);
   if (!vectors || across < 1) return [];
   const [xmin, ymin, xmax, ymax] = resultBounds(result);

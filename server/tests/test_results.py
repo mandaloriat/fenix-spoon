@@ -24,7 +24,7 @@ from fenixspoon import fields
 from fenixspoon.core import FenixSpoonCore, FieldQuery, errors
 from fenixspoon.core.identity import Principal, Quotas
 from fenixspoon.core.results import DEFAULT_LEVELS, LEVELS
-from fenixspoon.geometry import Domain2D, Polygon2D
+from fenixspoon.geometry import Domain2D, Polygon2D, Regions2D
 from fenixspoon.jobs import JobManager
 from fenixspoon.main import create_app
 
@@ -103,10 +103,21 @@ def test_the_default_answer_is_small_and_carries_no_arrays(core, me):
     job = solve(core, me)
     compact = core.result_levels(job.id, me).model_dump(exclude_none=True)
     payload = json.dumps(compact)
-    # Still under the kilobyte after #47 added the `provenance` level to the default. It
-    # very nearly was not: a full SHA-256 hex digest is 64 characters of a ~950-byte answer,
-    # which is what prompted truncating the key to 128 bits rather than moving this budget.
-    assert len(payload) < 1024, f"default answer is {len(payload)} bytes:\n{payload}"
+    # 1112 bytes measured on this solve, against 1024 before protocol 1.5. The budget moved,
+    # and it is worth recording why rather than quietly raising it again next time.
+    #
+    # The breakdown: status 150, metrics 202, diagnostics 274, provenance 280, artifacts 150.
+    # #47 had already spent most of the kilobyte — its own comment noted the answer "very
+    # nearly was not" under it, and that a full SHA-256 digest was truncated to 128 bits
+    # rather than move this line. What tipped it over is #68 taking `mock.laplace2d` from two
+    # declared metrics to six, at ~34 bytes each.
+    #
+    # That growth is **linear in the number of declared metrics, by design**: metrics are the
+    # answer, and a capability that reports more of it produces a larger compact answer. A
+    # fixed byte ceiling cannot survive that for any adapter, so it is a proxy — the invariant
+    # the criterion is really about is the assertion below, that no numeric *array* rides in
+    # the default. That one has not moved and must not.
+    assert len(payload) < 1536, f"default answer is {len(payload)} bytes:\n{payload}"
 
     longest = max((len(a) for a in numeric_arrays(compact)), default=0)
     assert longest <= 8, f"a compact answer carried an array of {longest} numbers"
@@ -147,11 +158,76 @@ def test_each_level_can_be_requested_alone(core, me):
         assert set(payload) == {"job_id", "solver", level}, level
 
 
-def test_the_default_is_everything_except_fields(core, me):
+def test_the_default_is_everything_except_fields_and_series(core, me):
     job = solve(core, me)
     payload = core.result_levels(job.id, me).model_dump(exclude_none=True)
     assert set(payload) == {"job_id", "solver", *DEFAULT_LEVELS}
     assert "fields" not in payload
+    assert "series" not in payload
+
+
+# ---------------------------------------------------------------- the series level (#69)
+
+
+def test_curves_are_reachable_by_name_in_the_same_request(core, me):
+    """Protocol 1.4's level. Out of the default because a curve is a numeric array and the
+    default answer's whole promise is that it carries none — but a *level*, not a second route,
+    so a caller wanting the answer and the curve asks once."""
+    job = solve(core, me)
+    assert core.result_levels(job.id, me).series is None
+    asked = core.result_levels(job.id, me, ["status", "metrics", "series"])
+    assert [entry.name for entry in asked.series] == ["surface_cp"]
+    assert asked.metrics["c_l"] is not None
+    trace = asked.series[0].traces[0]
+    assert trace.x is not None and len(trace.values) == len(trace.x.values)
+
+
+def test_a_capability_that_produces_no_curves_says_so_with_an_empty_list(core, me):
+    """Empty means "none produced"; absent means "not asked for". The heat adapter produces no
+    curves, and a caller that asked must be able to tell that from a level it forgot."""
+    job = solve(
+        core, me, solver="mock.heat2d", geometry=Regions2D.model_validate(HEATED_BLOCK)
+    )
+    asked = core.result_levels(job.id, me, ["series"])
+    assert asked.series == []
+    assert "series" in asked.model_dump(exclude_none=True)
+
+
+def test_the_series_level_costs_a_row_read_not_the_field_payload(core, me):
+    """Curves live in a database column, like the metrics, rather than inside `result.json`.
+
+    That is the whole reason they are compact in practice as well as in principle: the level
+    can answer without the multi-megabyte read and JSON parse the arrays would cost. Asserted
+    by asking for the curves with the payload deliberately not loaded.
+    """
+    job = solve(core, me)
+    unloaded = core.job(job.id, me, with_result=False)
+    assert unloaded.result is None, "the payload was not read off disk"
+    assert unloaded.summary is not None and unloaded.summary.series, (
+        "yet the curves are there, because they came from a column"
+    )
+
+
+def test_curves_survive_a_round_trip_through_a_reopened_store(tmp_path, me):
+    """A curve is JSON in a column, so it has to come back as the model it went in as.
+
+    Reopening the database is what makes this a round trip: two reads from one live store share
+    the same parsed objects and would agree even if the column were never written. This asserts
+    against a second `FenixSpoonCore` over the same directory — the restart case the durability
+    contract promises.
+    """
+    first = FenixSpoonCore(JobManager(data_dir=tmp_path / "jobs"))
+    job = solve(first, me)
+    before = first.result_levels(job.id, me, ["series"]).series
+    first.jobs.store.close()
+
+    reopened = FenixSpoonCore(JobManager(data_dir=tmp_path / "jobs"))
+    after = reopened.result_levels(job.id, me, ["series"]).series
+    assert after == before, "curves did not survive the database being reopened"
+
+    trace = after[0].traces[0]
+    assert trace.unit == "1" and trace.x is not None and trace.x.name == "x/c"
+    assert len(trace.values) == len(trace.x.values)
 
 
 def test_an_unknown_level_is_refused_not_ignored(core, me):
@@ -505,11 +581,13 @@ def run_http(client, solver="mock.laplace2d", geometry=None, **params):
 
 
 def test_the_full_result_route_keeps_its_shape_and_gains_the_new_keys(client):
-    """1.3 is additive here: `data` and `stats` are untouched, two keys appear beside them."""
+    """1.3, 1.4 and 1.5 are additive here: `data` and `stats` are untouched, four keys appear
+    beside them — `metrics` and `diagnostics` in 1.3, `provenance` in 1.4, `series` in 1.5."""
     payload = client.get(f"/api/v1/jobs/{run_http(client)}/result").json()
     assert {"job_id", "kind", "data", "stats", "artifacts"} <= set(payload)
     assert set(payload) == {
-        "job_id", "kind", "data", "stats", "metrics", "diagnostics", "provenance", "artifacts"
+        "job_id", "kind", "data", "stats", "metrics", "diagnostics", "provenance", "series",
+        "artifacts",
     }
     assert payload["data"]["fields"]["speed"]
     assert payload["metrics"]["speed_max"] > 0
@@ -522,7 +600,10 @@ def test_the_summary_route_is_the_compact_one(client):
     assert set(compact) == {
         "job_id", "solver", "status", "metrics", "diagnostics", "provenance", "artifacts"
     }
-    assert len(json.dumps(compact)) < 1024
+    # Same budget as the core-level acceptance test, and moved for the same reason: see the
+    # breakdown there. `series` is absent — it is a level, not a default.
+    assert len(json.dumps(compact)) < 1536
+    assert "series" not in compact
 
     one = client.get(f"/api/v1/jobs/{job_id}/summary", params={"levels": ["metrics"]}).json()
     assert set(one) == {"job_id", "solver", "metrics"}

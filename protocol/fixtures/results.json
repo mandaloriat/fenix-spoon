@@ -1,5 +1,5 @@
 {
-  "$comment": "Conformance corpus for result envelopes. Grids/meshes are deliberately tiny.",
+  "$comment": "Conformance corpus for result envelopes. Grids/meshes are deliberately tiny. Protocol 1.4 adds the `series1d` kind and the `series` sibling key (#69): a curve is an ordered list of (x, y) pairs with names and units, either as the whole answer (`kind` is `series1d`, curves in `data`) or alongside a field (`series` beside `data`). Both sides of the corpus validate these, unlike the discovery payloads, because a curve has a browser consumer: `<fs-viewer>` draws fields and a curve needs a plot.",
   "valid": [
     {
       "name": "grid2d 2x3 with artifact",
@@ -315,6 +315,230 @@
         },
         "artifacts": []
       }
+    },
+    {
+      "name": "series1d parameter sweep on a shared abscissa",
+      "payload": {
+        "job_id": "j-sweep01",
+        "kind": "series1d",
+        "data": {
+          "name": "lift_curve",
+          "description": "Lift coefficient against incidence.",
+          "x": {
+            "name": "alpha",
+            "unit": "deg",
+            "values": [
+              -4.0,
+              -2.0,
+              0.0,
+              2.0,
+              4.0
+            ]
+          },
+          "traces": [
+            {
+              "name": "c_l",
+              "unit": "1",
+              "values": [
+                -0.477,
+                -0.239,
+                0.0,
+                0.239,
+                0.477
+              ]
+            },
+            {
+              "name": "c_m_c4",
+              "unit": "1",
+              "values": [
+                0.01,
+                0.005,
+                0.0,
+                -0.005,
+                -0.01
+              ]
+            }
+          ]
+        },
+        "metrics": {
+          "alpha_l0": 0.0
+        }
+      }
+    },
+    {
+      "name": "series1d with a per-trace abscissa on every trace",
+      "payload": {
+        "job_id": "j-surf01",
+        "kind": "series1d",
+        "data": {
+          "name": "surface_cp",
+          "description": "Pressure coefficient along the body, drawn suction-up by convention.",
+          "traces": [
+            {
+              "name": "cp_upper",
+              "unit": "1",
+              "values": [
+                1.0,
+                -0.9,
+                -0.4
+              ],
+              "x": {
+                "name": "x/c",
+                "unit": "1",
+                "values": [
+                  0.0,
+                  0.2,
+                  0.7
+                ]
+              }
+            },
+            {
+              "name": "cp_lower",
+              "unit": "1",
+              "values": [
+                1.0,
+                0.1,
+                0.05,
+                -0.02
+              ],
+              "x": {
+                "name": "x/c",
+                "unit": "1",
+                "values": [
+                  0.0,
+                  0.15,
+                  0.5,
+                  0.9
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "grid2d carrying a surface distribution beside its field",
+      "payload": {
+        "job_id": "j-both01",
+        "kind": "grid2d",
+        "data": {
+          "bounds": [
+            0.0,
+            0.0,
+            2.0,
+            1.0
+          ],
+          "shape": [
+            2,
+            3
+          ],
+          "fields": {
+            "speed": [
+              0.0,
+              1.0,
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ]
+          },
+          "mask": [
+            0,
+            0,
+            0,
+            0,
+            1,
+            0
+          ]
+        },
+        "metrics": {
+          "c_l": 0.596
+        },
+        "series": [
+          {
+            "name": "surface_cp",
+            "description": "Pressure coefficient along the body, drawn suction-up by convention.",
+            "traces": [
+              {
+                "name": "cp_upper",
+                "unit": "1",
+                "values": [
+                  1.0,
+                  -0.9,
+                  -0.4
+                ],
+                "x": {
+                  "name": "x/c",
+                  "unit": "1",
+                  "values": [
+                    0.0,
+                    0.2,
+                    0.7
+                  ]
+                }
+              },
+              {
+                "name": "cp_lower",
+                "unit": "1",
+                "values": [
+                  1.0,
+                  0.1,
+                  0.05,
+                  -0.02
+                ],
+                "x": {
+                  "name": "x/c",
+                  "unit": "1",
+                  "values": [
+                    0.0,
+                    0.15,
+                    0.5,
+                    0.9
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "grid2d with an empty series list stays valid",
+      "payload": {
+        "job_id": "j-none01",
+        "kind": "grid2d",
+        "data": {
+          "bounds": [
+            0.0,
+            0.0,
+            2.0,
+            1.0
+          ],
+          "shape": [
+            2,
+            3
+          ],
+          "fields": {
+            "speed": [
+              0.0,
+              1.0,
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ]
+          },
+          "mask": [
+            0,
+            0,
+            0,
+            0,
+            1,
+            0
+          ]
+        },
+        "series": []
+      }
     }
   ],
   "invalid": [
@@ -508,7 +732,7 @@
     },
     {
       "name": "unknown result kind",
-      "reason": "kind must be grid2d or mesh2d",
+      "reason": "kind must be grid2d, mesh2d or series1d",
       "payload": {
         "job_id": "j-x",
         "kind": "hologram",
@@ -655,6 +879,692 @@
         },
         "artifacts": []
       }
+    },
+    {
+      "name": "series1d carrying curves in both data and series",
+      "reason": "kind selects the schema of data, so a series1d result has one home for its curves",
+      "payload": {
+        "job_id": "j-x",
+        "kind": "series1d",
+        "data": {
+          "name": "lift_curve",
+          "description": "Lift coefficient against incidence.",
+          "x": {
+            "name": "alpha",
+            "unit": "deg",
+            "values": [
+              -4.0,
+              -2.0,
+              0.0,
+              2.0,
+              4.0
+            ]
+          },
+          "traces": [
+            {
+              "name": "c_l",
+              "unit": "1",
+              "values": [
+                -0.477,
+                -0.239,
+                0.0,
+                0.239,
+                0.477
+              ]
+            },
+            {
+              "name": "c_m_c4",
+              "unit": "1",
+              "values": [
+                0.01,
+                0.005,
+                0.0,
+                -0.005,
+                -0.01
+              ]
+            }
+          ]
+        },
+        "series": [
+          {
+            "name": "surface_cp",
+            "description": "Pressure coefficient along the body, drawn suction-up by convention.",
+            "traces": [
+              {
+                "name": "cp_upper",
+                "unit": "1",
+                "values": [
+                  1.0,
+                  -0.9,
+                  -0.4
+                ],
+                "x": {
+                  "name": "x/c",
+                  "unit": "1",
+                  "values": [
+                    0.0,
+                    0.2,
+                    0.7
+                  ]
+                }
+              },
+              {
+                "name": "cp_lower",
+                "unit": "1",
+                "values": [
+                  1.0,
+                  0.1,
+                  0.05,
+                  -0.02
+                ],
+                "x": {
+                  "name": "x/c",
+                  "unit": "1",
+                  "values": [
+                    0.0,
+                    0.15,
+                    0.5,
+                    0.9
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "series trace shorter than the shared abscissa",
+      "reason": "a trace must have one value per abscissa sample",
+      "payload": {
+        "job_id": "j-x",
+        "kind": "series1d",
+        "data": {
+          "name": "lift_curve",
+          "x": {
+            "name": "alpha",
+            "unit": "deg",
+            "values": [
+              0.0,
+              1.0,
+              2.0
+            ]
+          },
+          "traces": [
+            {
+              "name": "c_l",
+              "unit": "1",
+              "values": [
+                0.0,
+                0.1
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "series trace with no abscissa anywhere",
+      "reason": "no shared x and none of its own leaves the curve un-plottable",
+      "payload": {
+        "job_id": "j-x",
+        "kind": "series1d",
+        "data": {
+          "name": "lift_curve",
+          "traces": [
+            {
+              "name": "c_l",
+              "unit": "1",
+              "values": [
+                0.0,
+                0.1
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "series with no traces",
+      "reason": "a curve set with nothing in it is not a result",
+      "payload": {
+        "job_id": "j-x",
+        "kind": "series1d",
+        "data": {
+          "name": "empty",
+          "x": {
+            "name": "alpha",
+            "unit": "deg",
+            "values": [
+              0.0
+            ]
+          },
+          "traces": []
+        }
+      }
+    },
+    {
+      "name": "series trace missing its unit",
+      "reason": "units travel on the wire for curves: a plot needs axis labels",
+      "payload": {
+        "job_id": "j-x",
+        "kind": "series1d",
+        "data": {
+          "name": "lift_curve",
+          "x": {
+            "name": "alpha",
+            "unit": "deg",
+            "values": [
+              0.0,
+              1.0
+            ]
+          },
+          "traces": [
+            {
+              "name": "c_l",
+              "values": [
+                0.0,
+                0.1
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "series naming a trace twice",
+      "reason": "trace names identify curves in a legend, so they must be unique",
+      "payload": {
+        "job_id": "j-x",
+        "kind": "series1d",
+        "data": {
+          "name": "lift_curve",
+          "x": {
+            "name": "alpha",
+            "unit": "deg",
+            "values": [
+              0.0,
+              1.0
+            ]
+          },
+          "traces": [
+            {
+              "name": "c_l",
+              "unit": "1",
+              "values": [
+                0.0,
+                0.1
+              ]
+            },
+            {
+              "name": "c_l",
+              "unit": "1",
+              "values": [
+                0.2,
+                0.3
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "series1d payload that is really a grid",
+      "reason": "kind selects the schema of data and must be enforced, not assumed",
+      "payload": {
+        "job_id": "j-x",
+        "kind": "series1d",
+        "data": {
+          "bounds": [
+            0.0,
+            0.0,
+            2.0,
+            1.0
+          ],
+          "shape": [
+            2,
+            3
+          ],
+          "fields": {
+            "speed": [
+              0.0,
+              1.0,
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ]
+          },
+          "mask": [
+            0,
+            0,
+            0,
+            0,
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "result naming a series twice",
+      "reason": "a consumer picks a curve set by name, so two with one name is ambiguous",
+      "payload": {
+        "job_id": "j-x",
+        "kind": "grid2d",
+        "data": {
+          "bounds": [
+            0.0,
+            0.0,
+            2.0,
+            1.0
+          ],
+          "shape": [
+            2,
+            3
+          ],
+          "fields": {
+            "speed": [
+              0.0,
+              1.0,
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ]
+          },
+          "mask": [
+            0,
+            0,
+            0,
+            0,
+            1,
+            0
+          ]
+        },
+        "series": [
+          {
+            "name": "surface_cp",
+            "description": "Pressure coefficient along the body, drawn suction-up by convention.",
+            "traces": [
+              {
+                "name": "cp_upper",
+                "unit": "1",
+                "values": [
+                  1.0,
+                  -0.9,
+                  -0.4
+                ],
+                "x": {
+                  "name": "x/c",
+                  "unit": "1",
+                  "values": [
+                    0.0,
+                    0.2,
+                    0.7
+                  ]
+                }
+              },
+              {
+                "name": "cp_lower",
+                "unit": "1",
+                "values": [
+                  1.0,
+                  0.1,
+                  0.05,
+                  -0.02
+                ],
+                "x": {
+                  "name": "x/c",
+                  "unit": "1",
+                  "values": [
+                    0.0,
+                    0.15,
+                    0.5,
+                    0.9
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "name": "surface_cp",
+            "description": "Pressure coefficient along the body, drawn suction-up by convention.",
+            "traces": [
+              {
+                "name": "cp_upper",
+                "unit": "1",
+                "values": [
+                  1.0,
+                  -0.9,
+                  -0.4
+                ],
+                "x": {
+                  "name": "x/c",
+                  "unit": "1",
+                  "values": [
+                    0.0,
+                    0.2,
+                    0.7
+                  ]
+                }
+              },
+              {
+                "name": "cp_lower",
+                "unit": "1",
+                "values": [
+                  1.0,
+                  0.1,
+                  0.05,
+                  -0.02
+                ],
+                "x": {
+                  "name": "x/c",
+                  "unit": "1",
+                  "values": [
+                    0.0,
+                    0.15,
+                    0.5,
+                    0.9
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "series with more traces than the ceiling allows",
+      "reason": "the ceilings are what stop a curve becoming the field arrays under another key; both sides must refuse the same shape",
+      "payload": {
+        "job_id": "j-x",
+        "kind": "series1d",
+        "data": {
+          "name": "too_many",
+          "x": {
+            "name": "i",
+            "unit": "1",
+            "values": [
+              0.0,
+              1.0
+            ]
+          },
+          "traces": [
+            {
+              "name": "t0",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "t1",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "t2",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "t3",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "t4",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "t5",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "t6",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "t7",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "t8",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "t9",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "t10",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "t11",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "t12",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "t13",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "t14",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "t15",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "t16",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "t17",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "t18",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "t19",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "t20",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "t21",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "t22",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "t23",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "t24",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "t25",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "t26",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "t27",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "t28",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "t29",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "t30",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "t31",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            },
+            {
+              "name": "t32",
+              "unit": "1",
+              "values": [
+                0.0,
+                1.0
+              ]
+            }
+          ]
+        }
+      }
     }
-  ]
+  ],
+  "series_limits": {
+    "$comment": "The series ceilings, mirrored in fenixspoon/series.py and in the SDK's validate.ts. Both conformance suites assert their own constants against these, so lowering a limit on one side without the other fails on the other \u2014 the same mechanism protocol_version uses in version.json. The numbers are here rather than as an over-ceiling payload because a 4096-element array in a corpus whose grids are deliberately tiny would be eight thousand unreadable lines.",
+    "max_points_per_trace": 4096,
+    "max_traces_per_series": 32,
+    "max_series_per_result": 32,
+    "max_total_points": 8192
+  }
 }

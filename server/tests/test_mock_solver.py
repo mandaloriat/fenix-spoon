@@ -51,8 +51,20 @@ def test_solve_produces_grid2d_and_converges(tmp_path):
     np.testing.assert_allclose(psi[:, 0], y, atol=1e-12)
 
     assert events, "solver must report progress"
-    residuals = [e.residual for e in events if e.residual is not None]
-    assert residuals[-1] < residuals[0], "Jacobi residual must decrease"
+    # Grouped by stage, because the Kutta path is two relaxations and the residual is monotone
+    # *within* one: the second starts from its own initial guess, so a stream read as one
+    # sequence appears to go backwards halfway through. Every event carries the stage that
+    # produced it, which is what makes that legible to a subscriber as well as to this test.
+    by_stage: dict[str, list[float]] = {}
+    for event in events:
+        if event.residual is not None:
+            by_stage.setdefault(event.message or "", []).append(event.residual)
+    assert set(by_stage) == {
+        "relaxing the free-stream mode",
+        "relaxing the circulatory mode",
+    }, sorted(by_stage)
+    for stage, residuals in by_stage.items():
+        assert residuals[-1] < residuals[0], f"Jacobi residual must decrease in {stage}"
 
 
 def test_speed_zero_inside_obstacle(tmp_path):

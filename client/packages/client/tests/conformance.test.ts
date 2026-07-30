@@ -14,6 +14,7 @@ import { describe, expect, it } from 'vitest';
 
 import { PROTOCOL_VERSION, checkProtocolCompatibility } from '../src/types.js';
 import {
+  SERIES_LIMITS,
   validateGeometry,
   validateJobEvent,
   validateJobRequest,
@@ -66,6 +67,23 @@ for (const [file, validate] of SUITES) {
     }
   });
 }
+
+describe('results.json series ceilings', () => {
+  const { series_limits: block } = JSON.parse(
+    readFileSync(join(FIXTURES, 'results.json'), 'utf8'),
+  ) as { series_limits: Record<string, number | string> };
+  // `$comment` is prose, as everywhere else in the corpus; the rest is the contract.
+  const declared = Object.fromEntries(
+    Object.entries(block).filter(([key]) => key !== '$comment'),
+  );
+
+  it('are the ones this validator enforces', () => {
+    // The same tripwire version.json provides for PROTOCOL_VERSION. `validate.ts` promises
+    // "where the server rejects, these reject", and it can only keep that promise if the two
+    // sets of ceilings are pinned to one place — the Python suite asserts these same four.
+    expect(declared).toEqual({ ...SERIES_LIMITS });
+  });
+});
 
 describe('version.json', () => {
   const { protocol_version: declared } = JSON.parse(

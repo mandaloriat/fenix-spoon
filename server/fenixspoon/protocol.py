@@ -11,6 +11,13 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from .geometry import Domain2D, Geometry, Polygon2D  # noqa: F401  (re-export for consumers)
+from .series import (  # noqa: F401  (re-export for consumers)
+    MAX_SERIES_POINTS,
+    Series1DData,
+    SeriesAxis,
+    SeriesTrace,
+    check_series,
+)
 from .solvers.base import ProgressEvent  # noqa: F401  (re-export for consumers)
 
 #: The version of the wire contract this server speaks, `MAJOR.MINOR`.
@@ -28,7 +35,7 @@ from .solvers.base import ProgressEvent  # noqa: F401  (re-export for consumers)
 #: repeating it on each event and result would be per-message overhead for something one
 #: call answers — see `GET /api/v1/version`, and `docs/04-wire-protocol.md` for the
 #: reasoning and the bump procedure.
-PROTOCOL_VERSION = "1.4"
+PROTOCOL_VERSION = "1.5"
 
 
 class ProtocolVersion(BaseModel):
@@ -152,8 +159,12 @@ class ResultEnvelope(BaseModel):
     """What `GET /api/v1/jobs/{id}/result` returns once a job is `done`."""
 
     job_id: str = Field(description="The job this result belongs to.")
-    kind: Literal["grid2d", "mesh2d"] = Field(
-        description="Selects the schema of `data`: `Grid2DData` or `Mesh2DData`."
+    kind: Literal["grid2d", "mesh2d", "series1d"] = Field(
+        description=(
+            "Selects the schema of `data`: `Grid2DData`, `Mesh2DData` or `Series1DData`. "
+            "`series1d` was added in protocol 1.5 for answers that are curves rather than "
+            "fields — a sweep, a convergence history."
+        )
     )
     data: dict[str, Any] = Field(description="The field data, shaped according to `kind`.")
     stats: dict[str, float] = Field(
@@ -190,12 +201,35 @@ class ResultEnvelope(BaseModel):
             "one answering a question you asked earlier."
         ),
     )
+    series: list[Series1DData] = Field(
+        default=[],
+        description=(
+            "Curves this solve produced *alongside* its field — the airfoil adapters return "
+            "the flow field and the surface `C_p` from one solve. Added in protocol 1.5. "
+            "Empty on a result that carries none, and empty on a `series1d` result, whose "
+            "curves are in `data` because that is what `kind` selects."
+        ),
+    )
     artifacts: list[ArtifactRef] = Field(
         default=[], description="Files the solver wrote, downloadable from the artifact endpoint."
     )
 
     @model_validator(mode="after")
     def _check_data(self) -> "ResultEnvelope":
-        model = {"grid2d": Grid2DData, "mesh2d": Mesh2DData}[self.kind]
-        model.model_validate(self.data)
+        model = {"grid2d": Grid2DData, "mesh2d": Mesh2DData, "series1d": Series1DData}[self.kind]
+        payload = model.model_validate(self.data)
+        # One home per result, not two. A `series1d` result's curves are in `data` because
+        # `kind` selects the schema of `data` and that invariant is worth more than the
+        # convenience of a single accessor; carrying them in both places would let the two
+        # disagree, and a consumer would have to know which one wins.
+        if self.kind == "series1d" and self.series:
+            raise ValueError(
+                "a series1d result carries its curves in `data`; `series` is for the curves "
+                "that accompany a field result"
+            )
+        # Both homes go through the same collective budget. Checking only `series` would have
+        # left the ceiling applying to the shape that carries curves *incidentally* and not to
+        # the one that is nothing but curves — where an adapter could have put thirty-two
+        # full-length traces and met every individual limit.
+        check_series([payload] if isinstance(payload, Series1DData) else self.series)
         return self

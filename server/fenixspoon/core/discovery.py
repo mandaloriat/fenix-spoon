@@ -36,6 +36,7 @@ from .. import __version__
 from ..protocol import PROTOCOL_VERSION
 from ..solvers.base import (
     ArtifactSpec,
+    Assumption,
     CapabilityExample,
     CapabilityFeatures,
     MetricSpec,
@@ -51,6 +52,7 @@ SECTIONS: tuple[str, ...] = (
     "geometries",
     "params",
     "metrics",
+    "assumptions",
     "artifacts",
     "cost",
     "features",
@@ -349,6 +351,13 @@ class CapabilityDescription(BaseModel):
     metrics: list[MetricSpec] | None = Field(
         default=None, description="Section `metrics`: the engineering scalars it reports."
     )
+    assumptions: list[Assumption] | None = Field(
+        default=None,
+        description=(
+            "Section `assumptions`: the modelling assumptions in force, and the quantities "
+            "they put out of reach. Next to `metrics` because it is what qualifies them."
+        ),
+    )
     artifacts: list[ArtifactSpec] | None = Field(
         default=None, description="Section `artifacts`: files a solve may write."
     )
@@ -543,6 +552,12 @@ def describe_capability(
         )
     if "metrics" in wanted:
         out.metrics = list(solver_cls.metrics)
+    if "assumptions" in wanted:
+        # An empty list is a real answer and must reach the caller as one: "this capability
+        # declares no assumptions" is information, and omitting the key instead would make it
+        # indistinguishable from a section that was never asked for. The route's
+        # `response_model_exclude_none` drops `None`, not `[]`.
+        out.assumptions = list(solver_cls.assumptions)
     if "artifacts" in wanted:
         out.artifacts = list(solver_cls.artifacts)
     if "cost" in wanted:

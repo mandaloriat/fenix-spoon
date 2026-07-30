@@ -16,6 +16,7 @@ from fenixspoon.backends import InProcessBackend
 from fenixspoon.events import InProcessEventBus
 from fenixspoon.jobs import JobManager
 from fenixspoon.main import create_app
+from fenixspoon.series import Series1DData, SeriesAxis, SeriesTrace
 from fenixspoon.solvers.base import SolverResult
 from fenixspoon.store import JobRecord, MemoryJobStore, SqliteJobStore
 
@@ -296,7 +297,18 @@ def test_stores_agree_on_partial_loads(tmp_path, store_factory):
         if store_factory == "memory"
         else SqliteJobStore(tmp_path / "jobs.db", result_dir=tmp_path)
     )
-    payload = SolverResult(kind="grid2d", data={"fields": {"psi": [1.0, 2.0]}}, stats={"cells": 2})
+    payload = SolverResult(
+        kind="grid2d",
+        data={"fields": {"psi": [1.0, 2.0]}},
+        stats={"cells": 2},
+        series=[
+            Series1DData(
+                name="surface_cp",
+                x=SeriesAxis(name="x/c", unit="1", values=[0.0, 0.5]),
+                traces=[SeriesTrace(name="cp", unit="1", values=[1.0, -0.4])],
+            )
+        ],
+    )
     store.put(JobRecord(id="j-1", solver="s", status="done", result=payload))
     store.add_event("j-1", {"type": "status", "status": "done"})
 
@@ -308,9 +320,21 @@ def test_stores_agree_on_partial_loads(tmp_path, store_factory):
     assert store.get("j-1", with_events=False).events == []
     assert store.get("j-1", with_events=False).result is not None, "payload dropped with events"
 
-    # A history page carries neither: it renders six metadata fields per row.
+    # Curves survive dropping the payload, which is the point of holding them beside it: the
+    # `series` level answers from a column rather than from a multi-megabyte file read.
+    assert store.get("j-1", with_result=False).summary.series, "curves went with the payload"
+
+    # A history page carries neither the payload nor the events: it renders six metadata
+    # fields per row.
     listed = store.list_jobs()[0]
     assert listed.result is None and listed.events == []
+
+    # Nor the curves — a listing reports `JobStatus` per row and nothing downstream can reach
+    # one, while parsing a surface distribution per row costs ~0.3 ms against ~2 us for the
+    # diagnostics beside it. The memory store has nothing to save by dropping them and does it
+    # anyway: a backend-dependent answer to "does a history page carry curves?" is worse than
+    # either answer.
+    assert listed.summary is not None and listed.summary.series == []
 
     # …and it is a copy too. `Job.from_record` hands `artifacts` straight to a live `Job`,
     # so a listing that aliased it would let a caller rewrite the stored record.

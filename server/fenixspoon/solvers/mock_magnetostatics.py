@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 
 from ..geometry import Regions2D
 from .base import CapabilityExample, ProgressEvent, Solver, SolverContext, SolverResult
-from .declarations import MAGNETOSTATICS_METRICS, VTK_ARTIFACT
+from .declarations import MAGNETOSTATICS_ASSUMPTIONS, MAGNETOSTATICS_METRICS, VTK_ARTIFACT
 from .mock_laplace import (
     _grid_shape,
     grid_to_mesh2d,
@@ -66,6 +66,7 @@ class MockMagnetostatics2D(Solver):
     physics = "magnetostatics"
     availability = "mock"
     metrics = MAGNETOSTATICS_METRICS
+    assumptions = MAGNETOSTATICS_ASSUMPTIONS
     #: Pure NumPy with a fixed sweep count and no randomness anywhere: the same inputs give
     #: the same array, bit for bit, on the same numpy. Safe to cache (#47).
     deterministic = True

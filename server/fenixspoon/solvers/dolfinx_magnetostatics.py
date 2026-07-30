@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 from ..geometry import Regions2D
 from ._gmsh import gmsh_session
 from .base import CapabilityExample, ProgressEvent, Solver, SolverContext, SolverResult
-from .declarations import MAGNETOSTATICS_METRICS, VTK_ARTIFACT
+from .declarations import MAGNETOSTATICS_ASSUMPTIONS, MAGNETOSTATICS_METRICS, VTK_ARTIFACT
 from .dolfinx_poisson import (
     _nodal_speed,
     _p1_mesh_data,
@@ -108,6 +108,7 @@ class DolfinxMagnetostatics2D(Solver):
     availability = "fenicsx"
     requires = ["dolfinx", "gmsh"]
     metrics = MAGNETOSTATICS_METRICS
+    assumptions = MAGNETOSTATICS_ASSUMPTIONS
     #: Single-rank Gmsh meshing followed by a direct LU factorisation — both reproducible for
     #: the same inputs and the same library versions, which the cache key includes. The
     #: caveat is MPI: a multi-rank run decomposes differently and would not reproduce, which

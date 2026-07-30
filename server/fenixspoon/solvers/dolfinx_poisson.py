@@ -6,13 +6,33 @@ inside the ``dolfinx/dolfinx`` Docker image or a conda env with ``fenics-dolfinx
 ``tests/test_dolfinx_adapter.py`` (``pytest -m fenics``).
 
 The solve mirrors ``mock.laplace2d`` semantically — Laplace for the streamfunction, uniform
-stream at the far field, constant psi on the obstacle — so results are directly comparable.
-Both result kinds are supported: ``grid2d`` samples the FEM solution onto a regular grid
-(identical payload to the mock path), while ``mesh2d`` emits the actual P1 triangulation
-with nodal fields. The solution is also attached as a legacy-VTK unstructured-grid artifact
-that opens directly in ParaView.
+stream at the far field, constant psi on the obstacle, circulation set by the Kutta condition
+at the trailing edge — so results are directly comparable. Both result kinds are supported:
+``grid2d`` samples the FEM solution onto a regular grid (identical payload to the mock path),
+while ``mesh2d`` emits the actual P1 triangulation with nodal fields. The solution is also
+attached as a legacy-VTK unstructured-grid artifact that opens directly in ParaView.
+
+**The Kutta condition is imposed on the mesh; the surface integrals run on a sampled grid.**
+That split is deliberate and the line between the two halves is where it is for a reason.
+
+With the Kutta condition on (issue #68) this adapter solves twice and superposes, exactly as the
+mock does. The condition itself needs only **two point evaluations per basis solution**, so it
+is answered from the triangulation directly (``_MeshProbe``): the body's streamfunction value is
+a *Dirichlet value of the field this adapter returns*, not post-processing, and resolving it by
+Cartesian interpolation would have meant `mesh_size` alone could not converge `c_l` — with the
+trailing edge, the one place an unstructured mesh is decisively better, being the one place a
+raster got consulted.
+
+The **surface pressure integral** is a different matter, and it is handed the sampled field on
+purpose. A facet integral over the real body would be more accurate — this mesh resolves the
+trailing edge properly and would not be approximating a curved surface by a staircase. What
+sampling buys instead is that `mock.laplace2d` and `dolfinx.potential_flow2d` are cross-validated
+through *one* implementation of the loads rather than two, which is the property
+`docs/gallery.md` relies on. The facet-integral version is a real improvement left undone, not
+an oversight.
 """
 
+from functools import partial
 from typing import Literal
 
 import dolfinx
@@ -26,9 +46,10 @@ from mpi4py import MPI
 from pydantic import BaseModel, Field
 
 from ..geometry import Domain2D
+from . import aerodynamics as aero
 from ._gmsh import gmsh_session
 from .base import CapabilityExample, ProgressEvent, Solver, SolverContext, SolverResult
-from .declarations import POTENTIAL_FLOW_METRICS, VTK_ARTIFACT
+from .declarations import POTENTIAL_FLOW_ASSUMPTIONS, POTENTIAL_FLOW_METRICS, VTK_ARTIFACT
 from .mock_laplace import _cp_min
 from .registry import register
 
@@ -83,12 +104,14 @@ class DolfinxPotentialFlow2D(Solver):
     title = "Potential flow (FEniCSx, unstructured mesh)"
     description = (
         "Laplace equation for the streamfunction on a Gmsh triangulation of the domain with "
-        "the obstacle removed, solved with dolfinx (P1 elements, LU). Experimental M1 adapter."
+        "the obstacle removed, solved with dolfinx (P1 elements, LU), with circulation set by "
+        "the Kutta condition at the trailing edge. Experimental M1 adapter."
     )
     physics = "potential-flow"
     availability = "fenicsx"
     requires = ["dolfinx", "gmsh"]
     metrics = POTENTIAL_FLOW_METRICS
+    assumptions = POTENTIAL_FLOW_ASSUMPTIONS
     #: Single-rank Gmsh meshing followed by a direct LU factorisation — both reproducible for
     #: the same inputs and the same library versions, which the cache key includes. The
     #: caveat is MPI: a multi-rank run decomposes differently and would not reproduce, which
@@ -109,14 +132,44 @@ class DolfinxPotentialFlow2D(Solver):
             ),
             params={"mesh_size": 0.02, "output": "mesh2d"},
         ),
+        CapabilityExample(
+            title="lift at incidence",
+            description=(
+                "Five degrees angle of attack. `resolution` matters here even for a `mesh2d` "
+                "result: it is the grid the aerodynamic post-processing samples onto."
+            ),
+            params={"mesh_size": 0.02, "resolution": 256, "alpha": 5.0},
+        ),
     ]
 
     class Params(BaseModel):
         mesh_size: float = Field(default=0.05, gt=0.0, description="Target element size")
         resolution: int = Field(
-            default=128, ge=16, le=512, description="Sampling grid for the grid2d result"
+            default=128,
+            ge=16,
+            le=512,
+            description=(
+                "Sampling grid for the grid2d result, and for the aerodynamic "
+                "post-processing — so it affects `c_l` even when `output` is mesh2d"
+            ),
         )
-        u_inf: float = Field(default=1.0)
+        u_inf: float = Field(default=1.0, description="Free-stream speed")
+        alpha: float = Field(
+            default=0.0,
+            ge=-30.0,
+            le=30.0,
+            description=(
+                "Angle of attack in degrees. Rotates the free stream, not the geometry, so a "
+                "sweep re-uses the same mesh"
+            ),
+        )
+        kutta: bool = Field(
+            default=True,
+            description=(
+                "Fix the circulation by the Kutta condition at the trailing edge, which is "
+                "what makes lift meaningful. Costs a second solve"
+            ),
+        )
         output: Literal["grid2d", "mesh2d"] = Field(
             default="grid2d",
             description="Result kind: regular sampling grid, or the FEM triangulation itself",
@@ -135,11 +188,13 @@ class DolfinxPotentialFlow2D(Solver):
         params: "DolfinxPotentialFlow2D.Params",
         ctx: SolverContext,
     ) -> SolverResult:
-        ctx.progress(ProgressEvent(iteration=0, total=4, message="meshing with Gmsh"))
+        # mesh, assemble, solve, [circulatory solve, Kutta], post-process — then `done`.
+        stage = _Stages(ctx, total=6 if params.kutta else 4)
+        stage.report("meshing with Gmsh")
         msh = _build_mesh(geometry, params.mesh_size)
 
         ctx.check_cancelled()
-        ctx.progress(ProgressEvent(iteration=1, total=4, message="assembling"))
+        stage.report("assembling")
         V = fem.functionspace(msh, ("Lagrange", 1))
         u, v = ufl.TrialFunction(V), ufl.TestFunction(V)
         a = ufl.inner(ufl.grad(u), ufl.grad(v)) * ufl.dx
@@ -147,7 +202,7 @@ class DolfinxPotentialFlow2D(Solver):
 
         xmin, ymin, xmax, ymax = geometry.bounds
         obstacle_pts = np.asarray(geometry.obstacle.points)
-        psi_body = float(obstacle_pts[:, 1].mean()) * params.u_inf
+        heuristic = aero.centroid_body_value(obstacle_pts, params.u_inf, params.alpha)
         eps = 1e-9
 
         def on_outer(x):
@@ -163,36 +218,81 @@ class DolfinxPotentialFlow2D(Solver):
         boundary_facets = dmesh.exterior_facet_indices(msh.topology)
         outer_facets = dmesh.locate_entities_boundary(msh, tdim - 1, on_outer)
         body_facets = np.setdiff1d(boundary_facets, outer_facets)
+        outer_dofs = fem.locate_dofs_topological(V, tdim - 1, outer_facets)
+        body_dofs = fem.locate_dofs_topological(V, tdim - 1, body_facets)
 
         psi_inf = fem.Function(V)
-        psi_inf.interpolate(lambda x: params.u_inf * x[1])
-        bc_outer = fem.dirichletbc(
-            psi_inf, fem.locate_dofs_topological(V, tdim - 1, outer_facets)
+        # `aero.far_field_psi` rather than the expression inline: incidence has one definition,
+        # and this is the adapter's actual Dirichlet data. Two copies would let the boundary
+        # condition disagree with the centroid heuristic above it and with `mock.laplace2d`,
+        # which is exactly the cross-validation this module leans on.
+        psi_inf.interpolate(
+            lambda x: aero.far_field_psi(x[0], x[1], params.u_inf, params.alpha)
         )
-        bc_body = fem.dirichletbc(
-            dolfinx.default_scalar_type(psi_body),
-            fem.locate_dofs_topological(V, tdim - 1, body_facets),
-            V,
-        )
+        zero = fem.Function(V)  # already zero: the far field of the circulatory mode
+
+        def run(outer, body_value):
+            """One Laplace solve for one set of Dirichlet data."""
+            bcs = [
+                fem.dirichletbc(outer, outer_dofs),
+                fem.dirichletbc(dolfinx.default_scalar_type(body_value), body_dofs, V),
+            ]
+            options = {"ksp_type": "preonly", "pc_type": "lu"}
+            try:
+                # dolfinx >= 0.10 requires an options prefix.
+                problem = LinearProblem(
+                    a, L, bcs=bcs,
+                    petsc_options=options,
+                    petsc_options_prefix="fenixspoon_",
+                )
+            except TypeError:  # older dolfinx without the keyword
+                problem = LinearProblem(a, L, bcs=bcs, petsc_options=options)
+            solved = problem.solve()
+            # dolfinx >= 0.11 returns (function, convergence_reason, iterations).
+            return solved[0] if isinstance(solved, tuple) else solved
+
+        stage.report("solving (LU)")
+        profile: aero.Profile | None = None
+        kutta_ok = False
+        aero_warnings: list[str] = []
+
+        if not params.kutta:
+            psi_h = run(psi_inf, heuristic)
+        else:
+            # Same superposition as the mock: solve for the free-stream part with the body at
+            # zero, then for the pure circulatory part with the body at one, and the body value
+            # becomes an unknown the trailing edge determines. Two factorisations of the *same*
+            # matrix modulo boundary rows, which is why this is a doubling rather than worse.
+            psi_a = run(psi_inf, 0.0)
+            ctx.check_cancelled()
+            stage.report("solving (circulatory mode)")
+            psi_gamma = run(zero, 1.0)
+
+            ctx.check_cancelled()
+            stage.report("imposing the Kutta condition")
+            body_value = heuristic
+            try:
+                profile = aero.profile_of(obstacle_pts)
+                # Probed on the triangulation, not on a sampling grid. `body_value` is a
+                # Dirichlet value of the field returned below, so reading it off a raster would
+                # cap `c_l`'s accuracy at the raster's — at the trailing edge, of all places.
+                probe = _MeshProbe(msh)
+                body_value = aero.resolve_kutta(
+                    profile,
+                    partial(probe.at, psi_a),
+                    partial(probe.at, psi_gamma),
+                    step=params.mesh_size,
+                )
+                kutta_ok = True
+            except aero.AerodynamicsUnavailable as exc:
+                # A valid potential flow with an arbitrary circulation beats no result at all,
+                # so the job succeeds and says which metrics are missing and why.
+                aero_warnings.append(aero.describe_unavailable(exc))
+            psi_h = fem.Function(V)
+            psi_h.x.array[:] = psi_a.x.array + body_value * psi_gamma.x.array
 
         ctx.check_cancelled()
-        ctx.progress(ProgressEvent(iteration=2, total=4, message="solving (LU)"))
-        petsc_options = {"ksp_type": "preonly", "pc_type": "lu"}
-        try:
-            # dolfinx >= 0.10 requires an options prefix.
-            problem = LinearProblem(
-                a, L, bcs=[bc_outer, bc_body],
-                petsc_options=petsc_options,
-                petsc_options_prefix="fenixspoon_",
-            )
-        except TypeError:  # older dolfinx without the keyword
-            problem = LinearProblem(a, L, bcs=[bc_outer, bc_body], petsc_options=petsc_options)
-        solved = problem.solve()
-        # dolfinx >= 0.11 returns (function, convergence_reason, iterations).
-        psi_h = solved[0] if isinstance(solved, tuple) else solved
-
-        ctx.check_cancelled()
-        ctx.progress(ProgressEvent(iteration=3, total=4, message="post-processing"))
+        stage.report("post-processing")
         # Extracting the triangulation costs O(cells); skip it when nothing needs it.
         if params.output == "mesh2d" or params.write_vtk:
             points, triangles, psi_nodal = _p1_mesh_data(V, psi_h)
@@ -206,6 +306,38 @@ class DolfinxPotentialFlow2D(Solver):
                 {"psi": psi_nodal, "speed": speed_nodal},
             )
 
+        # A grid is needed to *report* a grid2d payload, and to integrate the surface pressure.
+        # Neither is wanted for a mesh2d result with no circulation, so it is built lazily —
+        # point location over `resolution^2` points is the expensive part of this adapter after
+        # meshing and the factorisation.
+        sampler = (
+            _GridSampler(msh, geometry, params.resolution, obstacle_pts)
+            if params.output == "grid2d" or kutta_ok
+            else None
+        )
+        grid_psi = sampler.sample(psi_h) if sampler is not None else None
+        # Computed once and passed on: `payload` used to recompute it, which cost two extra
+        # full-grid gradients on the commonest path.
+        grid_speed = (
+            sampler.speed(grid_psi) if sampler is not None and grid_psi is not None else None
+        )
+
+        aerodynamics: aero.Aerodynamics | None = None
+        if kutta_ok and profile is not None and sampler is not None:
+            try:
+                aerodynamics = aero.analyse(
+                    profile=profile,
+                    psi=grid_psi,
+                    speed=grid_speed,
+                    x=sampler.x,
+                    y=sampler.y,
+                    mask=sampler.mask,
+                    u_inf=params.u_inf,
+                    alpha_deg=params.alpha,
+                )
+            except aero.AerodynamicsUnavailable as exc:
+                aero_warnings.append(aero.describe_unavailable(exc))
+
         if params.output == "mesh2d":
             data = {
                 "bounds": [xmin, ymin, xmax, ymax],
@@ -217,23 +349,31 @@ class DolfinxPotentialFlow2D(Solver):
                 },
             }
         else:
-            data = _sample_grid2d(msh, psi_h, geometry, params.resolution, obstacle_pts)
-        ctx.progress(ProgressEvent(iteration=4, total=4, message="done"))
+            assert sampler is not None and grid_psi is not None  # grid2d always builds one
+            data = sampler.payload(grid_psi, grid_speed)
+        stage.done()
         stats = {
             "cells": float(msh.topology.index_map(msh.topology.dim).size_local),
             "dofs": float(V.dofmap.index_map.size_local),
         }
         speed_key = "fields" if params.output == "grid2d" else "point_fields"
         peak_speed = max(data[speed_key]["speed"], default=0.0)
+        if not params.kutta:
+            aero_warnings.append(aero.NO_CIRCULATION_WARNING)
         return SolverResult(
             kind=params.output,
             data=data,
             stats=stats,
-            metrics=_cp_min(float(peak_speed), params.u_inf),
+            metrics={
+                **_cp_min(float(peak_speed), params.u_inf),
+                **(aerodynamics.metrics if aerodynamics else {}),
+            },
+            series=aerodynamics.series if aerodynamics else [],
             # A direct LU factorisation does not iterate toward a tolerance, so
             # `converged` is True by construction and there is no residual to report.
             # Saying so beats leaving both null, which reads as "nobody checked".
             converged=True,
+            warnings=aero_warnings + (aerodynamics.warnings if aerodynamics else []),
         )
 
 
@@ -293,49 +433,143 @@ def _write_vtk_unstructured(path, points, triangles, fields) -> None:
             np.savetxt(f, np.asarray(values), fmt="%.9g")
 
 
-def _sample_grid2d(msh, psi_h, geometry: Domain2D, resolution: int, obstacle_pts) -> dict:
-    """Evaluate the FEM solution on a regular grid, reusing the mock solver's mask/format."""
-    from dolfinx import geometry as dgeo
+class _Stages:
+    """Sequential progress reporting for a solve whose stage count depends on its params.
 
-    from .mock_laplace import polygon_mask
+    The stage indices used to be written out as literals — `iteration=2`, `iteration=3`,
+    `iteration=total - 1` — against a `total` that was itself `6 if kutta else 5`. That encoded
+    the branch structure twice, left the non-Kutta stream jumping 2 → 4 → 5, and meant inserting
+    a stage required finding every literal. Counting is the whole job.
+    """
 
-    xmin, ymin, xmax, ymax = geometry.bounds
-    lx, ly = xmax - xmin, ymax - ymin
-    if lx >= ly:
-        nx, ny = resolution, max(8, round(resolution * ly / lx))
-    else:
-        ny, nx = resolution, max(8, round(resolution * lx / ly))
-    x = np.linspace(xmin, xmax, nx)
-    y = np.linspace(ymin, ymax, ny)
-    xx, yy = np.meshgrid(x, y)
-    pts3 = np.column_stack([xx.ravel(), yy.ravel(), np.zeros(xx.size)])
+    def __init__(self, ctx: SolverContext, total: int) -> None:
+        self._ctx = ctx
+        self._total = total
+        self._done = 0
 
-    tree = dgeo.bb_tree(msh, msh.topology.dim)
-    candidates = dgeo.compute_collisions_points(tree, pts3)
-    colliding = dgeo.compute_colliding_cells(msh, candidates, pts3)
-    values = np.zeros(pts3.shape[0])
-    have = np.zeros(pts3.shape[0], dtype=bool)
-    eval_pts, eval_cells, eval_idx = [], [], []
-    for i in range(pts3.shape[0]):
-        cells_i = colliding.links(i)
-        if len(cells_i) > 0:
-            eval_pts.append(pts3[i])
-            eval_cells.append(cells_i[0])
-            eval_idx.append(i)
-    if eval_pts:
-        vals = psi_h.eval(np.asarray(eval_pts), np.asarray(eval_cells, dtype=np.int32))
-        values[np.asarray(eval_idx)] = vals.ravel()
-        have[np.asarray(eval_idx)] = True
+    def report(self, message: str) -> None:
+        self._done += 1
+        self._ctx.progress(
+            ProgressEvent(iteration=self._done, total=self._total, message=message)
+        )
 
-    psi = values.reshape(ny, nx)
-    mask = polygon_mask(np.asarray(obstacle_pts, dtype=float), xx, yy) | ~have.reshape(ny, nx)
-    u = np.gradient(psi, y[1] - y[0], axis=0)
-    v = -np.gradient(psi, x[1] - x[0], axis=1)
-    speed = np.sqrt(u**2 + v**2)
-    speed[mask] = 0.0
-    return {
-        "bounds": [xmin, ymin, xmax, ymax],
-        "shape": [ny, nx],
-        "fields": {"psi": psi.ravel().tolist(), "speed": speed.ravel().tolist()},
-        "mask": mask.astype(np.uint8).ravel().tolist(),
-    }
+    def done(self) -> None:
+        self._ctx.progress(
+            ProgressEvent(iteration=self._total, total=self._total, message="done")
+        )
+
+
+class _MeshProbe:
+    """Evaluates P1 functions at arbitrary points on the triangulation.
+
+    This is what lets the Kutta condition be answered on the mesh rather than on a sampling
+    grid. It is a *point* query — two per basis solution — so it shares nothing with
+    :class:`_GridSampler` beyond the dolfinx calls: that class locates tens of thousands of
+    points once and caches the result, this one locates two and does not.
+
+    Returns ``None`` where the point is in no cell, which is what
+    :func:`~fenixspoon.solvers.aerodynamics.resolve_kutta` reads as "try further out" — the
+    trailing edge of a thin section is exactly where a probe can land in the hole.
+    """
+
+    def __init__(self, msh) -> None:
+        from dolfinx import geometry as dgeo
+
+        self._dgeo = dgeo
+        self._msh = msh
+        self._tree = dgeo.bb_tree(msh, msh.topology.dim)
+
+    def at(self, function, px: float, py: float) -> float | None:
+        point = np.array([[px, py, 0.0]])
+        candidates = self._dgeo.compute_collisions_points(self._tree, point)
+        cells = self._dgeo.compute_colliding_cells(self._msh, candidates, point)
+        found = cells.links(0)
+        if len(found) == 0:
+            return None
+        return float(function.eval(point, np.asarray([found[0]], dtype=np.int32)).ravel()[0])
+
+
+class _GridSampler:
+    """Evaluates FEM functions on a regular grid, locating the points only once.
+
+    Point location — the bounding-box tree, the collision query, the per-point cell pick — is
+    what makes sampling expensive, and it depends only on the mesh and the grid. Holding it
+    means the Kutta path samples its two basis solutions for barely more than one solve's
+    worth of work, and it is the same lattice for all of them, which the superposition on the
+    grid requires.
+
+    The mask is the mock solver's, unchanged, plus the points that landed in no cell at all —
+    those are inside the obstacle hole or a hair outside the meshed rectangle, and either way
+    they carry no solution.
+    """
+
+    def __init__(self, msh, geometry: Domain2D, resolution: int, obstacle_pts) -> None:
+        from dolfinx import geometry as dgeo
+
+        from .mock_laplace import _grid_shape, polygon_mask
+
+        xmin, ymin, xmax, ymax = geometry.bounds
+        self.bounds = (xmin, ymin, xmax, ymax)
+        # The mock adapter's shape rule, imported rather than restated: a `grid2d` from either
+        # adapter should be the same lattice for the same geometry and resolution, and two
+        # copies of that arithmetic is how they would stop being.
+        self.shape = _grid_shape(geometry.bounds, resolution)
+        ny, nx = self.shape
+        self.x = np.linspace(xmin, xmax, nx)
+        self.y = np.linspace(ymin, ymax, ny)
+        xx, yy = np.meshgrid(self.x, self.y)
+        points = np.column_stack([xx.ravel(), yy.ravel(), np.zeros(xx.size)])
+
+        tree = dgeo.bb_tree(msh, msh.topology.dim)
+        candidates = dgeo.compute_collisions_points(tree, points)
+        colliding = dgeo.compute_colliding_cells(msh, candidates, points)
+        located, cells, indices = [], [], []
+        for index in range(points.shape[0]):
+            found = colliding.links(index)
+            if len(found) > 0:
+                located.append(points[index])
+                cells.append(found[0])
+                indices.append(index)
+        self._points = np.asarray(located) if located else np.zeros((0, 3))
+        self._cells = np.asarray(cells, dtype=np.int32)
+        self._indices = np.asarray(indices, dtype=np.int64)
+        inside = np.zeros(points.shape[0], dtype=bool)
+        inside[self._indices] = True
+        self.mask = (
+            polygon_mask(np.asarray(obstacle_pts, dtype=float), xx, yy)
+            | ~inside.reshape(ny, nx)
+        )
+
+    def sample(self, function) -> np.ndarray:
+        """One FEM function on the grid, zero where nothing was located."""
+        ny, nx = self.shape
+        values = np.zeros(ny * nx)
+        if len(self._indices):
+            values[self._indices] = function.eval(self._points, self._cells).ravel()
+        return values.reshape(ny, nx)
+
+    def speed(self, psi: np.ndarray) -> np.ndarray:
+        """``|grad psi|`` on the grid, zeroed inside the body."""
+        return aero.speed_on_grid(psi, self.x, self.y, self.mask)
+
+    def payload(self, psi: np.ndarray, speed: np.ndarray | None = None) -> dict:
+        """The `grid2d` result payload for a sampled field.
+
+        ``speed`` is an argument because the caller usually has it already — the aerodynamic
+        post-processing needs it too, and recomputing it here cost two extra full-grid gradients
+        on the commonest path.
+        """
+        ny, nx = self.shape
+        if speed is None:
+            speed = self.speed(psi)
+        return {
+            "bounds": list(self.bounds),
+            "shape": [ny, nx],
+            "fields": {
+                "psi": psi.ravel().tolist(),
+                "speed": speed.ravel().tolist(),
+            },
+            "mask": self.mask.astype(np.uint8).ravel().tolist(),
+        }
+
+

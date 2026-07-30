@@ -12,6 +12,8 @@ import pytest
 dolfinx = pytest.importorskip("dolfinx", reason="requires dolfinx (FEniCSx)")
 pytest.importorskip("gmsh", reason="requires the gmsh Python API")
 
+from geometries import naca4  # noqa: E402
+
 from fenixspoon.geometry import Domain2D, Polygon2D  # noqa: E402
 from fenixspoon.solvers import get_solver  # noqa: E402
 from fenixspoon.solvers.base import JobCancelled, SolverContext  # noqa: E402
@@ -31,6 +33,15 @@ def make_ctx(tmp_path, events=None, cancel_event=None):
         progress_cb=(events.append if events is not None else lambda e: None),
         cancel_event=cancel_event,
         artifact_dir=tmp_path / "artifacts",
+    )
+
+
+def run(tmp_path, geometry=GEOMETRY, events=None, **params):
+    """Solve once. Saves repeating the three-line ceremony for every parameter set."""
+    return DolfinxPotentialFlow2D().solve(
+        geometry,
+        DolfinxPotentialFlow2D.Params(**params),
+        make_ctx(tmp_path, events),
     )
 
 
@@ -195,3 +206,109 @@ def test_cell_estimate_stays_above_the_real_mesh(tmp_path, mesh_size):
     assert estimate >= result.stats["cells"]
     # ...but not so high that the cap becomes theatre.
     assert estimate <= 5 * result.stats["cells"]
+
+
+# ---------------------------------------------------- circulation and lift (#68)
+
+#: The symmetric section from `geometries`, in a domain with room for a circulation contour.
+#: `GEOMETRY` above is a 4-vertex cambered diamond — fine for plumbing, useless for checking
+#: that lift is antisymmetric in incidence, which is a property of the *body*.
+SYMMETRIC = Domain2D(bounds=(-1.5, -1.5, 2.5, 1.5), obstacle=Polygon2D(points=naca4()))
+
+
+def test_the_kutta_condition_produces_lift_and_the_pair_agrees_on_it(tmp_path):
+    """The FEniCSx half of #68, and the cross-validation the pair exists for.
+
+    `mock.laplace2d` and this adapter solve the same equations two ways and share one
+    :mod:`fenixspoon.solvers.aerodynamics` implementation of the loads, so their lift
+    coefficients have to agree — not to the last digit, since one relaxes on a raster and the
+    other factorises a P1 system on a body-conforming mesh, but well inside the band that
+    separates "the same physics" from "one of these is wrong".
+    """
+    fem = run(tmp_path, geometry=SYMMETRIC, mesh_size=0.04, resolution=160, alpha=5.0)
+    mock = MockLaplace2D().solve(
+        SYMMETRIC,
+        MockLaplace2D.Params(resolution=160, iterations=8000, alpha=5.0, write_vtk=False),
+        make_ctx(tmp_path),
+    )
+
+    for metric in ("circulation", "c_l", "c_m_c4", "x_cp"):
+        assert metric in fem.metrics, f"{metric} missing from the FEniCSx result"
+    assert fem.metrics["c_l"] > 0.3, "five degrees on this section must lift"
+    assert fem.metrics["circulation"] < 0, "lift is clockwise circulation"
+    assert fem.metrics["c_l"] == pytest.approx(mock.metrics["c_l"], rel=0.25)
+
+
+def test_lift_is_antisymmetric_in_incidence_for_a_symmetric_section(tmp_path):
+    """A property of the *problem*, not of the discretisation, so it holds however coarse the
+    mesh — which makes it the one lift assertion a mesh cannot fake. It needs a symmetric
+    section, which is why `naca4` lives in `geometries` rather than in one test module."""
+    up = run(tmp_path, geometry=SYMMETRIC, mesh_size=0.05, resolution=120, alpha=6.0)
+    down = run(tmp_path, geometry=SYMMETRIC, mesh_size=0.05, resolution=120, alpha=-6.0)
+    assert up.metrics["c_l"] > 0 > down.metrics["c_l"]
+    assert up.metrics["c_l"] == pytest.approx(-down.metrics["c_l"], rel=0.02)
+
+
+def test_zero_incidence_on_a_symmetric_section_is_zero_lift(tmp_path):
+    result = run(tmp_path, geometry=SYMMETRIC, mesh_size=0.05, resolution=120, alpha=0.0)
+    assert result.metrics["c_l"] == pytest.approx(0.0, abs=0.02)
+
+
+def test_the_kutta_value_comes_off_the_mesh_so_the_grid_does_not_cap_it(tmp_path):
+    """`resolution` is the *reporting* grid; `mesh_size` is what resolves the flow.
+
+    The body's streamfunction value is a Dirichlet value of the returned field, so it is probed
+    on the triangulation. If it were read off the sampling grid instead, halving `resolution`
+    while holding `mesh_size` would move `c_l` — which is the regression this guards, and the
+    reason the surface-pressure integral (which genuinely does use the grid) is checked
+    separately with a looser band.
+    """
+    coarse = run(tmp_path, geometry=SYMMETRIC, mesh_size=0.04, resolution=64, alpha=5.0)
+    fine = run(tmp_path, geometry=SYMMETRIC, mesh_size=0.04, resolution=256, alpha=5.0)
+    assert coarse.metrics["circulation"] == pytest.approx(
+        fine.metrics["circulation"], rel=0.02
+    ), "the Kutta value moved with the sampling grid, so it is being read off it"
+
+
+def test_the_surface_pressure_comes_back_as_a_series(tmp_path):
+    """Protocol 1.4's `series`, from this adapter as well as the mock — the pair has to agree
+    about the *shape* of an answer, not only about its numbers."""
+    result = run(tmp_path, geometry=SYMMETRIC, mesh_size=0.05, resolution=128, alpha=4.0)
+    assert [entry.name for entry in result.series] == ["surface_cp"]
+    assert {trace.name for trace in result.series[0].traces} == {"cp_upper", "cp_lower"}
+    for trace in result.series[0].traces:
+        assert trace.x is not None and len(trace.values) == len(trace.x.values)
+
+
+def test_a_mesh2d_result_still_carries_the_aerodynamic_metrics(tmp_path):
+    """The surface integral samples a grid regardless of `output`, which is why `resolution`
+    affects `c_m_c4` even when the payload is the triangulation. Worth a test because the
+    obvious reading of `resolution` — "only for a grid2d result" — is no longer true."""
+    result = run(
+        tmp_path, geometry=SYMMETRIC, mesh_size=0.05, resolution=128, alpha=4.0,
+        output="mesh2d", write_vtk=False,
+    )
+    assert result.kind == "mesh2d"
+    assert result.metrics["c_l"] > 0
+    assert result.series, "and the curve comes with it"
+
+
+def test_without_the_kutta_condition_the_lift_metrics_are_absent(tmp_path):
+    result = run(tmp_path, mesh_size=0.06, resolution=96, kutta=False)
+    for absent in ("circulation", "c_l", "c_m_c4", "x_cp"):
+        assert absent not in result.metrics
+    assert result.metrics["cp_min"] < 0, "the flow field is still usable"
+    assert any("no Kutta condition" in warning for warning in result.warnings)
+
+
+def test_a_mesh2d_result_without_circulation_builds_no_sampling_grid(tmp_path):
+    """The one path that needs no grid at all: a triangulation payload with no loads to
+    integrate. Asserted through the progress stream, which is the only thing that observes it —
+    a `mesh2d` + `kutta=False` run reports four stages, not six."""
+    events = []
+    result = run(
+        tmp_path, mesh_size=0.06, resolution=512, output="mesh2d",
+        kutta=False, write_vtk=False, events=events,
+    )
+    assert result.kind == "mesh2d"
+    assert max(event.iteration for event in events) == 4

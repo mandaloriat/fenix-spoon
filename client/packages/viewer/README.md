@@ -27,6 +27,13 @@ npm install @fenix-spoon/viewer
 The element takes `grid2d` and `mesh2d` results interchangeably — it reads the fields through the
 protocol's shape, so swapping the mock solver for a FEniCSx one changes nothing on this side.
 
+It **declines a `series1d` result**, the curve kind protocol 1.4 added. That is not an omission: a
+curve has no bounds to fit, no topology to interpolate over and nothing to contour, and the axes,
+legend and inverted `y` an aerodynamic `C_p` plot wants are a different widget's problem. Handing
+one over clears the view and logs why. Read the curves with `resultSeries(result)` from
+`@fenix-spoon/client` — including the ones that ride along *with* a field, which this element
+draws as usual.
+
 To control registration (a different tag name, or none at all), import the `element` subpath:
 
 ```ts

@@ -39,7 +39,7 @@ from pydantic import BaseModel, Field
 
 from ..geometry import Regions2D
 from .base import CapabilityExample, ProgressEvent, Solver, SolverContext, SolverResult
-from .declarations import HEAT_METRICS, VTK_ARTIFACT
+from .declarations import HEAT_ASSUMPTIONS, HEAT_METRICS, VTK_ARTIFACT
 from .mock_laplace import _grid_shape, grid_to_mesh2d, polygon_mask, write_vtk_structured_points
 from .mock_magnetostatics import _harmonic_mean, rasterize_regions
 from .registry import register
@@ -67,6 +67,7 @@ class MockHeat2D(Solver):
     physics = "heat-conduction"
     availability = "mock"
     metrics = HEAT_METRICS
+    assumptions = HEAT_ASSUMPTIONS
     #: Pure NumPy with a fixed sweep count and no randomness anywhere: the same inputs give
     #: the same array, bit for bit, on the same numpy. Safe to cache (#47).
     deterministic = True

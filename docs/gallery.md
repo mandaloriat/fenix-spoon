@@ -26,6 +26,22 @@ triangulation, rendered as `mesh2d`.
 over the viewer. All the interaction — keyboard operation, undo, point insertion, contours, the
 hover probe — comes from the packages.
 
+**And it reports a lift coefficient**, which it could not until protocol 1.4. The streamfunction
+solve used to hold the body on whichever streamline passed through its centroid — an arbitrary
+constant that nevertheless *set the circulation*, so lift was an artefact of a heuristic and
+nothing in the capability declaration said so. Both potential-flow adapters now impose the
+**Kutta condition** at the trailing edge instead ([#68](https://github.com/mandaloriat/fenix-spoon/issues/68)):
+one extra Laplace solve, one division, and `circulation`, `c_l`, `c_m_c4` and `x_cp` are real
+numbers. The status line reads them from `metrics`. Pass `alpha` for incidence — it rotates the
+free stream rather than the geometry, so nothing re-meshes — and the surface `C_p` distribution
+comes back as a [`series`](04-wire-protocol.md#one-dimensional-results) beside the field.
+
+The accuracy is what a first-order Cartesian grid gives: the lift-curve slope comes out about 9%
+above the thin-airfoil `2*pi`, and a NACA 2412's zero-lift angle at -2.34° against the tabulated
+-2.1°. The two independent routes to lift — Kutta–Joukowski from the circulation, and an integral
+of the surface pressure — are compared on every run, and a disagreement past 25% becomes a warning
+rather than being averaged into something that looks confident.
+
 There is also a [zero-dependency version](https://github.com/mandaloriat/fenix-spoon/blob/main/examples/airfoil-2d/index-vanilla.html)
 in a single HTML file with no build step: the readable reference for exactly what goes over the
 wire.
