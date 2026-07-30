@@ -15,7 +15,7 @@ Six object types, and they are deliberately not equal:
 | `design` | :class:`DesignBody` | the load-bearing one — what `job.submit` resolves |
 | `boundary_condition` | *nothing* | see below |
 | `load_case` | *nothing* | see below |
-| `study` | *nothing* | #48 defines it |
+| `study` | :class:`~fenixspoon.core.studies.StudyBody` | #48 defined it |
 
 **`boundary_condition` and `load_case` are stored as opaque JSON on purpose.** Issue #44 asked
 for that to be said out loud rather than papered over with an invented schema, so: no shipped
@@ -24,7 +24,9 @@ convective cooling as `h` and `t_ambient`; `dolfinx.magnetostatics2d` puts A = 0
 boundary and offers no choice about it. A generic schema written today would be a guess
 generalising from zero examples. The types exist so that ids and references are consistent when
 a capability finally needs them; until then the body is whatever the caller puts there and the
-workspace stores it faithfully. `study` is the same, waiting on #48.
+workspace stores it faithfully. `study` *was* the same until #48, which gave it a body — the
+difference being that a study had a concrete first use case to generalise from, and these two
+still do not.
 
 ## Versioning and patching
 
@@ -68,6 +70,7 @@ from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 from ..geometry import Geometry
 from ..objects import OBJECT_TYPES, ObjectFileStore, ObjectRecord, parse_ref
 from . import errors
+from .studies import StudyBody
 
 #: Built once. The union is fixed at import time, and constructing a `TypeAdapter` per
 #: validation shows up on a workspace listing that validates every head it returns.
@@ -171,6 +174,9 @@ VALIDATED: dict[str, type[BaseModel] | Literal["geometry"]] = {
     "geometry": "geometry",
     "material": MaterialBody,
     "design": DesignBody,
+    # #48 gave `study` a body, so it left the thin list. The other two are still thin, and
+    # still for the reason above rather than for want of attention.
+    "study": StudyBody,
 }
 
 
@@ -223,6 +229,16 @@ class Workspace:
 
     def get(self, ref: str, owner: str) -> ObjectView:
         return ObjectView.of(self._record(ref, owner))
+
+    def get_typed(self, ref: str, owner: str, expected: str) -> ObjectView:
+        """One object, refusing a reference that resolves to the wrong kind.
+
+        `get` deliberately does not type-check — `object.get` is how a caller inspects
+        whatever it has a reference to. A caller that *knows* what it wants (a study, a
+        design) needs the check, and getting `WrongObjectType` beats reading a body that
+        happens to parse.
+        """
+        return ObjectView.of(self._record(ref, owner, expected=expected))
 
     def revisions(self, ref: str, owner: str) -> list[int]:
         """Every revision of an object. Reading one first, so an unknown ref is an error

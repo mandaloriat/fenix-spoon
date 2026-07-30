@@ -193,11 +193,29 @@ the seams a second caller needs. The design specification is
       *The `design → job → result` relation is queryable from either end: provenance names the
       pinned object revisions, and `jobs_for_object` reads it backwards. Study joins the chain
       when #48 writes one; nothing here needs to change for it to.* (#47)
-- [ ] **Study abstraction.** One vocabulary under which parameter sweeps, mesh-convergence studies,
-      material comparisons, load-case comparisons, parametric optimization and model calibration
-      can be expressed. The first slice implements a single small, controlled study kind —
-      enough to prove that several jobs can be orchestrated through object references and
-      synthetic results. No universal optimizer here (that stays M5, #22). (#48)
+- [x] **Study abstraction.** A `study` object — kind, base design, the parameter to vary, the
+      ladder of values, a tolerance — plus `study.run` and `study.get`. **One kind,
+      `mesh_convergence`**, which is what the issue asked for: enough to prove several jobs can
+      be orchestrated through object references and compact results, not a framework with one
+      user. `study.get` returns the (variation → metric) table *and* the sentence it is for —
+      the value from which every later change stays under the tolerance.
+      *A study may override a design's parameters where `job.submit` may not*, and that is not
+      an exception to #44's rule but the same rule: the override is `values[i]` applied to
+      `parameter`, both frozen in the study revision, so a rung's parameters are a pure function
+      of *(study revision, rung index)* — as reproducible as a design revision, without filling
+      a design's history with machine-generated revisions nobody authored.
+      *The study/optimizer boundary is settled with a property rather than a description* — a
+      study's job list is a pure function of its object revision, so you can say which solves it
+      implies without running any. An optimizer cannot promise that. Recorded in
+      [§15](07-local-agent-interface.md#15-open-questions).
+      *There is no per-run record.* The study is the question, the jobs are the answer, and the
+      relation is queried the way #47 made `design → job → result` readable backwards. A rung
+      resolves to its job by **cache key** — which is also how a rung answered by a standalone
+      solve from last week is found, something no `inputs` lookup could do.
+      *The one guard that earns its keep*: a solver's `Params` ignores unknown fields, so a
+      study varying `resolutoin` would submit every rung identically, the cache would collapse
+      them onto one job, and the table would show a perfectly converged answer that is entirely
+      fabricated. A parameter the capability does not have is refused. (#48)
 - [ ] **MCP adapter.** A thin Model Context Protocol server over the same core and the same
       operations as JSON-RPC: a small stable tool vocabulary (inspect environment, list
       capabilities, describe capability, create or patch object, submit job, inspect job, query
