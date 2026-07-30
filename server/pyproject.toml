@@ -45,6 +45,14 @@ fenics = [
 redis = [
     "arq>=0.26",
 ]
+# The Model Context Protocol adapter (roadmap M2.5, #49). An extra rather than a base
+# dependency, and that is a requirement of the issue rather than a preference: MCP must not
+# become a dependency of the core, so the test suite, the HTTP server and the JSON-RPC
+# transport all build and pass without it. `fenixspoon/mcp_adapter.py` is the only module that
+# imports it, and `test_nothing_but_the_adapter_imports_mcp` keeps it that way.
+mcp = [
+    "mcp>=1.0",
+]
 # Building the documentation site (mkdocs.yml lives at the repository root).
 docs = [
     "mkdocs>=1.6",
@@ -67,4 +75,5 @@ testpaths = ["tests"]
 markers = [
     "fenics: tests requiring dolfinx + gmsh (skipped automatically when not installed)",
     "redis: tests requiring a reachable Redis (set FENIXSPOON_TEST_REDIS_URL)",
+    "mcp: tests requiring the MCP SDK (skipped automatically when the extra is not installed)",
 ]

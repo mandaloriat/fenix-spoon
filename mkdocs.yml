@@ -53,6 +53,7 @@ nav:
   - Reference:
       - Wire protocol: 04-wire-protocol.md
       - JSON-RPC over stdio: 08-json-rpc.md
+      - MCP adapter: 09-mcp.md
       - Protocol models: reference-protocol.md
       - Deployment: 05-deployment.md
       - Load test: 06-load-test.md
