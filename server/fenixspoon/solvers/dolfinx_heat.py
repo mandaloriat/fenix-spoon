@@ -280,10 +280,20 @@ class DolfinxHeat2D(Solver):
             # the demo reads, so both adapters answer the same question.
             "solid_cells": cells,
             "dofs": float(V.dofmap.index_map.size_local),
-            "t_max": float(t_nodal.max()),
-            "t_rise": float(t_nodal.max() - params.t_ambient),
         }
-        return SolverResult(kind="mesh2d", data=data, stats=stats)
+        return SolverResult(
+            kind="mesh2d",
+            data=data,
+            stats=stats,
+            # `t_max` is a declared reduction of `T` and is filled by the runtime; only
+            # `t_rise` needs a parameter, so only `t_rise` is computed here. Both used to
+            # be `stats` keys, which conflated what the solve cost with what it answered.
+            metrics={"t_rise": float(t_nodal.max() - params.t_ambient)},
+            # A direct LU factorisation does not iterate toward a tolerance, so
+            # `converged` is True by construction and there is no residual to report.
+            # Saying so beats leaving both null, which reads as "nobody checked".
+            converged=True,
+        )
 
 
 def _nodal_region_value(

@@ -11,14 +11,17 @@
     **Landed so far:** the transport-neutral core §11 depends on
     ([#42](https://github.com/mandaloriat/fenix-spoon/issues/42)); capability discovery §6 —
     `environment.inspect`, `capability.list`, `capability.describe`, bound to HTTP in protocol
-    1.2 ([#43](https://github.com/mandaloriat/fenix-spoon/issues/43)); and the workspace §8 —
+    1.2 ([#43](https://github.com/mandaloriat/fenix-spoon/issues/43)); the workspace §8 —
     typed versioned objects, RFC 6902 patches, submission by design reference, reachable
-    through the core only ([#44](https://github.com/mandaloriat/fenix-spoon/issues/44)).
-    Four of §15's open questions are settled as a result, and are marked there.
+    through the core only ([#44](https://github.com/mandaloriat/fenix-spoon/issues/44)); and
+    compact results §10 — the five levels, metric values, diagnostics and the nine bounded
+    field queries, bound to HTTP as protocol 1.3
+    ([#46](https://github.com/mandaloriat/fenix-spoon/issues/46)). Four of §15's open
+    questions are settled as a result, and are marked there.
 
-    Where §6 and §8 below differ from what shipped, the implementation is the accurate one;
-    the differences are noted inline. The transports themselves — JSON-RPC, CLI, MCP — and
-    the compact result levels are still design.
+    Where §6, §8 and §10 below differ from what shipped, the implementation is the accurate
+    one; the differences are noted inline. The transports themselves — JSON-RPC, CLI, MCP —
+    the content-addressed cache and the study abstraction are still design.
 
 ## 1. Motivation
 
@@ -280,6 +283,17 @@ caller:
   policy. The local transport is a different door, not a bypass.
 
 ## 10. Result queries
+
+!!! success "Implemented (#46), as protocol 1.3"
+
+    Levels, metric values, diagnostics and all nine query operations, with two departures
+    worth recording. **The HTTP binding is a separate route, not a query parameter on
+    `/result`** — two payload shapes on one path, chosen by a parameter, is not something a
+    typed client can describe, so `/summary` is the compact form and `/result` keeps its
+    arrays. And **`over_region` needs the geometry**, which a result does not carry: it
+    resolves through the job's workspace provenance (#44), so a job submitted with an inline
+    geometry is told that rather than handed an empty region. Persisting the geometry with
+    every job would remove the limitation and belongs with provenance in #47.
 
 Five response levels, requested independently:
 

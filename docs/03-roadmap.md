@@ -135,14 +135,24 @@ the seams a second caller needs. The design specification is
       pipes — documented framing, typed compact errors, long solves as asynchronous jobs, working
       identically against mock solvers and real FEniCSx. This is the base local transport; MCP
       is layered on it, not the other way round. (#45)
-- [ ] **Compact results: metrics, diagnostics and selective field queries.** Separate the response
-      levels `status` / `metrics` / `diagnostics` / `fields` / `artifacts`. Diagnostics already
-      half exist as the result's `stats` (cells, dofs, iterations, seconds) — formalize that rather
-      than inventing a parallel channel, and add the part that is missing: declared scalar
-      engineering metrics (mass, maximum displacement, maximum stress, safety factor, strain
-      energy, force, inductance, peak temperature). Full fields travel as artifacts by reference,
-      with selective queries for max, min, mean, integral, point value, region value, section,
-      decimated sampling and hotspot location. (#46)
+- [x] **Compact results: metrics, diagnostics and selective field queries.** Five response
+      levels in `core/results.py`, bound to HTTP as protocol 1.3. The default omits `fields`, so
+      a finished solve answers in **686 bytes against 529 kB** for the full payload — and the
+      compact levels never open the payload file at all, because metrics and diagnostics are
+      database columns. `result.query` adds the nine bounded operations over
+      `fenixspoon/fields.py`: max/min with location, area-weighted mean, integral, interpolated
+      point value, region statistics, section, decimated sample, and clustered hotspots.
+      *`t_max` and `t_rise` moved out of `stats` into `metrics`* — they were never costs, and
+      #43 had already written down that this is where the conflation gets undone. Diagnostics
+      grew out of `stats` rather than beside it, gaining the three things a `dict[str, float]`
+      could not hold: a convergence flag, a residual, and warnings.
+      *Two things worth recording. A metric declared as a reduction of a field is computed
+      **generically** from the #43 declaration, so four adapters do not each write the same
+      `float(T.max())`; only the derived ones (`t_rise` needs `t_ambient`, `cp_min` needs
+      `u_inf`) are adapter code. And writing the closed-form test for `integral` found a real
+      10% bias — summing grid points and multiplying by the cell area over-counts by
+      `(n/(n-1))²`, because a lattice has one more point per axis than it has intervals. It is
+      trapezoidal now, and exact for linear fields.* (#46)
 - [ ] **Content-addressed cache and provenance.** Deterministic hashing of geometry, solver,
       parameters and environment; local result cache; deduplication of equivalent jobs; full
       provenance on every result and an explicit design → study → job → result relation. The cache

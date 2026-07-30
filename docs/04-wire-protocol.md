@@ -8,13 +8,13 @@ them. Breaking changes bump the path version.
 
 ## Versioning
 
-The protocol is versioned `MAJOR.MINOR`, currently **1.2**, and a server reports what it
+The protocol is versioned `MAJOR.MINOR`, currently **1.3**, and a server reports what it
 speaks:
 
 ### `GET /api/v1/version`
 
 ```json
-{ "protocol": "1.2", "implementation": "0.1.0", "api_path": "/api/v1" }
+{ "protocol": "1.3", "implementation": "0.1.0", "api_path": "/api/v1" }
 ```
 
 **The one route that never requires an API key.** A client needs to know whether it can talk
@@ -99,8 +99,10 @@ binding at all**: its first transport is the JSON-RPC adapter (#45), and binding
 would mean designing an object API that the transport it exists for might want differently. The
 only trace it leaves on this contract is the `workspace` path in `environment.inspect`, which
 [#43](https://github.com/mandaloriat/fenix-spoon/issues/43) had specified and had nothing to point
-at until now. The rest of the draft — JSON-RPC, compact result levels, cache, studies — is still
-design.
+at until now. Finally, **compact results**
+([#46](https://github.com/mandaloriat/fenix-spoon/issues/46)) are protocol 1.3: response levels,
+declared metric *values*, formalised diagnostics and bounded field queries, all bound below. The
+rest of the draft — JSON-RPC, the content-addressed cache, studies — is still design.
 
 ## Authentication
 
@@ -363,6 +365,8 @@ after completion still yields the full history. Stream closes after a terminal e
   "kind": "grid2d",
   "data": { "...": "see result kinds below" },
   "stats": { "cells": 8192, "iterations": 3000, "seconds": 1.8421 },
+  "metrics": { "speed_max": 1.379, "cp_min": -0.903 },
+  "diagnostics": { "converged": true, "residual": 8.4e-10, "warnings": [] },
   "artifacts": [
     { "name": "solution.vtk", "content_type": "model/vnd.vtk", "size": 191234,
       "url": "/api/v1/jobs/j-8f3a.../artifacts/solution.vtk" }
@@ -370,11 +374,72 @@ after completion still yields the full history. Stream closes after a terminal e
 }
 ```
 
-`stats` is what the solve actually cost, as an open map of `string → number`. Clients must
-treat every key as optional: `cells` and `seconds` are conventional and `seconds` is always
-present (the job manager measures it), the rest is whatever the adapter knows — the mock
-solvers report `iterations`, the FEniCSx adapters report `dofs`. A key present in `stats` is
-the measured value, unlike the pre-flight `estimate_cells` used by the budget check.
+**`stats` is what the solve cost; `metrics` is what it answered.** Both are open maps of
+`string → number` and clients must treat every key as optional, but they are different
+questions. An operator reads `stats` to size a machine; an engineer reads `metrics` to make a
+decision. `cells` and `seconds` are conventional in `stats` and `seconds` is always present
+(the job manager measures it); the rest is whatever the adapter knows — the mock solvers
+report `iterations`, the FEniCSx adapters report `dofs`. A key present in `stats` is the
+measured value, unlike the pre-flight `estimate_cells` used by the budget check.
+
+`metrics` keys are exactly the ones the capability declares — ask
+`GET /capabilities/{name}?sections=metrics` for their units and meanings *before* running
+anything. **`t_max` and `t_rise` moved here from `stats` in protocol 1.3**, which was the
+whole point: they were never costs. That is additive rather than breaking under the rule
+above, because `stats` keys have always been documented as server-defined and all optional —
+but a client that ignored that and hard-coded `stats.t_rise` will need the one-line change
+the [heat-sink demo](gallery.md) shows.
+
+`diagnostics` carries the three things `stats` could not hold, being typed `string → number`:
+`converged` (null where the question does not apply — a direct LU factorisation does not
+iterate toward a tolerance), `residual`, and `warnings`, which previously could only be said
+in a progress event and therefore only to a client that happened to be watching.
+
+### Compact results
+
+Added in protocol 1.3 ([#46](https://github.com/mandaloriat/fenix-spoon/issues/46)). The
+envelope above is right for a viewer, which draws every one of those numbers, and wrong for a
+caller that has to reason about the answer: a `grid2d` result is tens of thousands of floats.
+
+#### `GET /api/v1/jobs/{job_id}/summary`
+
+The same relationship `/capabilities` has to `/solvers` — the exhaustive route keeps its
+payload, and this one answers the question a caller usually has. Five levels, selected with a
+repeatable `?levels=`: `status`, `metrics`, `diagnostics`, `fields`, `artifacts`.
+
+**The default is every level except `fields`**, which is the entire behavioural change: a
+caller that says nothing gets an answer it can read. Measured on a 96-point potential-flow
+solve, the default answer is 686 bytes against 529 kB for the full payload. An unrequested
+level is *absent* rather than null, and an unknown level name is a `422` for the same reason a
+misspelled capability section is.
+
+Artifacts here carry a `path` rather than a `url`: this route reports what the core knows, and
+a caller wanting a download uses the artifact endpoint the full envelope advertises.
+
+#### `POST /api/v1/jobs/{job_id}/query`
+
+One bounded question about one field, for the scalars the declared metrics do not cover:
+
+```json
+{ "field": "speed", "op": "max" }
+→ { "job_id": "j-8f3a...", "field": "speed", "op": "max",
+    "result": { "value": 1.3796, "at": [0.326, 0.111] } }
+```
+
+Operations: `max` / `min` (with location), `mean` (area-weighted), `integral`, `at_point`
+(interpolated), `over_region`, `section` along a line, `sample` (decimated), `hotspots`
+(the N most extreme *distinct* locations, not N neighbours of one peak).
+
+`POST` because the request is a structured object with a dozen optional arguments rather than
+an identifier; it is still a read. `section` and `sample` take a `samples` budget which the
+server **caps** rather than refuses — an uncapped budget is the whole field spelled
+differently. Scalar fields only: an extremum of a vector needs a norm nobody has chosen, which
+is why the adapters emitting `velocity` also emit `speed` beside it.
+
+`over_region` is the one operation that needs something the result does not carry — a result
+has arrays, not region names — so it resolves the geometry through the job's workspace
+provenance. A job submitted with an inline geometry kept no reference to one and gets a `422`
+saying so rather than an empty region.
 
 Result kinds:
 
@@ -452,24 +517,14 @@ second protocol. Each is driven by
 [M2.5](03-roadmap.md) and detailed in the
 [local agent interface draft](07-local-agent-interface.md).
 
-- **Metric *values* on a result.** The *declaration* half landed in 1.2: `capability.describe`'s
-  `metrics` section says what a capability reports, with name, unit and meaning. What is still
-  missing is a `metrics` map on the result envelope carrying the numbers. `stats` is the measured
-  *cost* of a solve; metrics are its engineering *answer*, and the two stay distinct — note that
-  `mock.heat2d` and `dolfinx.heat2d` currently report `t_max` and `t_rise` in `stats`, which is
-  precisely the conflation to undo. They stay there until the result level exists to move them to,
-  because taking them away first would break the demo that reads them.
-- **Diagnostics.** Convergence flag, final residual and warnings have no home today: some of it
-  is in `stats`, some only in progress events, some nowhere. A small structured diagnostics object
-  alongside `stats` is the natural place — note that `stats` is typed `dict[str, float]`, so a
-  convergence flag or a warning string has literally nowhere to go in it today.
+- ~~**Metric values on a result.**~~ Landed in 1.3 — see [compact results](#compact-results).
+- ~~**Diagnostics.**~~ Landed in 1.3, grown out of `stats` rather than beside it.
 - **Object references.** A geometry that has already been sent should be referenceable rather than
   resent. Whatever identifier scheme the workspace settles on must be expressible in a job request
   on every transport, not only in the local one.
-- **Result levels.** `status` / `metrics` / `diagnostics` / `fields` / `artifacts` as separately
-  requestable levels, so a caller can ask for a summary without the arrays. The HTTP binding is
-  likely a query parameter on the result endpoint; it must not change the default payload the
-  browser SDK already relies on.
+- ~~**Result levels.**~~ Landed in 1.3, as a separate route rather than a query parameter on the
+  existing one: `/result` keeps its shape and its arrays, and `/summary` is the compact form. Two
+  shapes on one path, chosen by a query parameter, is not something a typed client can describe.
 
 Until these land, the result envelope is exactly what is documented above: `job_id`, `kind`,
-`data`, `stats`, `artifacts`.
+`data`, `stats`, `metrics`, `diagnostics`, `artifacts`.

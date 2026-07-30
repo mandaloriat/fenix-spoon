@@ -26,12 +26,13 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from .. import fields
 from ..geometry import Geometry
 from ..jobs import Job, JobManager
 from ..objects import ObjectFileStore
 from ..solvers import available_solvers, get_solver, registered_solvers
 from ..solvers.base import Solver, SolverInfo
-from . import discovery, errors
+from . import discovery, errors, results
 from .discovery import (
     CapabilityDescription,
     CapabilitySummary,
@@ -41,6 +42,7 @@ from .discovery import (
 )
 from .errors import CoreError  # noqa: F401  (re-export: adapters catch this one class)
 from .identity import Principal, QuotaUsage, check_quotas, hour_ago
+from .results import LeveledResult
 from .workspace import ObjectSummary, ObjectView, ResolvedDesign, Workspace, WorkspaceInfo
 
 
@@ -310,6 +312,106 @@ class FenixSpoonCore:
             stats=job.result.stats,
             artifacts=[self._handle(job, entry) for entry in job.artifacts],
         )
+
+    # ------------------------------------------------------------ compact results (#46)
+
+    def result_levels(
+        self, job_id: str, principal: Principal, levels: list[str] | None = None
+    ) -> LeveledResult:
+        """A finished job's answer, at the levels asked for — the compact `result.get`.
+
+        The default omits `fields`, which is the point: a caller that says nothing receives
+        something it can read. Whether the field payload is loaded off disk at all follows
+        from the request, so the compact levels cost a row read rather than a multi-megabyte
+        parse.
+        """
+        wanted = results.check_levels(levels)
+        job = self.job(job_id, principal, with_result="fields" in wanted)
+        if job.status in ("failed", "cancelled"):
+            raise errors.JobDidNotSucceed(job.status, job.error)
+        if job.status != "done":
+            raise errors.JobNotFinished(job.status)
+        return results.build(
+            job_id=job.id,
+            solver=job.solver_name,
+            status=job.status,
+            error=job.error,
+            created_at=job.created_at.isoformat(),
+            finished_at=job.finished_at.isoformat() if job.finished_at else None,
+            summary=job.summary,
+            artifacts=[
+                results.ArtifactView(
+                    name=handle.name,
+                    content_type=handle.content_type,
+                    size=handle.size,
+                    path=str(handle.path),
+                )
+                for handle in (self._handle(job, entry) for entry in job.artifacts)
+            ],
+            data=job.result.data if job.result is not None else None,
+            levels=wanted,
+        )
+
+    def query_result(
+        self, job_id: str, query: results.FieldQuery, principal: Principal
+    ) -> results.FieldQueryResult:
+        """Ask one bounded question of one field, without the field going anywhere.
+
+        This is the level that has to load the payload — you cannot find a peak without
+        reading the array — and the point is that the array stops here. What crosses back is
+        a number and a coordinate.
+        """
+        job = self.job(job_id, principal, with_result=True)
+        if job.status != "done" or job.result is None:
+            if job.status in ("failed", "cancelled"):
+                raise errors.JobDidNotSucceed(job.status, job.error)
+            raise errors.JobNotFinished(job.status)
+
+        inside = None
+        if query.op == "over_region":
+            inside = self._region_mask(job, query, principal)
+        try:
+            answer = fields.query(
+                job.result.data,
+                job.result.kind,
+                query.field,
+                query.op,
+                at=query.at,
+                start=query.start,
+                end=query.end,
+                samples=query.samples,
+                count=query.count,
+                minimum=query.minimum,
+                inside=inside,
+            )
+        except fields.FieldError as exc:
+            raise errors.FieldQueryFailed(str(exc)) from exc
+        return results.FieldQueryResult(
+            job_id=job.id, field=query.field, op=query.op, result=answer
+        )
+
+    def _region_mask(self, job: Job, query: results.FieldQuery, principal: Principal):
+        """Resolve `over_region` against the geometry this job recorded when it was submitted.
+
+        A result carries arrays, not region names, so the geometry has to come from
+        somewhere. Workspace provenance (#44) is that somewhere — and a job submitted with
+        an inline geometry kept none, which is a real limitation and is reported as one
+        rather than as an empty region. Persisting the geometry with every job would fix it
+        and belongs with provenance in #47.
+        """
+        if not query.region:
+            raise errors.RegionUnavailable("", "over_region needs a `region` name")
+        reference = job.inputs.get("geometry")
+        if not reference:
+            raise errors.RegionUnavailable(
+                query.region,
+                "this job was submitted with an inline geometry, so it kept no reference to "
+                "one. Submit through a design (`job.submit` with a design id) and the region "
+                "becomes resolvable.",
+            )
+        geometry = self.workspace.get(reference, principal.id)
+        field = fields.load(job.result.data, job.result.kind, query.field)
+        return results.region_selection(geometry.body, query.region, field.xy)
 
     def artifact(self, job_id: str, name: str, principal: Principal) -> ArtifactHandle:
         """Resolve one artifact to a path on disk.

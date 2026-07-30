@@ -211,9 +211,25 @@ class MockHeat2D(Solver):
             "cells": float(nx * ny),
             "solid_cells": float(solid.sum()),
             "iterations": float(it),
-            # The number an engineer actually reads off a heat-sink study.
-            "t_max": float(temperature.max()),
-            "t_rise": float(temperature.max() - params.t_ambient),
+        }
+        # `t_max` and `t_rise` used to be `stats` keys. They were never costs — they are the
+        # answer the study exists to produce — and issue #46 is where that conflation gets
+        # undone. `t_max` is now computed generically from its declaration (the `max` of the
+        # field `T`); only `t_rise` is here, because it needs `t_ambient` and a parameter is
+        # not in the result payload.
+        converged = residual < 1e-9
+        diagnostics = {
+            "metrics": {"t_rise": float(temperature.max() - params.t_ambient)},
+            "converged": converged,
+            "residual": residual,
+            "warnings": (
+                []
+                if converged
+                else [
+                    f"stopped at the iteration cap ({params.iterations}) with residual "
+                    f"{residual:.3g}; the temperature may not be converged"
+                ]
+            ),
         }
         if params.write_vtk:
             write_vtk_structured_points(ctx.artifact("solution.vtk"), x, y, fields)
@@ -222,6 +238,7 @@ class MockHeat2D(Solver):
             return SolverResult(
                 kind="mesh2d",
                 stats=stats,
+                **diagnostics,
                 data={
                     "bounds": [xmin, ymin, xmax, ymax],
                     **grid_to_mesh2d(x, y, np.zeros((ny, nx), dtype=bool), fields),
@@ -231,6 +248,7 @@ class MockHeat2D(Solver):
         return SolverResult(
             kind="grid2d",
             stats=stats,
+            **diagnostics,
             data={
                 "bounds": [xmin, ymin, xmax, ymax],
                 "shape": [ny, nx],

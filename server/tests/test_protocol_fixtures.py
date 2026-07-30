@@ -14,6 +14,7 @@ from fenixspoon.core.discovery import (
     CapabilitySummary,
     EnvironmentInfo,
 )
+from fenixspoon.core.results import LeveledResult
 from fenixspoon.geometry import Geometry
 from fenixspoon.protocol import (
     PROTOCOL_VERSION,
@@ -39,6 +40,8 @@ VALIDATORS = {
     "environment.json": TypeAdapter(EnvironmentInfo).validate_python,
     "capability-summaries.json": TypeAdapter(CapabilitySummary).validate_python,
     "capability-descriptions.json": TypeAdapter(CapabilityDescription).validate_python,
+    # Protocol 1.3, issue #46.
+    "compact-results.json": TypeAdapter(LeveledResult).validate_python,
 }
 
 

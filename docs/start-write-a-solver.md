@@ -149,16 +149,35 @@ Two things to get right:
 
 **Metrics are the engineering *answer*; `stats` is what the solve *cost*.** Peak
 temperature is a metric, `seconds` and `cells` are stats. Keeping them apart is what lets
-an operator size a machine and an engineer make a decision from the same result. (The
-values themselves are not returned yet — declaring them is
-[#43](https://github.com/mandaloriat/fenix-spoon/issues/43), returning them is
-[#46](https://github.com/mandaloriat/fenix-spoon/issues/46).)
+an operator size a machine and an engineer make a decision from the same result.
 
-**Name a `field` and a `reduction` where the metric really is a reduction of one.** That
-makes the declaration checkable rather than decorative: the test suite runs a solve and
-fails if the field is not in the payload. Leave both out where it is not — `t_rise`
-depends on a parameter as well as the field, and pretending otherwise would declare
-something nothing can evaluate.
+**Name a `field` and a `reduction` where the metric really is a reduction of one — and
+then write no code for it.** The runtime computes those after your `solve` returns, from
+the declaration itself, so four adapters do not each contain the same `float(T.max())`.
+It also makes the declaration checkable rather than decorative: the test suite runs a
+solve and fails if the field is not in the payload.
+
+What you *do* compute is the derived ones, in `result.metrics`. `t_rise` needs
+`t_ambient` and `cp_min` needs `u_inf` — both parameters, and a parameter is not in the
+result payload, so nothing generic can reach them:
+
+```python
+return SolverResult(
+    kind="grid2d",
+    data=data,
+    stats={"cells": float(ny * nx)},
+    metrics={"t_rise": float(temperature.max() - params.t_ambient)},
+    converged=residual < 1e-9,     # None if your solve does not iterate
+    residual=residual,
+    warnings=[] if converged else ["stopped at the iteration cap"],
+)
+```
+
+`converged`, `residual` and `warnings` are the [diagnostics
+level](04-wire-protocol.md#compact-results). They exist because `stats` is typed
+`dict[str, float]`, so a flag or a warning string had nowhere to go — a solve that
+quietly stopped at its iteration cap could only say so to a client that happened to be
+watching the progress stream.
 
 If you ship a second adapter for physics that already exists — the way every mock solver
 here has a FEniCSx twin — **declare the same metric names**. Cross-validated adapters that

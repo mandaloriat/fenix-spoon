@@ -15,6 +15,7 @@ from .base import (
     SolverContext,
     SolverInfo,
     SolverResult,
+    fill_declared_metrics,
 )
 from .registry import available_solvers, get_solver, register, registered_solvers
 
@@ -38,6 +39,7 @@ __all__ = [
     "SolverInfo",
     "SolverResult",
     "available_solvers",
+    "fill_declared_metrics",
     "get_solver",
     "register",
     "registered_solvers",

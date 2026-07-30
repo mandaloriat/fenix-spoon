@@ -325,7 +325,7 @@ async function run() {
 
     viewer.result = result;
     syncFieldOptions();
-    showStats(result.stats ?? {});
+    showStats(result.metrics ?? {}, result.stats ?? {});
     showArtifacts(result.artifacts);
     $('status').textContent = `done${formatStats(result.stats)}`;
   } catch (error) {
@@ -344,10 +344,15 @@ async function run() {
 
 const describe = (error) => (error instanceof Error ? error.message : String(error));
 
-function showStats(stats) {
+function showStats(metrics, stats) {
+  // The two halves of a result, and this is the clearest place in the gallery to see why
+  // protocol 1.3 separated them: `t_rise` and `t_max` are what the design *achieves* and
+  // come from `metrics`; `solid_cells` is what the run *cost* and stays in `stats`. Both
+  // were `stats` keys before 1.3.
+  //
   // `t_rise` is the number the example exists to move: more fins, smaller rise.
-  $('rise').textContent = Number.isFinite(stats.t_rise) ? `${stats.t_rise.toFixed(1)} K` : '—';
-  $('peak').textContent = Number.isFinite(stats.t_max) ? `${stats.t_max.toFixed(1)} °C` : '—';
+  $('rise').textContent = Number.isFinite(metrics.t_rise) ? `${metrics.t_rise.toFixed(1)} K` : '—';
+  $('peak').textContent = Number.isFinite(metrics.t_max) ? `${metrics.t_max.toFixed(1)} °C` : '—';
   $('cells').textContent = Number.isFinite(stats.solid_cells)
     ? stats.solid_cells.toLocaleString() : '—';
 }

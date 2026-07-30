@@ -33,6 +33,7 @@ from .core.discovery import (
     CapabilitySummary,
     EnvironmentInfo,
 )
+from .core.results import LEVELS, FieldQuery, FieldQueryResult, LeveledResult
 from .geometry import Geometry
 from .jobs import JobStatus
 from .protocol import PROTOCOL_VERSION, ProtocolVersion
@@ -217,18 +218,83 @@ async def cancel_job(
     return JobStatus.from_job(await _core(request).cancel(job_id, principal))
 
 
+@router.get(
+    "/jobs/{job_id}/summary",
+    response_model=LeveledResult,
+    response_model_exclude_none=True,
+)
+def job_summary(
+    job_id: str,
+    request: Request,
+    principal: CurrentPrincipal,
+    levels: Annotated[
+        list[str] | None,
+        Query(description=f"Levels to include. Any of: {', '.join(LEVELS)}."),
+    ] = None,
+) -> LeveledResult:
+    """The compact counterpart of `/result` — protocol 1.3, issue #46.
+
+    The same relationship `/capabilities` has to `/solvers`: the exhaustive route keeps its
+    payload, and this one answers the question a caller usually has. **`fields` is not in the
+    default**, so an answer is a kilobyte rather than a megabyte, and the arrays are reached
+    deliberately — `?levels=fields`, the artifact, or `/query`.
+
+    Paths, not URLs, on the artifacts here: this route reports what the core knows, and a
+    caller that wants a download uses the artifact endpoint `/result` already advertises.
+    """
+    return _core(request).result_levels(job_id, principal, levels)
+
+
+@router.post(
+    "/jobs/{job_id}/query", response_model=FieldQueryResult, response_model_exclude_none=True
+)
+def job_query(
+    job_id: str,
+    query: FieldQuery,
+    request: Request,
+    principal: CurrentPrincipal,
+) -> FieldQueryResult:
+    """Ask one bounded question of one field — protocol 1.3, issue #46.
+
+    `POST` rather than `GET` because the request is a structured object with a dozen optional
+    arguments, not an identifier. It is a read: nothing is created, and repeating it changes
+    nothing.
+    """
+    return _core(request).query_result(job_id, query, principal)
+
+
 @router.get("/jobs/{job_id}/result")
 def job_result(
     job_id: str,
     request: Request,
     principal: CurrentPrincipal,
 ) -> dict[str, Any]:
-    result = _core(request).result(job_id, principal)
+    """The full envelope, arrays included. Unchanged shape, plus what 1.3 added.
+
+    `metrics` and `diagnostics` are new keys here, which is additive; a client reading
+    `data` and `stats` is untouched. What did change inside `stats` is that the heat
+    adapters no longer put `t_max` and `t_rise` there — those were never costs, and they now
+    appear under `metrics`. Permitted because `stats` keys have always been documented as
+    server-defined and all optional.
+    """
+    core = _core(request)
+    result = core.result(job_id, principal)
+    summary = core.job(job_id, principal).summary
     return {
         "job_id": result.job_id,
         "kind": result.kind,
         "data": result.data,
         "stats": result.stats,
+        "metrics": dict(summary.metrics) if summary else {},
+        "diagnostics": (
+            {
+                "converged": summary.converged,
+                "residual": summary.residual,
+                "warnings": summary.warnings,
+            }
+            if summary
+            else {}
+        ),
         # The one place a URL is built. The core hands back a path; only this transport
         # knows that the file is reachable at a route it serves.
         "artifacts": [

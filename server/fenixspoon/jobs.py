@@ -44,7 +44,7 @@ from .backends import ExecutionBackend, default_backend
 from .events import EventBus, InProcessEventBus
 from .geometry import Domain2D
 from .solvers.base import Solver, SolverResult
-from .store import JobRecord, JobStore, MemoryJobStore, SqliteJobStore
+from .store import JobRecord, JobStore, MemoryJobStore, ResultSummary, SqliteJobStore
 
 TERMINAL = ("done", "failed", "cancelled")
 
@@ -127,6 +127,7 @@ class Job:
     artifact_dir: Path | None = None
     events: list[dict[str, Any]] = field(default_factory=list)
     inputs: dict[str, Any] = field(default_factory=dict)
+    summary: ResultSummary | None = None
     cancel_event: threading.Event = field(default_factory=threading.Event)
 
     def to_record(self) -> JobRecord:
@@ -150,6 +151,9 @@ class Job:
         self.finished_at = record.finished_at
         self.result = record.result
         self.artifacts = record.artifacts
+        # Kept beside the payload so a status poll can answer "what did it report" without
+        # the caller having asked for the result (#46).
+        self.summary = record.summarize()
 
     @classmethod
     def from_record(cls, record: JobRecord, artifact_dir: Path | None) -> "Job":
@@ -167,6 +171,7 @@ class Job:
             artifact_dir=artifact_dir,
             events=record.events,
             inputs=record.inputs,
+            summary=record.summarize(),
         )
 
 

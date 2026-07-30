@@ -152,6 +152,21 @@ class MockMagnetostatics2D(Solver):
 
         fields = {"A": a_pot, "B": b_mag, "mu_r": mu_r}
         stats = {"cells": float(nx * ny), "iterations": float(it)}
+        converged = residual < 1e-14
+        # `b_max` and `a_max` need nothing from here: both are declared reductions of fields
+        # in the payload, so the generic path computes them after the solve returns.
+        diagnostics = {
+            "converged": converged,
+            "residual": residual,
+            "warnings": (
+                []
+                if converged
+                else [
+                    f"stopped at the iteration cap ({params.iterations}) with residual "
+                    f"{residual:.3g}; the iron/air contrast makes this solve slow to converge"
+                ]
+            ),
+        }
         if params.write_vtk:
             write_vtk_structured_points(ctx.artifact("solution.vtk"), x, y, fields)
 
@@ -160,6 +175,7 @@ class MockMagnetostatics2D(Solver):
             return SolverResult(
                 kind="mesh2d",
                 stats=stats,
+                **diagnostics,
                 data={
                     "bounds": [xmin, ymin, xmax, ymax],
                     **grid_to_mesh2d(x, y, no_hole, fields),
@@ -169,6 +185,7 @@ class MockMagnetostatics2D(Solver):
         return SolverResult(
             kind="grid2d",
             stats=stats,
+            **diagnostics,
             data={
                 "bounds": [xmin, ymin, xmax, ymax],
                 "shape": [ny, nx],
