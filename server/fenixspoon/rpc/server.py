@@ -155,27 +155,19 @@ class RpcServer:
         if not notification:
             await self._send(response)
 
-async def _invoke(self, message: dict[str, Any]) -> dict[str, Any]:
-    request_id = message.get("id")
-    if "id" in message and request_id is not None and (
-        isinstance(request_id, bool) or not isinstance(request_id, (int, str))
-    ):
-        return _error_response(
-            None,
-            rpc_errors.INVALID_REQUEST,
-            "`id` must be a string, integer, or null",
-        )
-    if message.get("jsonrpc") != VERSION_FIELD:
-        return _error_response(
-            request_id,
-            rpc_errors.INVALID_REQUEST,
-            f"every request must carry \"jsonrpc\": \"{VERSION_FIELD}\"",
-        )
-    method = message.get("method")
-    if not isinstance(method, str):
-        return _error_response(
-            request_id, rpc_errors.INVALID_REQUEST, "`method` must be a string"
-        )
+    async def _invoke(self, message: dict[str, Any]) -> dict[str, Any]:
+        request_id = message.get("id")
+        if message.get("jsonrpc") != VERSION_FIELD:
+            return _error_response(
+                request_id,
+                rpc_errors.INVALID_REQUEST,
+                f"every request must carry \"jsonrpc\": \"{VERSION_FIELD}\"",
+            )
+        method = message.get("method")
+        if not isinstance(method, str):
+            return _error_response(
+                request_id, rpc_errors.INVALID_REQUEST, "`method` must be a string"
+            )
         try:
             params = _params(message.get("params"))
             if method in CONNECTION_METHODS:
