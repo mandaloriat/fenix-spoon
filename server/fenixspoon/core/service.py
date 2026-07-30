@@ -303,8 +303,12 @@ class FenixSpoonCore:
         job = self.job(job_id, principal, with_result=True)
         if job.status in ("failed", "cancelled"):
             raise errors.JobDidNotSucceed(job.status, job.error)
-        if job.status != "done" or job.result is None:
+        if job.status != "done":
             raise errors.JobNotFinished(job.status)
+        if job.result is None:
+            # Was `JobNotFinished("done")`, which is self-contradictory: it told a caller to
+            # keep polling a job that had already finished. Raised in review of #67.
+            raise errors.ResultPayloadMissing(job.id)
         return ResultView(
             job_id=job.id,
             kind=job.result.kind,
@@ -331,6 +335,12 @@ class FenixSpoonCore:
             raise errors.JobDidNotSucceed(job.status, job.error)
         if job.status != "done":
             raise errors.JobNotFinished(job.status)
+        if "fields" in wanted and job.result is None:
+            # A *requested* level must never go quietly missing. Absent-means-unrequested is
+            # the rule this payload is built on, so returning no `fields` key here would tell
+            # a caller that asked for the arrays that the result has none — the same silent
+            # wrong answer an unknown level name is refused to avoid. Raised in review of #67.
+            raise errors.ResultPayloadMissing(job.id)
         return results.build(
             job_id=job.id,
             solver=job.solver_name,
@@ -362,10 +372,16 @@ class FenixSpoonCore:
         a number and a coordinate.
         """
         job = self.job(job_id, principal, with_result=True)
-        if job.status != "done" or job.result is None:
-            if job.status in ("failed", "cancelled"):
-                raise errors.JobDidNotSucceed(job.status, job.error)
+        if job.status in ("failed", "cancelled"):
+            raise errors.JobDidNotSucceed(job.status, job.error)
+        if job.status != "done":
             raise errors.JobNotFinished(job.status)
+        if job.result is None:
+            # A query is the one operation that genuinely needs the arrays — you cannot find
+            # a peak without reading them — so this is where their absence has to be said
+            # plainly rather than reported as a job that has not finished. Raised in review
+            # of #67.
+            raise errors.ResultPayloadMissing(job.id)
 
         inside = None
         if query.op == "over_region":

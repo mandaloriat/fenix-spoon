@@ -98,7 +98,8 @@ def numeric_arrays(payload) -> list[list]:
 
 
 def test_the_default_answer_is_small_and_carries_no_arrays(core, me):
-    """"Fits comfortably in a kilobyte, carries no numeric array longer than a handful."""
+    """The acceptance criterion: "fits comfortably in a kilobyte, carries no numeric array
+    longer than a handful of entries"."""
     job = solve(core, me)
     compact = core.result_levels(job.id, me).model_dump(exclude_none=True)
     payload = json.dumps(compact)
@@ -113,7 +114,8 @@ def test_the_default_answer_is_small_and_carries_no_arrays(core, me):
 
 
 def test_a_query_finds_the_peak_without_transferring_the_field(core, me):
-    """"`result.query` answers 'where is the peak field and how big is it'."""
+    """The other half of the criterion: `result.query` answers "where is the peak field and
+    how big is it" without transferring the field."""
     job = solve(core, me)
     answer = core.query_result(job.id, FieldQuery(field="speed", op="max"), me)
     assert answer.result["value"] > 0
@@ -163,14 +165,63 @@ def test_the_compact_levels_do_not_read_the_payload_file(core, me, monkeypatch):
     it, not *parsing* them is the other half.
 
     Asserted by removing `result.json` from under the store. Metrics and diagnostics come
-    from database columns, so they must still answer; asking for `fields` must not.
+    from database columns, so they must still answer.
     """
     job = solve(core, me)
     (core.jobs.data_dir / job.id / "result.json").unlink()
 
     compact = core.result_levels(job.id, me)
     assert compact.metrics and compact.diagnostics.stats["cells"] > 0
-    assert core.result_levels(job.id, me, ["fields"]).fields is None
+
+
+def test_a_requested_level_never_goes_quietly_missing(core, me):
+    """Raised in review of #67, and the first draft of this file asserted the bug.
+
+    Absent-means-unrequested is what the whole payload is built on, so returning no
+    `fields` key to a caller that *asked* for the arrays would tell it the result has none —
+    the same silent wrong answer an unknown level name is refused to avoid. The store
+    tolerates a missing payload by design, so this state is reachable rather than theoretical.
+    """
+    job = solve(core, me)
+    (core.jobs.data_dir / job.id / "result.json").unlink()
+    with pytest.raises(errors.ResultPayloadMissing):
+        core.result_levels(job.id, me, ["fields"])
+
+
+def test_a_missing_payload_is_not_reported_as_an_unfinished_job(core, me):
+    """Raised in review of #67. Every path that needs the arrays used to answer
+    `JobNotFinished("done")` — self-contradictory, and it sent a caller to poll a job that
+    had already finished."""
+    job = solve(core, me)
+    (core.jobs.data_dir / job.id / "result.json").unlink()
+
+    for call in (
+        lambda: core.result(job.id, me),
+        lambda: core.query_result(job.id, FieldQuery(field="speed", op="max"), me),
+        lambda: core.result_levels(job.id, me, ["fields"]),
+    ):
+        with pytest.raises(errors.ResultPayloadMissing) as caught:
+            call()
+        assert caught.value.job_id == job.id
+        assert "no longer on disk" in caught.value.detail
+
+
+def test_a_missing_payload_is_410_over_http(client):
+    """`410 Gone` rather than `404`: the job is very much there, and its metrics and
+    diagnostics still answer. Only the arrays are gone."""
+    job_id = run_http(client)
+    payload = client.get(f"/api/v1/jobs/{job_id}/result").json()
+    assert payload["metrics"]
+    # Reach into the data directory the way a retention sweep or a tidy-up would.
+    data_dir = next(iter(client.app.state.core.jobs.data_dir.glob(job_id)))
+    (data_dir / "result.json").unlink()
+
+    assert client.get(f"/api/v1/jobs/{job_id}/result").status_code == 410
+    assert client.post(
+        f"/api/v1/jobs/{job_id}/query", json={"field": "speed", "op": "max"}
+    ).status_code == 410
+    # …and the compact levels still work, which is the point of holding them separately.
+    assert client.get(f"/api/v1/jobs/{job_id}/summary").json()["metrics"]
 
 
 def test_a_job_that_did_not_succeed_says_so_rather_than_returning_empty_levels(core, me):

@@ -78,7 +78,8 @@ Spoon *means*, independent of how it is carried. It is defined by the pydantic m
 semantics.
 
 **The HTTP envelope** — paths under `/api/v1`, verbs, status codes (`202` on submit, `409` on a
-result that isn't ready, `422` on validation failure, `429` over quota), the WebSocket event
+result that isn't ready, `410` on one whose arrays have been swept, `422` on validation failure,
+`429` over quota), the WebSocket event
 channel, the `Authorization` header and the `url` fields that make artifacts fetchable — is this
 transport's binding of that contract. A caller that is not speaking HTTP will encode "job not
 finished" and "unknown solver" differently, but must mean the same thing.
@@ -357,7 +358,11 @@ after completion still yields the full history. Stream closes after a terminal e
 
 ### `GET /api/v1/jobs/{job_id}/result`
 
-`409` until the job is `done`. Result envelope:
+`409` until the job is `done`, and `410` afterwards if the field arrays have gone — a retention
+sweep or a hand cleanup can remove `result.json` while the job's metadata, metrics, diagnostics
+and artifact list survive in the database. `410 Gone` rather than `409` or `404` because the job
+is very much there and the compact levels still answer for it; only the payload is missing, which
+is precisely what `Gone` means. Result envelope:
 
 ```json
 {

@@ -39,6 +39,10 @@ STATUS: dict[type[errors.CoreError], int] = {
     errors.PatchChangedNothing: 409,
     errors.CannotPatchRevision: 409,
     errors.QuotaExceeded: 429,
+    # The job succeeded and its arrays have since been removed. `410` rather than `404`
+    # because the job itself is very much there — only the payload is gone, and the
+    # compact levels still answer for it.
+    errors.ResultPayloadMissing: 410,
 }
 
 # The workspace errors above have no route behind them yet: issue #44 is core-only, and the

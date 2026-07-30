@@ -90,10 +90,13 @@ def solve(core, me, solver, geometry, params):
 
 
 def test_capability_list_stays_small(core):
-    """"`capability.list` on an installation with all solvers stays under a couple of
-    kilobytes." Measured against the whole installed set, whatever it is: this file runs
-    both with and without dolfinx, and the FEniCSx entries are the same size as the mock
-    ones, so the budget holds either way."""
+    """The acceptance criterion: "`capability.list` on an installation with all solvers
+    stays under a couple of kilobytes."
+
+    Measured against the whole installed set, whatever it is: this file runs both with and
+    without dolfinx, and the FEniCSx entries are the same size as the mock ones, so the
+    budget holds either way.
+    """
     payload = json.dumps([item.model_dump() for item in core.capability_list()])
     assert len(payload) < 2048, f"capability.list is {len(payload)} bytes"
     # And it is genuinely the compact one: the exhaustive route is much bigger for the
@@ -103,7 +106,8 @@ def test_capability_list_stays_small(core):
 
 
 def test_one_section_returns_that_section_and_nothing_else(core):
-    """"`capability.describe` with sections: ["metrics"] returns metrics and nothing else."
+    """The acceptance criterion: "`capability.describe` with sections: ["metrics"] returns
+    metrics and nothing else."
 
     `name` is the one exception, so an answer can be identified without correlating it back
     to the request. Asserting on the key set rather than on a couple of fields is what makes
@@ -147,7 +151,8 @@ def test_environment_reports_what_it_is(core, me):
 
 
 def test_environment_carries_no_schemas(core, me):
-    """"A few hundred bytes, no schemas." The size is a budget; the absence is a rule."""
+    """The spec says "a few hundred bytes, no schemas". The size is a budget; the absence
+    is a rule."""
     payload = json.dumps(core.environment(me).model_dump())
     assert "params_schema" not in payload
     assert "properties" not in payload

@@ -489,8 +489,8 @@ def test_objects_outlive_the_job_retention_sweep(tmp_path):
 
 
 def test_the_workspace_lives_in_the_data_directory_and_nowhere_else(tmp_path):
-    """"One directory to mount, back up or delete" — the constraint #44 fixed even while
-    leaving the storage format open."""
+    """The constraint #44 fixed even while leaving the storage format open: "one directory
+    to mount, back up or delete"."""
     data_dir = tmp_path / "workspace"
     core = build_core(data_dir)
     me = Principal(id="tester", quotas=Quotas())
