@@ -31,6 +31,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -135,16 +136,26 @@ def refusal(core, me, method: str, params: dict) -> dict[str, Any]:
     raise AssertionError(f"{method} accepted what another transport refused")
 
 
-def solved_http(client) -> str:
-    job_id = client.post(
-        "/api/v1/jobs",
-        json={"solver": "mock.laplace2d", "geometry": AIRFOIL, "params": FAST},
-    ).json()["job_id"]
+def wait_for(client, job_id: str, timeout: float = 30.0) -> str:
+    """Poll until the job settles, on a deadline — the convention in `test_persistence`.
+
+    A bare spin would hang the suite rather than fail it if a job never reached a terminal
+    state, and burn a core doing it.
+    """
+    deadline = time.monotonic() + timeout
     while client.get(f"/api/v1/jobs/{job_id}").json()["status"] not in (
         "done", "failed", "cancelled"
     ):
-        pass
+        assert time.monotonic() < deadline, f"{job_id} did not finish in {timeout}s"
+        time.sleep(0.05)
     return job_id
+
+
+def solved_http(client) -> str:
+    return wait_for(client, client.post(
+        "/api/v1/jobs",
+        json={"solver": "mock.laplace2d", "geometry": AIRFOIL, "params": FAST},
+    ).json()["job_id"])
 
 
 # ------------------------------------------------------- one request, one answer
@@ -186,24 +197,32 @@ def test_a_compact_result_is_the_same_over_http_and_json_rpc(tmp_path, monkeypat
     assert over_http == over_rpc
 
 
+#: The discovery call every transport is compared on, and the arguments it is made with.
+DISCOVERY = {"name": "mock.laplace2d", "sections": ["metrics"]}
+
+
+def discovery_over_http(http) -> dict[str, Any]:
+    """The reference rendering. Every other transport is compared against this one, so that
+    comparing them pairwise is unnecessary — agreement with HTTP is transitive."""
+    return http.get(
+        "/api/v1/capabilities/mock.laplace2d", params={"sections": ["metrics"]}
+    ).json()
+
+
 def test_every_transport_answers_a_discovery_call_identically(core, me, http, tmp_path):
-    """HTTP, JSON-RPC, MCP, the CLI and the Python API — five renderings, one payload.
+    """HTTP, JSON-RPC, the CLI and the Python API — four renderings, one payload.
 
-    The CLI runs as a subprocess and the Python API in-process, so this is not five calls to
-    one function dressed up: it is five callers of the core, compared by what they return.
+    The CLI runs as a subprocess and the Python API in-process, so this is not four calls to
+    one function dressed up: it is four callers of the core, compared by what they return.
+
+    MCP is the fifth and lives in :func:`test_mcp_renders_the_same_discovery_call`, because
+    its SDK is an optional extra: folding it in here would mean this test either fails in the
+    plain-virtualenv job or silently drops to four transports there, and a conformance test
+    that quietly checks less is the exact failure this file exists to prevent.
     """
-    from fenixspoon import mcp_adapter  # noqa: PLC0415
-
-    args = {"name": "mock.laplace2d", "sections": ["metrics"]}
     answers = {
-        "http": http.get("/api/v1/capabilities/mock.laplace2d",
-                         params={"sections": ["metrics"]}).json(),
-        "json-rpc": rpc(core, me, "capability.describe", args),
-        "mcp": json.loads(
-            asyncio.run(
-                mcp_adapter.call_tool(core, me, "describe_capability", args)
-            ).content[0].text
-        ),
+        "http": discovery_over_http(http),
+        "json-rpc": rpc(core, me, "capability.describe", DISCOVERY),
         "cli": json.loads(
             subprocess.run(
                 [sys.executable, "-m", "fenixspoon", "capability", "describe",
@@ -220,6 +239,22 @@ def test_every_transport_answers_a_discovery_call_identically(core, me, http, tm
     reference = answers["http"]
     for transport, payload in answers.items():
         assert payload == reference, f"{transport} disagrees with http"
+
+
+@pytest.mark.mcp
+def test_mcp_renders_the_same_discovery_call(core, me, http):
+    """The fifth transport, against the same reference the other four are held to.
+
+    Skipped without the extra and marked `mcp`, which is how the CI job that installs the SDK
+    selects it — and that job guards against a silent skip by importing `mcp` first.
+    """
+    pytest.importorskip("mcp.types", reason="requires the `mcp` extra")
+    from fenixspoon import mcp_adapter  # noqa: PLC0415
+
+    answer = asyncio.run(
+        mcp_adapter.call_tool(core, me, "describe_capability", DISCOVERY)
+    )
+    assert json.loads(answer.content[0].text) == discovery_over_http(http)
 
 
 # --------------------------------------------------------- one refusal, one meaning
@@ -333,11 +368,7 @@ def test_a_quota_refusal_carries_its_retry_hint_on_both_transports(tmp_path, mon
         assert first.status_code == 202
         # Waited out before anything else: a solve still running when the app shuts down
         # writes to a database the shutdown has already closed.
-        job_id = first.json()["job_id"]
-        while client.get(f"/api/v1/jobs/{job_id}").json()["status"] not in (
-            "done", "failed", "cancelled"
-        ):
-            pass
+        wait_for(client, first.json()["job_id"])
 
         second = client.post(
             "/api/v1/jobs", json={**body, "params": {**FAST, "u_inf": 2.0}}
@@ -377,9 +408,11 @@ def test_a_capability_schema_is_one_document_wherever_it_surfaces(core, me, http
     assert from_solvers == from_schema == from_describe
 
 
+@pytest.mark.mcp
 def test_the_mcp_tool_schemas_come_from_the_same_models():
     """An MCP host generating a request must be working from the models everything else
     validates against, not a hand-copied approximation that drifted."""
+    pytest.importorskip("mcp.types", reason="requires the `mcp` extra")
     from fenixspoon import mcp_adapter  # noqa: PLC0415
     from fenixspoon.core.results import FieldQuery
     from fenixspoon.rpc.methods import SubmitParams

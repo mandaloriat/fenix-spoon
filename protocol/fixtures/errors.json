@@ -1,7 +1,8 @@
 {
   "description": "How one refusal is represented on each transport (roadmap M2.5, #51).",
   "why": [
-    "Four adapters now claim to agree with each other. Until this file they agreed on the",
+    "Five transports now claim to agree with each other — HTTP, JSON-RPC over stdio, MCP, the",
+    "CLI and the in-process Python API. Until this file they agreed on the",
     "strength of per-pair tests, which is a shape that decays quietly: adding an error and",
     "mapping it on one transport leaves the others fine, green, and wrong.",
     "",
