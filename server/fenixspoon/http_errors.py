@@ -20,14 +20,29 @@ STATUS: dict[type[errors.CoreError], int] = {
     errors.UnknownCapability: 404,
     errors.JobNotFound: 404,
     errors.ArtifactNotFound: 404,
+    errors.ObjectNotFound: 404,
     errors.GeometryKindMismatch: 422,
+    errors.UnknownSection: 422,
     errors.InvalidParams: 422,
     errors.CellBudgetExceeded: 422,
+    errors.UnknownObjectType: 422,
+    errors.MalformedReference: 422,
+    errors.WrongObjectType: 422,
+    errors.InvalidObject: 422,
+    errors.InvalidPatch: 422,
     errors.JobAlreadyFinished: 409,
     errors.JobNotFinished: 409,
     errors.JobDidNotSucceed: 409,
+    errors.PatchChangedNothing: 409,
+    errors.CannotPatchRevision: 409,
     errors.QuotaExceeded: 429,
 }
+
+# The workspace errors above have no route behind them yet: issue #44 is core-only, and the
+# first transport to expose `object.patch` is the JSON-RPC adapter (#45). They are mapped
+# anyway because `test_every_core_error_has_a_status` requires every domain error to be given
+# a status deliberately — and because an HTTP binding, when it comes, should not be the moment
+# somebody first thinks about whether a failed patch is a 409 or a 422.
 
 FALLBACK_STATUS = 400
 

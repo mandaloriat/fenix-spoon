@@ -1,0 +1,80 @@
+{
+  "$comment": "Conformance cases for one entry of `capability.list` (`GET /api/v1/capabilities`), added by protocol 1.2 with issue #43. Validated against fenixspoon.core.discovery.CapabilitySummary. Each payload is a single summary, not the list, so a failure names the entry that broke. See environment.json for why the JS SDK does not read these.",
+  "valid": [
+    {
+      "name": "a mock capability",
+      "payload": {
+        "name": "mock.laplace2d",
+        "title": "Potential flow (mock, NumPy)",
+        "physics": "potential-flow",
+        "geometry_types": ["domain2d"],
+        "availability": "mock"
+      }
+    },
+    {
+      "name": "a FEniCSx capability",
+      "payload": {
+        "name": "dolfinx.magnetostatics2d",
+        "title": "Magnetostatics (FEniCSx, region-tagged mesh)",
+        "physics": "magnetostatics",
+        "geometry_types": ["regions2d"],
+        "availability": "fenicsx"
+      }
+    },
+    {
+      "name": "an adapter that accepts several geometry kinds",
+      "$comment": "No shipped adapter does yet, but `geometry_types` has always been a list and the summary must not narrow it to one.",
+      "payload": {
+        "name": "third_party.thermal3d",
+        "title": "Thermal (third-party)",
+        "physics": "heat-conduction",
+        "geometry_types": ["regions2d", "step3d"],
+        "availability": "fenicsx"
+      }
+    },
+    {
+      "name": "an adapter that declared neither physics nor availability",
+      "$comment": "The declaration attributes all have defaults so an adapter written before 1.2 keeps working. It reports `unspecified` rather than failing to be listed — a capability that cannot describe itself is still a capability a caller can submit to.",
+      "payload": {
+        "name": "third_party.legacy",
+        "title": "Something written against 1.1",
+        "physics": "unspecified",
+        "geometry_types": ["domain2d"],
+        "availability": "unspecified"
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "missing availability",
+      "reason": "Whether this is the real solver or the development stand-in is the question `capability.list` exists to answer cheaply. `unspecified` is a permitted value; omitting the field is not.",
+      "payload": {
+        "name": "mock.laplace2d",
+        "title": "Potential flow (mock, NumPy)",
+        "physics": "potential-flow",
+        "geometry_types": ["domain2d"]
+      }
+    },
+    {
+      "name": "geometry_types as a bare string",
+      "reason": "A list of one is not the same shape as a string, and a caller that iterates would iterate the characters of 'domain2d'.",
+      "payload": {
+        "name": "mock.laplace2d",
+        "title": "Potential flow (mock, NumPy)",
+        "physics": "potential-flow",
+        "geometry_types": "domain2d",
+        "availability": "mock"
+      }
+    },
+    {
+      "name": "no name",
+      "reason": "The name is what a caller passes to `capability.describe` and to `solver` on submit; a summary without one describes nothing reachable.",
+      "payload": {
+        "title": "Potential flow (mock, NumPy)",
+        "physics": "potential-flow",
+        "geometry_types": ["domain2d"],
+        "availability": "mock"
+      }
+    }
+  ]
+}

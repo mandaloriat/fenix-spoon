@@ -128,6 +128,21 @@ def render_model(
 def build() -> str:
     # Imported here so `--help` works without the package installed.
     from fenixspoon.api import JobCreated, JobList, JobRequest
+    from fenixspoon.core.discovery import (
+        CapabilityDescription,
+        CapabilitySummary,
+        CostSection,
+        EnvironmentInfo,
+        GeometriesSection,
+        LimitsInfo,
+        MpiInfo,
+        PackageInfo,
+        ParamsSection,
+        ParamSummary,
+        QuotaInfo,
+        RequirementsSection,
+        UsageInfo,
+    )
     from fenixspoon.geometry import Domain2D, Geometry, Polygon2D, Region2D, Regions2D
     from fenixspoon.jobs import JobStatus
     from fenixspoon.protocol import (
@@ -138,14 +153,43 @@ def build() -> str:
         ResultEnvelope,
         StatusEvent,
     )
-    from fenixspoon.solvers.base import SolverInfo
+    from fenixspoon.solvers.base import (
+        ArtifactSpec,
+        CapabilityExample,
+        CapabilityFeatures,
+        MetricSpec,
+        SolverInfo,
+    )
 
     sections = [
         ("Geometry", [Polygon2D, Domain2D, Region2D, Regions2D]),
         ("Jobs", [JobRequest, JobCreated, JobStatus, JobList]),
         ("Events", [ProgressEvent, StatusEvent]),
         ("Results", [ResultEnvelope, Grid2DData, Mesh2DData, ArtifactRef]),
+        # The exhaustive form first, then the progressive one (protocol 1.2, #43). Both are
+        # here because both are contract: `/solvers` is not deprecated by `/capabilities`,
+        # it answers a different question.
         ("Discovery", [SolverInfo]),
+        (
+            "Environment",
+            [EnvironmentInfo, PackageInfo, MpiInfo, LimitsInfo, QuotaInfo, UsageInfo],
+        ),
+        (
+            "Capabilities",
+            [
+                CapabilitySummary,
+                CapabilityDescription,
+                GeometriesSection,
+                ParamsSection,
+                ParamSummary,
+                MetricSpec,
+                ArtifactSpec,
+                CostSection,
+                CapabilityFeatures,
+                RequirementsSection,
+                CapabilityExample,
+            ],
+        ),
     ]
 
     # `Polygon2D` also has a defaulted `type`, but it is a plain nested model rather than

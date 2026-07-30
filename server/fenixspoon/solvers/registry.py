@@ -17,5 +17,15 @@ def get_solver(name: str) -> type[Solver] | None:
     return _REGISTRY.get(name)
 
 
+def registered_solvers() -> list[type[Solver]]:
+    """Every installed solver class, in registration order.
+
+    The classes rather than their :class:`SolverInfo`, because discovery (#43) reports on
+    the *declaration* — metrics, artifacts, features, whether `estimate_cells` is
+    overridden — and none of that fits in a payload built for a form generator.
+    """
+    return list(_REGISTRY.values())
+
+
 def available_solvers() -> list[SolverInfo]:
     return [cls.info() for cls in _REGISTRY.values()]

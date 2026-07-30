@@ -27,7 +27,8 @@ from pydantic import BaseModel, Field
 
 from ..geometry import Domain2D
 from ._gmsh import gmsh_session
-from .base import ProgressEvent, Solver, SolverContext, SolverResult
+from .base import CapabilityExample, ProgressEvent, Solver, SolverContext, SolverResult
+from .declarations import POTENTIAL_FLOW_METRICS, VTK_ARTIFACT
 from .registry import register
 
 # Equilateral triangles of side h tile an area A with 2A/h^2 of them, but that is a
@@ -83,6 +84,26 @@ class DolfinxPotentialFlow2D(Solver):
         "Laplace equation for the streamfunction on a Gmsh triangulation of the domain with "
         "the obstacle removed, solved with dolfinx (P1 elements, LU). Experimental M1 adapter."
     )
+    physics = "potential-flow"
+    availability = "fenicsx"
+    requires = ["dolfinx", "gmsh"]
+    metrics = POTENTIAL_FLOW_METRICS
+    artifacts = [VTK_ARTIFACT]
+    examples = [
+        CapabilityExample(
+            title="coarse mesh",
+            description="A few thousand triangles: quick, and enough to check the setup meshes.",
+            params={"mesh_size": 0.08, "write_vtk": False},
+        ),
+        CapabilityExample(
+            title="resolved, on the FEM mesh",
+            description=(
+                "Returns the triangulation itself rather than a sampling grid, which is what "
+                "makes the unstructured solve worth running — no resampling in between."
+            ),
+            params={"mesh_size": 0.02, "output": "mesh2d"},
+        ),
+    ]
 
     class Params(BaseModel):
         mesh_size: float = Field(default=0.05, gt=0.0, description="Target element size")

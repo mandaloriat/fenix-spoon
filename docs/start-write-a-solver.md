@@ -110,6 +110,61 @@ costs a user one parameter change and a clear error message. The FEniCSx adapter
 learned this the hard way — the equilateral-tiling formula `2A/h²` looks like a triangle
 count but is really a *floor*, and Gmsh comes in about 35% above it.
 
+## Describing yourself to a caller that is not a form
+
+Everything above makes your solver *runnable*. This makes it *discoverable*: the
+[progressive discovery](04-wire-protocol.md#progressive-discovery) operations report
+whatever you declare here, so a caller can decide whether to run you before it does.
+
+```python
+from fenixspoon.solvers.base import ArtifactSpec, CapabilityExample, MetricSpec
+
+
+class SteadyHeat2D(Solver):
+    name = "myphysics.heat2d"
+    title = "Steady heat conduction"
+    physics = "heat-conduction"      # coarse tag a caller filters on
+    availability = "mock"            # or "fenicsx" — is this the real thing?
+    requires = ["mysolverlib"]       # informational; versions get reported
+
+    metrics = [
+        MetricSpec(name="t_max", unit="degC", description="Peak temperature.",
+                   field="T", reduction="max"),
+    ]
+    artifacts = [
+        ArtifactSpec(name="solution.vtk", content_type="model/vnd.vtk",
+                     description="Full field, opens in ParaView.", when="write_vtk"),
+    ]
+    examples = [
+        CapabilityExample(title="fast preview", description="Sub-second sanity check.",
+                          params={"resolution": 64}),
+    ]
+```
+
+**Every one of these has a default, so an existing adapter keeps working untouched** — it
+reports `unspecified` where it has not said, and stays fully usable. They are plain class
+attributes in the spirit of `Params`, not a registration framework.
+
+Two things to get right:
+
+**Metrics are the engineering *answer*; `stats` is what the solve *cost*.** Peak
+temperature is a metric, `seconds` and `cells` are stats. Keeping them apart is what lets
+an operator size a machine and an engineer make a decision from the same result. (The
+values themselves are not returned yet — declaring them is
+[#43](https://github.com/mandaloriat/fenix-spoon/issues/43), returning them is
+[#46](https://github.com/mandaloriat/fenix-spoon/issues/46).)
+
+**Name a `field` and a `reduction` where the metric really is a reduction of one.** That
+makes the declaration checkable rather than decorative: the test suite runs a solve and
+fails if the field is not in the payload. Leave both out where it is not — `t_rise`
+depends on a parameter as well as the field, and pretending otherwise would declare
+something nothing can evaluate.
+
+If you ship a second adapter for physics that already exists — the way every mock solver
+here has a FEniCSx twin — **declare the same metric names**. Cross-validated adapters that
+answer the same question under different names are interchangeable in the gallery and not
+in a caller's code, and `test_paired_adapters_declare_the_same_metrics` enforces it.
+
 ## Depending on something that might not be installed
 
 The FEniCSx adapters register only when `dolfinx` imports, so the same codebase runs in a

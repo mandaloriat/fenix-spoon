@@ -27,6 +27,12 @@ from pydantic import BaseModel, Field
 from . import __version__
 from .auth import Principal, principal_from_request, principal_from_websocket
 from .core import CoreError, FenixSpoonCore
+from .core.discovery import (
+    SECTIONS,
+    CapabilityDescription,
+    CapabilitySummary,
+    EnvironmentInfo,
+)
 from .geometry import Geometry
 from .jobs import JobStatus
 from .protocol import PROTOCOL_VERSION, ProtocolVersion
@@ -94,6 +100,76 @@ def list_solvers(
 ) -> list[SolverInfo]:
     """Which solvers this server has. Behind auth: it describes what the server can run."""
     return _core(request).capabilities()
+
+
+@router.get("/environment", response_model=EnvironmentInfo)
+def inspect_environment(
+    request: Request,
+    principal: CurrentPrincipal,
+) -> EnvironmentInfo:
+    """What this installation is: versions, backends, limits, and *your* quotas and usage.
+
+    The HTTP binding of `environment.inspect` (roadmap M2.5, #43). Behind auth, unlike
+    `/version`: the two version strings are not secret, but the data directory, the backend
+    topology and another principal's quota position are not information to hand out for
+    free.
+    """
+    return _core(request).environment(principal)
+
+
+@router.get("/capabilities", response_model=list[CapabilitySummary])
+def list_capabilities(
+    request: Request,
+    principal: CurrentPrincipal,  # noqa: ARG001 - present to gate the route
+) -> list[CapabilitySummary]:
+    """One line per installed capability — `capability.list`.
+
+    The compact counterpart of `/solvers`, which stays exactly as it was: that route serves
+    a form generator and must keep returning every schema. This one serves a caller choosing
+    between capabilities, which is a different question and a much smaller answer.
+    """
+    return _core(request).capability_list()
+
+
+@router.get(
+    "/capabilities/{name}",
+    response_model=CapabilityDescription,
+    response_model_exclude_none=True,
+)
+def describe_capability(
+    name: str,
+    request: Request,
+    principal: CurrentPrincipal,  # noqa: ARG001 - present to gate the route
+    sections: Annotated[
+        list[str] | None,
+        Query(description=f"Sections to include. Any of: {', '.join(SECTIONS)}."),
+    ] = None,
+    inline_schemas: Annotated[
+        bool,
+        Query(description="Return the full params JSON Schema inline instead of a reference."),
+    ] = False,
+) -> CapabilityDescription:
+    """Selected sections of one capability — `capability.describe`.
+
+    Omit `sections` for everything; pass it to get those sections and nothing else.
+    `response_model_exclude_none` is what makes "nothing else" literal — an unrequested
+    section is absent from the JSON rather than present and null, which is the difference
+    between a compact answer and a compact-looking one.
+    """
+    return _core(request).capability_describe(name, sections, inline_schemas=inline_schemas)
+
+
+@router.get("/capabilities/{name}/schema")
+def capability_schema(
+    name: str,
+    request: Request,
+    principal: CurrentPrincipal,  # noqa: ARG001 - present to gate the route
+) -> dict[str, Any]:
+    """Resolve the `schema:params/{name}` reference from a `params` section.
+
+    Same JSON Schema `/solvers` embeds, fetched deliberately rather than by default.
+    """
+    return _core(request).capability_schema(name)
 
 
 @router.post("/jobs", response_model=JobCreated, status_code=202)

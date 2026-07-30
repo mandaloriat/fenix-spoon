@@ -14,7 +14,8 @@ import numpy as np
 from pydantic import BaseModel, Field
 
 from ..geometry import Domain2D
-from .base import ProgressEvent, Solver, SolverContext, SolverResult
+from .base import CapabilityExample, ProgressEvent, Solver, SolverContext, SolverResult
+from .declarations import POTENTIAL_FLOW_METRICS, VTK_ARTIFACT
 from .registry import register
 
 
@@ -117,6 +118,25 @@ class MockLaplace2D(Solver):
         "streamfunction on a Cartesian grid, Jacobi-iterated. Development stand-in that runs "
         "anywhere NumPy does."
     )
+    physics = "potential-flow"
+    availability = "mock"
+    metrics = POTENTIAL_FLOW_METRICS
+    artifacts = [VTK_ARTIFACT]
+    examples = [
+        CapabilityExample(
+            title="fast preview",
+            description=(
+                "Finishes in a fraction of a second. Use it to check that a geometry edit did "
+                "what you meant before paying for a resolved solve."
+            ),
+            params={"resolution": 64, "iterations": 400, "write_vtk": False},
+        ),
+        CapabilityExample(
+            title="resolved",
+            description="What the airfoil demo submits: a readable field in a few seconds.",
+            params={"resolution": 256, "iterations": 4000},
+        ),
+    ]
 
     class Params(BaseModel):
         resolution: int = Field(

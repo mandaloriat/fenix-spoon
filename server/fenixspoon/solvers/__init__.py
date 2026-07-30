@@ -5,14 +5,18 @@ from . import mock_heat as _mock_heat  # noqa: F401  (registers itself)
 from . import mock_laplace as _mock_laplace  # noqa: F401
 from . import mock_magnetostatics as _mock_magnetostatics  # noqa: F401
 from .base import (
+    ArtifactSpec,
+    CapabilityExample,
+    CapabilityFeatures,
     JobCancelled,
+    MetricSpec,
     ProgressEvent,
     Solver,
     SolverContext,
     SolverInfo,
     SolverResult,
 )
-from .registry import available_solvers, get_solver, register
+from .registry import available_solvers, get_solver, register, registered_solvers
 
 # The FEniCSx adapters register only if dolfinx + gmsh import cleanly.
 try:
@@ -23,7 +27,11 @@ except ImportError:  # pragma: no cover - exercised only without dolfinx
     pass
 
 __all__ = [
+    "ArtifactSpec",
+    "CapabilityExample",
+    "CapabilityFeatures",
     "JobCancelled",
+    "MetricSpec",
     "ProgressEvent",
     "Solver",
     "SolverContext",
@@ -32,4 +40,5 @@ __all__ = [
     "available_solvers",
     "get_solver",
     "register",
+    "registered_solvers",
 ]

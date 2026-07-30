@@ -49,6 +49,13 @@ class JobRecord:
     result: SolverResult | None = None
     artifacts: list[dict[str, Any]] = field(default_factory=list)
     events: list[dict[str, Any]] = field(default_factory=list)
+    inputs: dict[str, Any] = field(default_factory=dict)
+    """Which workspace object revisions this job came from, pinned (roadmap M2.5, #44).
+
+    Empty for a job submitted with an inline geometry, which is most of them and stays
+    perfectly valid. When a design was resolved it holds the design, geometry and material
+    revisions — the `design -> job -> result` relation, recorded at the one moment it is
+    knowable. #47 adds the environment and the content hash beside it."""
 
     @property
     def artifact_bytes(self) -> int:
@@ -57,6 +64,10 @@ class JobRecord:
 
 class JobStore(ABC):
     """Where jobs live between requests, and between process lifetimes."""
+
+    #: Short identifier reported by `environment.inspect` (#43), matching the value
+    #: `FENIXSPOON_STORE` takes — so what an operator reads back is what they set.
+    kind = "unknown"
 
     @abstractmethod
     def put(self, record: JobRecord) -> None:
@@ -127,6 +138,8 @@ class JobStore(ABC):
 class MemoryJobStore(JobStore):
     """Dev default: keeps records in a dict, loses them with the process."""
 
+    kind = "memory"
+
     def __init__(self) -> None:
         self._records: dict[str, JobRecord] = {}
 
@@ -145,6 +158,7 @@ class MemoryJobStore(JobStore):
             result=record.result,
             artifacts=list(record.artifacts),
             events=events,
+            inputs=dict(record.inputs),
         )
 
     def add_event(self, job_id: str, event: dict[str, Any]) -> int:
@@ -170,6 +184,7 @@ class MemoryJobStore(JobStore):
             result=record.result if with_result else None,
             events=list(record.events) if with_events else [],
             artifacts=list(record.artifacts),
+            inputs=dict(record.inputs),
         )
 
     def list_jobs(
@@ -181,7 +196,7 @@ class MemoryJobStore(JobStore):
         # dataclass, not the lists inside it, and `Job.from_record` hands this list straight
         # to a live `Job` — so a caller appending to it would rewrite the stored record.
         return [
-            replace(r, result=None, events=[], artifacts=list(r.artifacts))
+            replace(r, result=None, events=[], artifacts=list(r.artifacts), inputs=dict(r.inputs))
             for r in ordered[offset : offset + limit]
         ]
 
@@ -218,7 +233,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     stats          TEXT,
     artifacts      TEXT NOT NULL DEFAULT '[]',
     owner          TEXT NOT NULL DEFAULT 'anonymous',
-    artifact_bytes INTEGER NOT NULL DEFAULT 0
+    artifact_bytes INTEGER NOT NULL DEFAULT 0,
+    inputs         TEXT NOT NULL DEFAULT '{}'
 );
 CREATE TABLE IF NOT EXISTS events (
     job_id  TEXT NOT NULL,
@@ -234,6 +250,7 @@ CREATE TABLE IF NOT EXISTS events (
 _MIGRATIONS = {
     "owner": "ALTER TABLE jobs ADD COLUMN owner TEXT NOT NULL DEFAULT 'anonymous'",
     "artifact_bytes": "ALTER TABLE jobs ADD COLUMN artifact_bytes INTEGER NOT NULL DEFAULT 0",
+    "inputs": "ALTER TABLE jobs ADD COLUMN inputs TEXT NOT NULL DEFAULT '{}'",
 }
 
 _INDEXES = """
@@ -253,6 +270,8 @@ class SqliteJobStore(JobStore):
     and N workers on one mounted data directory. WAL makes concurrent readers and one
     writer safe, and ``busy_timeout`` makes a second writer wait rather than fail.
     """
+
+    kind = "sqlite"
 
     #: How long a statement waits for another process's write lock before giving up.
     BUSY_TIMEOUT_MS = 10_000
@@ -317,8 +336,9 @@ class SqliteJobStore(JobStore):
         with self._lock:
             self._db.execute(
                 """INSERT INTO jobs (id, solver, status, error, created_at, finished_at,
-                                     result_kind, stats, artifacts, owner, artifact_bytes)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                     result_kind, stats, artifacts, owner, artifact_bytes,
+                                     inputs)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(id) DO UPDATE SET
                        status=excluded.status, error=excluded.error,
                        finished_at=excluded.finished_at, result_kind=excluded.result_kind,
@@ -336,6 +356,7 @@ class SqliteJobStore(JobStore):
                     json.dumps(record.artifacts),
                     record.owner,
                     record.artifact_bytes,
+                    json.dumps(record.inputs),
                 ),
             )
             self._db.commit()
@@ -382,6 +403,9 @@ class SqliteJobStore(JobStore):
             result=result,
             artifacts=json.loads(row["artifacts"]),
             events=events,
+            # `inputs` is only ever written at insert; the UPDATE branch leaves it alone
+            # because a job's provenance is fixed the moment it is accepted.
+            inputs=json.loads(row["inputs"] or "{}"),
         )
 
     def get(

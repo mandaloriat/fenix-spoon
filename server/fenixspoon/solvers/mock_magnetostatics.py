@@ -25,7 +25,8 @@ import numpy as np
 from pydantic import BaseModel, Field
 
 from ..geometry import Regions2D
-from .base import ProgressEvent, Solver, SolverContext, SolverResult
+from .base import CapabilityExample, ProgressEvent, Solver, SolverContext, SolverResult
+from .declarations import MAGNETOSTATICS_METRICS, VTK_ARTIFACT
 from .mock_laplace import (
     _grid_shape,
     grid_to_mesh2d,
@@ -62,6 +63,25 @@ class MockMagnetostatics2D(Solver):
         "coefficients. Development stand-in that runs anywhere NumPy does."
     )
     geometry_types = ["regions2d"]
+    physics = "magnetostatics"
+    availability = "mock"
+    metrics = MAGNETOSTATICS_METRICS
+    artifacts = [VTK_ARTIFACT]
+    examples = [
+        CapabilityExample(
+            title="fast preview",
+            description="Coarse and short: enough to see where the flux goes, not to measure it.",
+            params={"resolution": 64, "iterations": 600, "write_vtk": False},
+        ),
+        CapabilityExample(
+            title="resolved",
+            description=(
+                "What the solenoid demo submits. The iteration count matters more here than "
+                "in the flow solver: the iron/air contrast slows convergence considerably."
+            ),
+            params={"resolution": 192, "iterations": 8000},
+        ),
+    ]
 
     class Params(BaseModel):
         resolution: int = Field(

@@ -38,7 +38,8 @@ import numpy as np
 from pydantic import BaseModel, Field
 
 from ..geometry import Regions2D
-from .base import ProgressEvent, Solver, SolverContext, SolverResult
+from .base import CapabilityExample, ProgressEvent, Solver, SolverContext, SolverResult
+from .declarations import HEAT_METRICS, VTK_ARTIFACT
 from .mock_laplace import _grid_shape, grid_to_mesh2d, polygon_mask, write_vtk_structured_points
 from .mock_magnetostatics import _harmonic_mean, rasterize_regions
 from .registry import register
@@ -63,6 +64,26 @@ class MockHeat2D(Solver):
         "analysed. Development stand-in that runs anywhere NumPy does."
     )
     geometry_types = ["regions2d"]
+    physics = "heat-conduction"
+    availability = "mock"
+    metrics = HEAT_METRICS
+    artifacts = [VTK_ARTIFACT]
+    examples = [
+        CapabilityExample(
+            title="fast preview",
+            description="Coarse grid, few sweeps. The temperature is not converged; the shape is.",
+            params={"resolution": 80, "iterations": 800, "write_vtk": False},
+        ),
+        CapabilityExample(
+            title="forced air",
+            description=(
+                "The gallery heat sink under a fan rather than in still air. Raising `h` is "
+                "the comparison this example exists for: it is the cheapest way to cool a "
+                "part, and it changes the answer more than most geometry edits."
+            ),
+            params={"resolution": 200, "iterations": 6000, "h": 120.0},
+        ),
+    ]
 
     class Params(BaseModel):
         resolution: int = Field(

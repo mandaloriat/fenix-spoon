@@ -49,6 +49,11 @@ def cancel_key(job_id: str) -> str:
 class ExecutionBackend(ABC):
     """How the manager gets a solve run somewhere."""
 
+    #: Short identifier for this backend, reported by `environment.inspect` (#43). A
+    #: declared name rather than a class name sniffed at runtime: an operator debugging a
+    #: half-distributed deployment needs the answer to be the deployment's vocabulary.
+    kind = "unknown"
+
     #: True when solves run inside this process. Two things follow from it, both for
     #: the same reason — that a job running elsewhere is not this process's to speak
     #: for. The manager only caches a live Job when it runs here (otherwise the store
@@ -82,6 +87,7 @@ class ExecutionBackend(ABC):
 class InProcessBackend(ExecutionBackend):
     """Solves on a bounded thread pool in the API process."""
 
+    kind = "in-process"
     runs_locally = True
 
     def __init__(
@@ -155,6 +161,7 @@ class ArqBackend(ExecutionBackend):
     backstop for that.
     """
 
+    kind = "arq"
     runs_locally = False
 
     def __init__(self, redis_url: str, pool=None) -> None:

@@ -28,6 +28,11 @@ Delivery = tuple[int, dict[str, Any]]
 class EventBus(ABC):
     """Fan-out for job progress events."""
 
+    #: Short identifier reported by `environment.inspect` (#43). Worth reporting next to
+    #: the execution backend: the two have to agree, and a mismatch's only symptom is a
+    #: progress bar that never moves.
+    kind = "unknown"
+
     @abstractmethod
     async def publish(self, job_id: str, seq: int, event: dict[str, Any]) -> None:
         """Deliver one event to every current subscriber of ``job_id``."""
@@ -66,6 +71,8 @@ class Subscription(ABC):
 
 class InProcessEventBus(EventBus):
     """The dev default: one asyncio queue per subscriber, no broker."""
+
+    kind = "in-process"
 
     def __init__(self) -> None:
         self._subscribers: dict[str, set[asyncio.Queue]] = {}
