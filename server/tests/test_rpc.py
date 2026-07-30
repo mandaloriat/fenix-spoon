@@ -898,4 +898,15 @@ def test_the_default_result_answer_stays_small(core, me):
     default = asyncio.run(run())
     assert "fields" not in default
     frame = framing.encode({"jsonrpc": "2.0", "id": 1, "result": default})
-    assert len(frame) < 1536
+    # The per-section breakdown, not just the total. Whoever sees this next has to decide
+    # whether the budget should move again or whether something is genuinely wrong, and that
+    # is a question about *which* section grew — the two times it has moved so far, the
+    # answer was `metrics` once and `diagnostics` once. Measuring that by hand is a
+    # ten-minute detour this message removes.
+    breakdown = {key: len(json.dumps(value)) for key, value in default.items()}
+    assert len(frame) < 1536, (
+        f"the default answer is {len(frame)} bytes on the wire, over budget.\n"
+        f"sections: {breakdown}\n"
+        "If a capability simply declares more metrics, moving the budget is the right fix — "
+        "see the docstring. If a field array got in, it is not."
+    )
