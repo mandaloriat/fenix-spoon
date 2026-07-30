@@ -400,6 +400,71 @@ describe('<fs-geometry-2d>', () => {
   });
 });
 
+describe('the display view box', () => {
+  beforeEach(() => {
+    document.body.replaceChildren();
+  });
+
+  it('draws the whole domain until one is set', () => {
+    const element = mount({ bounds: '0,0,4,2' });
+    expect(element.viewBox).toBeNull();
+    expect(element.shadowRoot!.querySelector('svg')!.getAttribute('viewBox')).toBe('0 0 4 2');
+  });
+
+  it('reframes the drawing without touching the geometry', () => {
+    // This is the whole reason it is not a second `bounds`: an editor layered over a
+    // zoomed `<fs-viewer>` has to follow the viewer's frame, and re-clamping the profile
+    // to that frame — which `bounds` does — would destroy the geometry being edited.
+    const element = mount({ bounds: '0,0,4,2', mode: 'polygon' });
+    element.controlPoints = [
+      [0.1, 0.1],
+      [3.9, 0.1],
+      [2, 1.9],
+    ];
+    const before = element.controlPoints;
+    element.viewBox = [1, 0.5, 3, 1.5];
+    expect(element.shadowRoot!.querySelector('svg')!.getAttribute('viewBox')).toBe('1 0.5 2 1');
+    expect(element.controlPoints).toEqual(before);
+    expect(element.bounds).toEqual([0, 0, 4, 2]);
+    expect(element.value.obstacle.points).toEqual(before);
+  });
+
+  it('flips y about the view, so a handle lands where the point is', () => {
+    const element = mount({ bounds: '0,0,4,2', mode: 'polygon' });
+    element.controlPoints = [
+      [1.5, 0.75],
+      [2.5, 0.75],
+      [2, 1.25],
+    ];
+    element.viewBox = [1, 0.5, 3, 1.5];
+    const [handle] = handles(element);
+    // y = 0.75 in a view spanning 0.5..1.5 mirrors to 0.5 + 1.5 - 0.75 = 1.25.
+    expect(Number(handle!.getAttribute('cy'))).toBeCloseTo(1.25, 9);
+    expect(Number(handle!.getAttribute('cx'))).toBeCloseTo(1.5, 9);
+  });
+
+  it('keeps handles the same size on screen as the view zooms in', () => {
+    const element = mount({ bounds: '0,0,4,2' });
+    const wide = Number(handles(element)[0]!.getAttribute('r'));
+    element.viewBox = [1, 0.5, 3, 1.5]; // half the domain's shorter span
+    const zoomed = Number(handles(element)[0]!.getAttribute('r'));
+    expect(zoomed).toBeCloseTo(wide / 2, 9);
+  });
+
+  it('ignores a view box that is not a rectangle, and clears on null', () => {
+    const element = mount({ bounds: '0,0,4,2' });
+    element.setAttribute('view-box', '3,3,1,1');
+    expect(element.viewBox).toBeNull();
+    element.setAttribute('view-box', 'nonsense');
+    expect(element.viewBox).toBeNull();
+    element.viewBox = [1, 0.5, 3, 1.5];
+    expect(element.viewBox).toEqual([1, 0.5, 3, 1.5]);
+    element.viewBox = null;
+    expect(element.viewBox).toBeNull();
+    expect(element.shadowRoot!.querySelector('svg')!.getAttribute('viewBox')).toBe('0 0 4 2');
+  });
+});
+
 describe('sampleClosedSpline', () => {
   it('passes through its control points', () => {
     const points: [number, number][] = [

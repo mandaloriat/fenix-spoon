@@ -1,6 +1,17 @@
 export * from './colormap.js';
 export * from './field.js';
-export { FieldViewerElement, defineFieldViewer } from './element.js';
+export * from './streamlines.js';
+export * from './viewport.js';
+export {
+  type OverlayContext,
+  type ToolAvailability,
+  type ToolbarTool,
+  type ViewerCapabilities,
+  type ViewerMode,
+  FieldViewerElement,
+  defineFieldViewer,
+  geometryPolygons,
+} from './element.js';
 
 import { defineFieldViewer } from './element.js';
 

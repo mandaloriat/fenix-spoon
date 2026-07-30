@@ -64,7 +64,7 @@ interface State {
 }
 
 export class GeometryEditorElement extends HTMLElement {
-  static observedAttributes = ['bounds', 'mode', 'samples', 'readonly'];
+  static observedAttributes = ['bounds', 'mode', 'samples', 'readonly', 'view-box'];
 
   #root: ShadowRoot;
   #svg!: SVGSVGElement;
@@ -75,6 +75,7 @@ export class GeometryEditorElement extends HTMLElement {
 
   #points: Point[] = DEFAULT_POINTS.map((p) => [...p] as Point);
   #bounds: [number, number, number, number] = [...DEFAULT_BOUNDS];
+  #viewBox: [number, number, number, number] | null = null;
   #mode: EditorMode = 'polygon';
   #samples = 8;
   #readonly = false;
@@ -149,6 +150,24 @@ export class GeometryEditorElement extends HTMLElement {
 
   set bounds(bounds: [number, number, number, number]) {
     this.setAttribute('bounds', bounds.join(','));
+  }
+
+  /**
+   * The part of the domain currently drawn — **display only**, and `null` to show all of it.
+   *
+   * This is not a second `bounds`. `bounds` is the protocol's domain rectangle and changing
+   * it re-clamps the geometry; this changes nothing but the projection, so the same points
+   * are edited at a different magnification. It exists so an editor layered over
+   * `<fs-viewer>` can follow that viewer's zoom: listen for `fs-viewport-change` and assign
+   * the viewport here, and a control point stays over the feature it was placed on.
+   */
+  get viewBox(): [number, number, number, number] | null {
+    return this.#viewBox ? [...this.#viewBox] : null;
+  }
+
+  set viewBox(view: [number, number, number, number] | null) {
+    if (view === null) this.removeAttribute('view-box');
+    else this.setAttribute('view-box', view.join(','));
   }
 
   get readOnly(): boolean {
@@ -227,6 +246,18 @@ export class GeometryEditorElement extends HTMLElement {
         }
         break;
       }
+      case 'view-box': {
+        const parts = (value ?? '').split(',').map(Number);
+        this.#viewBox =
+          value !== null &&
+          parts.length === 4 &&
+          parts.every(Number.isFinite) &&
+          parts[2]! > parts[0]! &&
+          parts[3]! > parts[1]!
+            ? (parts as [number, number, number, number])
+            : null;
+        break;
+      }
       case 'mode':
         this.#mode = value === 'spline' ? 'spline' : 'polygon';
         break;
@@ -265,14 +296,24 @@ export class GeometryEditorElement extends HTMLElement {
     this.#svg.addEventListener('pointercancel', this.#onPointerUp);
   }
 
-  /** Domain units are the SVG user space, flipped so +y is up. */
+  /** What the SVG viewBox shows: the display view when one is set, else the whole domain. */
+  #view(): [number, number, number, number] {
+    return this.#viewBox ?? this.#bounds;
+  }
+
+  /**
+   * Domain units are the SVG user space, flipped so +y is up.
+   *
+   * The flip is about the *view*, not the domain: with a display view set, mirroring about
+   * the domain's centre would put every point outside the box being drawn.
+   */
   #toPx = ([x, y]: Point): Point => {
-    const [, ymin, , ymax] = this.#bounds;
+    const [, ymin, , ymax] = this.#view();
     return [x, ymin + ymax - y];
   };
 
   #fromPx = ([x, y]: Point): Point => {
-    const [, ymin, , ymax] = this.#bounds;
+    const [, ymin, , ymax] = this.#view();
     return [x, ymin + ymax - y];
   };
 
@@ -302,7 +343,7 @@ export class GeometryEditorElement extends HTMLElement {
 
   #render(): void {
     if (!this.#svg) return;
-    const [xmin, ymin, xmax, ymax] = this.#bounds;
+    const [xmin, ymin, xmax, ymax] = this.#view();
     this.#svg.setAttribute('viewBox', `${xmin} ${ymin} ${xmax - xmin} ${ymax - ymin}`);
 
     this.#outline.setAttribute('d', toPathData(this.outlinePoints(), this.#toPx));
@@ -376,9 +417,13 @@ export class GeometryEditorElement extends HTMLElement {
     });
   }
 
-  /** Handles are sized in domain units, so pick something proportional to the domain. */
+  /**
+   * Handles are sized in domain units, so pick something proportional to what is *shown*.
+   * Taking it from the domain instead would shrink every handle to a dot as a caller
+   * zoomed the display view in, which is the opposite of what zooming in is for.
+   */
   #handleRadius(): number {
-    const [xmin, ymin, xmax, ymax] = this.#bounds;
+    const [xmin, ymin, xmax, ymax] = this.#view();
     return Math.min(xmax - xmin, ymax - ymin) * 0.02;
   }
 
@@ -498,7 +543,7 @@ export class GeometryEditorElement extends HTMLElement {
       // coordinates so programmatic events in tests still move points.
       return [event.clientX, event.clientY];
     }
-    const [xmin, ymin, xmax, ymax] = this.#bounds;
+    const [xmin, ymin, xmax, ymax] = this.#view();
     return [
       xmin + ((event.clientX - rect.left) / rect.width) * (xmax - xmin),
       ymin + ((event.clientY - rect.top) / rect.height) * (ymax - ymin),

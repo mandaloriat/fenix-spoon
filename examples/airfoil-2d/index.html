@@ -13,6 +13,11 @@
            overflow: hidden; }
   /* The editor is transparent and layers straight over the viewer. */
   fs-viewer, fs-geometry-2d { position: absolute; inset: 0; }
+  /* Two widgets, one box, and a drag both of them have a use for. The stage carries the
+     mode, and the two halves of it are set together: the editor stops taking pointer
+     events, and the viewer is told what a drag now means. Neither on its own is enough —
+     without the second, a gesture would silently belong to whichever element is on top. */
+  .stage[data-mode="explore"] fs-geometry-2d { pointer-events: none; opacity: 0.55; }
   .controls { display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem; align-items: center;
               margin: 0.75rem 0; }
   .controls label { display: flex; gap: 0.4rem; align-items: center; font-size: 0.9rem; }
@@ -39,8 +44,10 @@
 <p class="hint">Same demo as <a href="index-vanilla.html">the zero-dependency version</a>, rebuilt
 on <code>@fenix-spoon/client</code>, <code>&lt;fs-geometry-2d&gt;</code> and
 <code>&lt;fs-viewer&gt;</code>. Drag the control points; the solve runs on every edit. All the
-interaction — keyboard operation, undo, insert/remove, contours, the probe readout — comes from
-the packages, not from this page.</p>
+interaction — keyboard operation, undo, insert/remove, contours, the probe readout, zoom and
+pan — comes from the packages, not from this page. Tick <em>explore</em> to hand the drag to
+the viewer instead of the editor: zoom into the suction peak, pan along the surface, hover to
+read the field. Nothing there re-runs the solver — it is all the arrays the page already has.</p>
 
 <div id="missing" class="missing" hidden>
   The widget bundles aren't built. Run <code>npm --prefix client install &amp;&amp; npm --prefix
@@ -48,8 +55,11 @@ the packages, not from this page.</p>
   no build.)
 </div>
 
-<div class="stage">
-  <fs-viewer id="viewer" field="speed" colormap="viridis" contours="8"></fs-viewer>
+<div class="stage" id="stage" data-mode="edit">
+  <!-- `mode="none"` while the profile is being edited: the viewer claims no gesture at all,
+       so every drag reaches the editor above it. Switching to explore flips both halves. -->
+  <fs-viewer id="viewer" field="speed" colormap="viridis" contours="8"
+             interactive mode="none"></fs-viewer>
   <fs-geometry-2d id="editor" bounds="-1,-1,2,1" mode="spline" samples="10"></fs-geometry-2d>
 </div>
 
@@ -57,8 +67,11 @@ the packages, not from this page.</p>
   <button id="run">Run ▶</button>
   <button id="cancel" hidden>Cancel ✕</button>
   <label><input type="checkbox" id="auto" checked> auto-run on edit</label>
+  <label><input type="checkbox" id="explore"> explore (zoom / pan / probe)</label>
+  <button id="fit" type="button">Fit profile</button>
   <label>field <select id="field"></select></label>
   <label><input type="checkbox" id="glyphs"> velocity arrows</label>
+  <label><input type="checkbox" id="curves"> integral curves</label>
   <label>solver <select id="solver"></select></label>
   <label><input type="checkbox" id="spline" checked> spline mode</label>
   <progress id="prog" value="0" max="1" hidden></progress>
@@ -112,10 +125,12 @@ async function run() {
     });
 
     viewer.result = result;
+    // A result carries arrays and a bounding box, not an outline. The page has the exact
+    // geometry it submitted, so it hands it over: that is what "Fit profile" frames and
+    // what the outline overlay draws.
+    viewer.geometry = editor.value;
     syncFieldOptions();
-    const glyphToggle = document.getElementById('glyphs');
-    glyphToggle.disabled = viewer.vectorFields.length === 0;
-    if (glyphToggle.checked && !glyphToggle.disabled) viewer.vectors = viewer.vectorFields[0];
+    syncOverlayToggles();
     statusEl.textContent =
       `done — ${result.data.triangles?.length ?? 0} elements` +
       formatMetrics(result.metrics) +
@@ -188,6 +203,30 @@ function syncFieldOptions() {
   );
 }
 
+// Overlay toggles are driven by `viewer.capabilities`, not by what this page hopes is
+// there. Each entry is `{ available, reason }`, so a control that cannot work is disabled
+// *and* explains itself — against a pre-1.1 server the reason is "this result carries no
+// vector field", which is a different problem from "the checkbox is broken".
+//
+// The integral curves are what an aerodynamicist calls streamlines. That name is this
+// page's to use, not the viewer's: the viewer integrated a vector field and has no way to
+// know the vector was a velocity.
+function syncOverlayToggles() {
+  const { vectors, streamlines } = viewer.capabilities;
+  const glyphToggle = document.getElementById('glyphs');
+  const curveToggle = document.getElementById('curves');
+
+  glyphToggle.disabled = !vectors.available;
+  glyphToggle.title = vectors.reason ?? '';
+  viewer.vectors = glyphToggle.checked && vectors.available ? viewer.vectorFields[0] : null;
+
+  const field = viewer.vectorFields[0] ?? null;
+  const canIntegrate = streamlines.available && field !== null;
+  curveToggle.disabled = !canIntegrate;
+  curveToggle.title = canIntegrate ? '' : (streamlines.reason ?? '');
+  viewer.streamlines = curveToggle.checked && canIntegrate ? field : null;
+}
+
 function showArtifacts(artifacts = []) {
   artifactsEl.replaceChildren();
   if (!artifacts.length) return;
@@ -210,10 +249,45 @@ editor.addEventListener('change', () => {
 runBtn.addEventListener('click', run);
 cancelBtn.addEventListener('click', () => currentJob?.cancel());
 fieldSelect.addEventListener('change', () => { viewer.field = fieldSelect.value; });
-// Vector glyphs (protocol 1.1). The checkbox is disabled until a result actually carries a
-// vector field, so an older server degrades to "no arrows" rather than a control that lies.
-document.getElementById('glyphs').addEventListener('change', (event) => {
-  viewer.vectors = event.target.checked ? viewer.vectorFields[0] ?? null : null;
+// Vector glyphs (protocol 1.1) and integral curves. Both go through the same capability
+// check, so an older server degrades to "no overlay, and here is why" rather than to a
+// control that lies.
+document.getElementById('glyphs').addEventListener('change', syncOverlayToggles);
+document.getElementById('curves').addEventListener('change', syncOverlayToggles);
+
+/* ------------------------------------------------------------------ *
+ * Editing and exploring are two modes, and the page owns the switch
+ *
+ * The editor is a transparent layer over the viewer, so exactly one of them can have a
+ * drag. Saying which is a page decision — neither widget can make it — and it takes both
+ * halves: the editor stops receiving pointer events (CSS, keyed off the stage), and the
+ * viewer is told what a drag means now (`mode`). `mode="none"` is the viewer claiming
+ * nothing at all, which is what an editor on top needs.
+ *
+ * The viewport has to travel with it. Zoom the viewer and the editor's control points
+ * would otherwise stay drawn against the un-zoomed domain, landing nowhere near the
+ * profile they belong to; `editor.viewBox` reframes the drawing without touching the
+ * geometry, which `editor.bounds` would.
+ * ------------------------------------------------------------------ */
+
+const stage = document.getElementById('stage');
+
+function setExploring(exploring) {
+  stage.dataset.mode = exploring ? 'explore' : 'edit';
+  viewer.mode = exploring ? 'pan' : 'none';
+  editor.readOnly = exploring;
+}
+
+document.getElementById('explore').addEventListener('change', (event) => {
+  setExploring(event.target.checked);
+});
+document.getElementById('fit').addEventListener('click', () => {
+  document.getElementById('explore').checked = true;
+  setExploring(true);
+  viewer.fitGeometry();
+});
+viewer.addEventListener('fs-viewport-change', (event) => {
+  editor.viewBox = event.detail.viewport;
 });
 document.getElementById('spline').addEventListener('change', (event) => {
   editor.mode = event.target.checked ? 'spline' : 'polygon';

@@ -384,6 +384,18 @@ Goal: adoption. People find, run, and copy examples.
       arrow glyphs on a lattice sized by the `glyphs` attribute rather than by the data, because
       one arrow per grid point is unreadable at 512×341 and sparse at 16×16. The first additive
       bump under the rule #58 wrote down.*
+- [x] An explorable viewer: viewport navigation, generic overlays and capability-driven tools
+      — *`<fs-viewer>` stopped being a renderer and became something an application can offer
+      as a preview: pointer-anchored zoom, drag and pinch pan, fit-domain and fit-geometry, a
+      probe and a section sampled from the arrays already in the page, a pinnable colour scale
+      for comparing two solves, configurable vector density and scale, and integral curves of a
+      vector field with adjustable seeding. **No protocol change**: all of it is a function of
+      data `grid2d` and `mesh2d` have carried since 1.1, which is the decision recorded in
+      [ADR 0001](adr/0001-explorable-viewer.md) along with the three things the viewer refuses
+      to infer — a vector field from a scalar one, a geometry outline from the `grid2d` mask,
+      and a physical name for an integrated curve. Navigation is opt-in and the gesture meaning
+      is an explicit `mode`, so the airfoil demo's layered geometry editor keeps working and
+      can now coordinate with the viewer rather than merely sit on top of it.*
 - [ ] "Deploy to Fly.io/Render/self-host" one-clickish guides (#19)
 - [x] A protocol version on the wire, a compatibility rule, and a bump procedure (#58) —
       `GET /api/v1/version`, the one route outside the auth gate, because a client has to

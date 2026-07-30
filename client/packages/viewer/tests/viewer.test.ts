@@ -14,9 +14,11 @@ import {
 } from '../src/colormap.js';
 import { FieldViewerElement, defineFieldViewer } from '../src/element.js';
 import {
+  MAX_GLYPHS_ACROSS,
   barycentric,
   contourSegments,
   isoLevels,
+  locate,
   probe,
   glyphSamples,
   resultFieldNames,
@@ -411,5 +413,148 @@ describe('vector fields and glyphs', () => {
     el.setAttribute('vectors', 'velocity');
     expect(el.vectors).toBe('velocity');
     el.remove();
+  });
+
+  /** 41x41 over [0, 4]^2 — fine enough that the lattice, not the data, sets the spacing. */
+  const dense = (): Grid2DResult => {
+    const n = 41;
+    return {
+      job_id: 'j-dense',
+      kind: 'grid2d',
+      data: {
+        bounds: [0, 0, 4, 4],
+        shape: [n, n],
+        fields: { speed: Array(n * n).fill(1) },
+        vector_fields: { velocity: Array(n * n).fill([1, 0]) as [number, number][] },
+        mask: Array(n * n).fill(0),
+      },
+      stats: {},
+      artifacts: [],
+    };
+  };
+
+  it('keeps the on-screen density constant when the window shrinks', () => {
+    // Zooming in halves the visible span; asking for the same number of arrows across it
+    // must halve the lattice cell, or the picture loses arrows as you look closer.
+    const field = dense(); // bounds [0, 0, 4, 4]
+    const whole = glyphSamples(field, 'velocity', 4);
+    const half = glyphSamples(field, 'velocity', 4, [0, 0, 2, 2]);
+    const spacing = (glyphs: typeof whole) => {
+      const xs = [...new Set(glyphs.map((g) => Number(g.x.toFixed(6))))].sort((a, b) => a - b);
+      return xs[1]! - xs[0]!;
+    };
+    expect(spacing(half)).toBeCloseTo(spacing(whole) / 2, 6);
+  });
+
+  it('anchors the lattice to the domain, so arrows do not crawl while panning', () => {
+    // Two windows of the same size, one shifted by exactly one cell. Every arrow the
+    // shifted window shares with the first must sit at the same domain position — a
+    // lattice anchored to the *window* would slide them all by the pan distance.
+    const field = dense();
+    const a = glyphSamples(field, 'velocity', 4, [0, 0, 2, 2]);
+    const b = glyphSamples(field, 'velocity', 4, [0.5, 0, 2.5, 2]);
+    const shared = b.filter((g) => a.some((other) => Math.abs(other.x - g.x) < 1e-9));
+    expect(shared.length).toBeGreaterThan(0);
+    for (const glyph of shared) {
+      expect(a.some((other) => Math.abs(other.x - glyph.x) < 1e-9)).toBe(true);
+    }
+  });
+
+  it('caps the lattice so a density control cannot ask for an unbounded one', () => {
+    const field = uniform(1, 0);
+    const capped = glyphSamples(field, 'velocity', 1e6);
+    const atLimit = glyphSamples(field, 'velocity', MAX_GLYPHS_ACROSS);
+    expect(capped.length).toBe(atLimit.length);
+    expect(glyphSamples(field, 'velocity', 0)).toEqual([]);
+    expect(glyphSamples(field, 'velocity', -5)).toEqual([]);
+  });
+
+  it('ignores a window that does not meet the domain', () => {
+    expect(glyphSamples(uniform(1, 0), 'velocity', 4, [100, 100, 200, 200])).toEqual([]);
+  });
+});
+
+describe('realistic sizes', () => {
+  /** `n x n` nodes triangulated into 2(n-1)^2 elements over the unit square. */
+  function bigMesh(n: number): Mesh2DResult {
+    const points: [number, number][] = [];
+    const psi: number[] = [];
+    for (let iy = 0; iy < n; iy += 1) {
+      for (let ix = 0; ix < n; ix += 1) {
+        points.push([ix / (n - 1), iy / (n - 1)]);
+        psi.push(iy / (n - 1));
+      }
+    }
+    const triangles: [number, number, number][] = [];
+    for (let iy = 0; iy < n - 1; iy += 1) {
+      for (let ix = 0; ix < n - 1; ix += 1) {
+        const a = iy * n + ix;
+        triangles.push([a, a + 1, a + n + 1], [a, a + n + 1, a + n]);
+      }
+    }
+    return {
+      job_id: 'j-big',
+      kind: 'mesh2d',
+      data: { bounds: [0, 0, 1, 1], points, triangles, point_fields: { psi } },
+      stats: {},
+      artifacts: [],
+    };
+  }
+
+  it('probes a 20k-element mesh thousands of times without a linear scan', () => {
+    // A pointermove costs one point location, and the old implementation tested every
+    // triangle for every one of them. The budget here is deliberately loose — an order of
+    // magnitude above what the indexed version takes — because what it has to separate is
+    // "constant work per probe" from "20,000 barycentric tests per probe", and that gap is
+    // three orders of magnitude, not three percent.
+    const mesh = bigMesh(101);
+    expect(mesh.data.triangles).toHaveLength(20000);
+    const started = performance.now();
+    for (let i = 0; i < 2000; i += 1) {
+      const t = i / 2000;
+      expect(probe(mesh, 'psi', [t, t])).toBeCloseTo(t, 6);
+    }
+    expect(performance.now() - started).toBeLessThan(1500);
+  });
+
+  it('locates points, and reports nothing outside the mesh', () => {
+    const mesh = bigMesh(21);
+    expect(locate(mesh.data, [0.5, 0.5])).not.toBeNull();
+    expect(locate(mesh.data, [-1, 0.5])).toBeNull();
+    expect(locate(mesh.data, [0.5, 9])).toBeNull();
+  });
+
+  it('samples glyphs from a 175k-point grid, and faster when zoomed in', () => {
+    // 512 x 341 is the resolution the potential-flow adapters produce at their default.
+    const nx = 512;
+    const ny = 341;
+    const count = nx * ny;
+    const result: Grid2DResult = {
+      job_id: 'j-large',
+      kind: 'grid2d',
+      data: {
+        bounds: [-2, -1.5, 4, 1.5],
+        shape: [ny, nx],
+        fields: { speed: Array(count).fill(1) },
+        vector_fields: {
+          velocity: Array.from({ length: count }, () => [1, 0.2] as [number, number]),
+        },
+        mask: Array(count).fill(0),
+      },
+      stats: {},
+      artifacts: [],
+    };
+
+    const started = performance.now();
+    const whole = glyphSamples(result, 'velocity', 32);
+    const fullPass = performance.now() - started;
+    expect(whole.length).toBeGreaterThan(0);
+    expect(fullPass).toBeLessThan(500);
+
+    // Zoomed to a hundredth of the domain, the grid visits only the samples it can see.
+    const zoomedStart = performance.now();
+    const zoomed = glyphSamples(result, 'velocity', 32, [0.9, -0.15, 1.5, 0.15]);
+    expect(performance.now() - zoomedStart).toBeLessThanOrEqual(fullPass + 5);
+    expect(zoomed.length).toBeGreaterThan(0);
   });
 });

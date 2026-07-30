@@ -662,6 +662,27 @@ span the width — and **not** from the data's resolution: one arrow per grid po
 unreadable at 512×341 and sparse at 16×16, and the same field would look like a different
 physical situation at two mesh sizes.
 
+**Integrating them.** `<fs-viewer streamlines="velocity">` draws the curves tangent to the
+field. Note what the protocol does *not* say here: `vector_fields` is a map of names to
+component pairs, and nothing in it declares that `velocity` is a velocity — that an adapter
+chose the name is a convention, not a type. So the viewer's API calls the result **integral
+curves**, and it is the consumer application, which knows what it submitted, that gets to call
+them flow lines. A viewer cannot know whether it has drawn a streamline, a magnetic field line
+or a heat-flux path.
+
+The same distinction is why a scalar field is never turned into a vector one. A viewer *could*
+integrate the gradient of whatever scalar is selected and produce curves; they would look like
+physics and would not be it, because the relationship between a scalar and a flow is a
+modelling assumption this contract deliberately does not carry. **A result with no
+`vector_fields` has no curves**, and the tool is unavailable with a reason rather than falling
+back to something plausible — the same argument `Assumption.excludes` makes for `drag`.
+
+**Exploring them costs nothing on the wire.** Zoom, pan, probe, sections, glyph density, curve
+seeding and a pinned colour scale are all functions of the arrays above, computed in the page.
+No part of this contract describes presentation, and none of it needed to grow for the viewer
+to become explorable — see
+[ADR 0001](adr/0001-explorable-viewer.md).
+
 ## One-dimensional results
 
 *Added in protocol 1.5 ([#69](https://github.com/mandaloriat/fenix-spoon/issues/69)) — additive,

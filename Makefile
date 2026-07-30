@@ -7,12 +7,13 @@ CLIENTS ?= 25
 JOBS   ?= 2
 DATA_DIR ?= $(CURDIR)/.loadtest-data
 
-.PHONY: help test lint loadtest client-test docs docs-serve protocol-reference
+.PHONY: help test lint loadtest client-test client-browser-test docs docs-serve protocol-reference
 
 help:
 	@echo "test        run the Python test suite (add -m fenics where dolfinx is installed)"
 	@echo "lint        ruff over the server package"
 	@echo "client-test build and test the browser packages"
+	@echo "client-browser-test  drive the viewer's gestures in a real Chromium"
 	@echo "loadtest    start a server, run server/loadtest.py against it, stop it"
 	@echo "            variables: CLIENTS=$(CLIENTS) JOBS=$(JOBS) PORT=$(PORT)"
 	@echo "docs        build the documentation site into site/"
@@ -39,6 +40,13 @@ client-test:
 	npm --prefix client install
 	npm --prefix client run build
 	npm --prefix client run test --workspaces
+
+# The gesture suite, which needs a real browser. It skips itself with a message when there
+# is no Chromium on the machine rather than failing a run that never asked for one; set
+# FENIXSPOON_CHROMIUM to point it at a specific binary.
+client-browser-test:
+	npm --prefix client run build
+	npm --prefix client run test:browser --workspace @fenix-spoon/viewer
 
 # Starts a server on $(PORT), waits for it, runs the load test, then stops it — including
 # on failure, so a red run doesn't leave a process holding the port.
