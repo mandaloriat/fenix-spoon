@@ -6,14 +6,14 @@ draws every one of them, and wrong for every other caller: an agent reasoning ab
 answer, a CI check comparing against a baseline, a convergence script reading one number per
 run. This module separates *what happened* from *the arrays*.
 
-Five levels, requested independently:
+Six levels, requested independently:
 
 | Level | What it carries | Cost |
 |---|---|---|
 | `status` | terminal status, timing, error | tens of bytes |
 | `metrics` | the declared engineering scalars | hundreds of bytes |
 | `diagnostics` | `stats`, convergence, residual, warnings | hundreds of bytes |
-| `series` | the curves this solve produced | kilobytes — bounded, not a default |
+| `series` | the curves this solve produced | bounded, up to ~100 kB — not a default |
 | `fields` | the full arrays | megabytes — never a default |
 | `artifacts` | files by reference | reference only |
 

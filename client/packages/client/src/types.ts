@@ -405,18 +405,16 @@ export function isFieldResult(result: JobResult): result is FieldResult {
  * field: use `resultSeries` for those.
  */
 export function fieldValues(result: JobResult, name: string): number[] | undefined {
-  if (!isFieldResult(result)) return undefined;
-  return result.kind === 'grid2d'
-    ? result.data.fields[name]
-    : result.data.point_fields[name];
+  if (isGrid2D(result)) return result.data.fields[name];
+  if (isMesh2D(result)) return result.data.point_fields[name];
+  return undefined;
 }
 
 /** Names of the scalar fields carried by a result; empty for a `series1d`. */
 export function fieldNames(result: JobResult): string[] {
-  if (!isFieldResult(result)) return [];
-  return Object.keys(
-    result.kind === 'grid2d' ? result.data.fields : result.data.point_fields,
-  );
+  if (isGrid2D(result)) return Object.keys(result.data.fields);
+  if (isMesh2D(result)) return Object.keys(result.data.point_fields);
+  return [];
 }
 
 /** The abscissa a trace is drawn against: its own if it has one, else the series-level one. */

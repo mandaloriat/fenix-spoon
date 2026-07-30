@@ -207,7 +207,7 @@ class ResultEnvelope(BaseModel):
     @model_validator(mode="after")
     def _check_data(self) -> "ResultEnvelope":
         model = {"grid2d": Grid2DData, "mesh2d": Mesh2DData, "series1d": Series1DData}[self.kind]
-        model.model_validate(self.data)
+        payload = model.model_validate(self.data)
         # One home per result, not two. A `series1d` result's curves are in `data` because
         # `kind` selects the schema of `data` and that invariant is worth more than the
         # convenience of a single accessor; carrying them in both places would let the two
@@ -217,5 +217,9 @@ class ResultEnvelope(BaseModel):
                 "a series1d result carries its curves in `data`; `series` is for the curves "
                 "that accompany a field result"
             )
-        check_series(self.series)
+        # Both homes go through the same collective budget. Checking only `series` would have
+        # left the ceiling applying to the shape that carries curves *incidentally* and not to
+        # the one that is nothing but curves — where an adapter could have put thirty-two
+        # full-length traces and met every individual limit.
+        check_series([payload] if isinstance(payload, Series1DData) else self.series)
         return self

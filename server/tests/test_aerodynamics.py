@@ -23,6 +23,7 @@ figures in each docstring are what this implementation actually produces.
 
 import numpy as np
 import pytest
+from geometries import naca4
 
 from fenixspoon.geometry import Domain2D, Polygon2D
 from fenixspoon.solvers import aerodynamics as aero
@@ -30,36 +31,6 @@ from fenixspoon.solvers.base import SolverContext
 from fenixspoon.solvers.mock_laplace import MockLaplace2D
 
 # ------------------------------------------------------------------ geometry fixtures
-
-
-def naca4(camber: float = 0.0, position: float = 0.4, thickness: float = 0.12, n: int = 45):
-    """A NACA four-digit section, chord 1, leading edge at the origin.
-
-    Cosine-spaced so the leading edge is resolved, which is where the curvature is. Used rather
-    than an invented polygon because the quantities being checked — zero-lift angle,
-    quarter-chord moment — are *tabulated* for these sections, so the test has an external
-    answer to compare against instead of only an internal one.
-    """
-    station = 0.5 * (1 - np.cos(np.linspace(0, np.pi, n)))
-    half = (
-        5
-        * thickness
-        * (
-            0.2969 * np.sqrt(station)
-            - 0.1260 * station
-            - 0.3516 * station**2
-            + 0.2843 * station**3
-            - 0.1036 * station**4
-        )
-    )
-    mean = np.where(
-        station < position,
-        camber / position**2 * (2 * position * station - station**2),
-        camber / (1 - position) ** 2 * ((1 - 2 * position) + 2 * position * station - station**2),
-    )
-    upper = [(float(a), float(c + t)) for a, t, c in zip(station, half, mean, strict=True)]
-    lower = [(float(a), float(c - t)) for a, t, c in zip(station, half, mean, strict=True)]
-    return upper + lower[::-1][1:-1]
 
 
 def cylinder(radius: float, n: int = 240):
@@ -167,6 +138,32 @@ CYLINDER_GAMMA = 1.7
 """Circulation in the textbook (clockwise-positive) sense, which is `-Gamma_ccw`."""
 
 
+@pytest.fixture(scope="module")
+def lifting_cylinder():
+    """The exact flow plus everything derived from it, built once for the four tests below.
+
+    A module fixture rather than a call per test: the grid is 401x401, and four rebuilds of it
+    (plus four surface walks over the same 382 faces) is most of this file's runtime for no
+    additional coverage.
+    """
+    x, y, psi, speed, mask = exact_cylinder()
+    profile = horizontal_chord(cylinder(CYLINDER_RADIUS))
+    surface = aero.body_surface(mask, x, y)
+    cp = aero.pressure_coefficient(surface.sample(speed), CYLINDER_SPEED)
+    return {
+        "x": x,
+        "y": y,
+        "psi": psi,
+        "mask": mask,
+        "profile": profile,
+        "surface": surface,
+        "cp": cp,
+        "loads": aero.surface_loads(surface, cp, profile, alpha_deg=0.0),
+        # c_l = Gamma / (U a) exactly, for a cylinder of "chord" 2a.
+        "exact_c_l": CYLINDER_GAMMA / (CYLINDER_SPEED * CYLINDER_RADIUS),
+    }
+
+
 def exact_cylinder(resolution: int = 401, half_width: float = 3.0):
     """The closed-form lifting-cylinder flow, on a grid, with no solver involved.
 
@@ -196,7 +193,9 @@ def exact_cylinder(resolution: int = 401, half_width: float = 3.0):
     )
 
 
-def test_circulation_matches_the_exact_cylinder_and_does_not_depend_on_the_contour():
+def test_circulation_matches_the_exact_cylinder_and_does_not_depend_on_the_contour(
+    lifting_cylinder,
+):
     """Two properties in one, and the second is the cheaper check.
 
     `Gamma_ccw` is the same on every contour enclosing the body — the difference between two of
@@ -204,7 +203,8 @@ def test_circulation_matches_the_exact_cylinder_and_does_not_depend_on_the_conto
     and getting the same number is an internal consistency check that needs no exact solution,
     and the exact solution then pins the sign as well as the size. Measured error here is 0.006%.
     """
-    x, y, psi, _, mask = exact_cylinder()
+    case = lifting_cylinder
+    x, y, psi, mask = case["x"], case["y"], case["psi"], case["mask"]
     close = aero.circulation(psi, x, y, mask)
     far = aero.circulation(psi, x, y, mask, margin=40)
     assert close == pytest.approx(-CYLINDER_GAMMA, rel=2e-4)
@@ -214,44 +214,30 @@ def test_circulation_matches_the_exact_cylinder_and_does_not_depend_on_the_conto
     assert close < 0
 
 
-def test_lift_from_circulation_and_from_surface_pressure_agree_on_a_cylinder():
+def test_lift_from_circulation_and_from_surface_pressure_agree_on_a_cylinder(lifting_cylinder):
     """Kutta-Joukowski against an independent integral of the surface pressure.
 
     This is the per-run self-check `analyse` performs, run here where the answer is known:
     `c_l = Gamma / (U a)` exactly. Kutta-Joukowski lands within 0.01%; the surface integral
     within 2.5%, which is the staircase, and is why `c_l` is reported from the first route.
     """
-    x, y, psi, speed, mask = exact_cylinder()
-    profile = horizontal_chord(cylinder(CYLINDER_RADIUS))
-    exact = CYLINDER_GAMMA / (CYLINDER_SPEED * CYLINDER_RADIUS)
-
-    gamma = aero.circulation(psi, x, y, mask)
-    from_circulation = -2.0 * gamma / (CYLINDER_SPEED * profile.chord)
-    assert from_circulation == pytest.approx(exact, rel=1e-3)
-
-    surface = aero.body_surface(mask, x, y)
-    cp = aero.pressure_coefficient(surface.sample(speed), CYLINDER_SPEED)
-    loads = aero.surface_loads(surface, cp, profile, alpha_deg=0.0)
-    assert loads.c_l == pytest.approx(exact, rel=0.05)
+    case = lifting_cylinder
+    gamma = aero.circulation(case["psi"], case["x"], case["y"], case["mask"])
+    from_circulation = -2.0 * gamma / (CYLINDER_SPEED * case["profile"].chord)
+    assert from_circulation == pytest.approx(case["exact_c_l"], rel=1e-3)
+    assert case["loads"].c_l == pytest.approx(case["exact_c_l"], rel=0.05)
 
 
-def test_potential_flow_has_no_drag_and_the_integral_shows_it():
+def test_potential_flow_has_no_drag_and_the_integral_shows_it(lifting_cylinder):
     """d'Alembert's paradox is an identity of the model, not a numerical result — which is
     exactly why the `inviscid` assumption lists `drag` under `excludes` rather than letting a
     caller integrate the pressure and believe the answer."""
-    x, y, psi, speed, mask = exact_cylinder()
-    profile = horizontal_chord(cylinder(CYLINDER_RADIUS))
-    surface = aero.body_surface(mask, x, y)
-    cp = aero.pressure_coefficient(surface.sample(speed), CYLINDER_SPEED)
-    loads = aero.surface_loads(surface, cp, profile, alpha_deg=0.0)
-    assert loads.c_d == pytest.approx(0.0, abs=1e-9)
+    assert lifting_cylinder["loads"].c_d == pytest.approx(0.0, abs=1e-9)
 
 
-def test_the_surface_pressure_matches_the_exact_cylinder_distribution():
+def test_the_surface_pressure_matches_the_exact_cylinder_distribution(lifting_cylinder):
     """``C_p(th) = 1 - (2 sin th + Gamma / 2 pi a U)^2`` at every face of the staircase."""
-    x, y, _, speed, mask = exact_cylinder()
-    surface = aero.body_surface(mask, x, y)
-    cp = aero.pressure_coefficient(surface.sample(speed), CYLINDER_SPEED)
+    surface, cp = lifting_cylinder["surface"], lifting_cylinder["cp"]
     angle = np.arctan2(surface.at[:, 1], surface.at[:, 0])
     expected = 1 - (
         2 * np.sin(angle)
@@ -264,15 +250,10 @@ def test_the_surface_pressure_matches_the_exact_cylinder_distribution():
     assert cp.max() == pytest.approx(1.0, abs=0.02), "the stagnation point must reach C_p = 1"
 
 
-def test_the_centre_of_pressure_of_a_lifting_cylinder_is_its_centre():
+def test_the_centre_of_pressure_of_a_lifting_cylinder_is_its_centre(lifting_cylinder):
     """A cylinder's resultant acts through the axis, which is mid-chord in chord fractions —
     and it is a check on the moment as well, since `x_cp` is derived from `c_m_c4`."""
-    x, y, _, speed, mask = exact_cylinder()
-    profile = horizontal_chord(cylinder(CYLINDER_RADIUS))
-    surface = aero.body_surface(mask, x, y)
-    cp = aero.pressure_coefficient(surface.sample(speed), CYLINDER_SPEED)
-    loads = aero.surface_loads(surface, cp, profile, alpha_deg=0.0)
-    assert aero.centre_of_pressure(loads) == pytest.approx(0.5, abs=0.01)
+    assert aero.centre_of_pressure(lifting_cylinder["loads"]) == pytest.approx(0.5, abs=0.01)
 
 
 def test_a_body_with_no_resultant_has_no_centre_of_pressure_rather_than_a_large_one():

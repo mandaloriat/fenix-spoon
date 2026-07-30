@@ -107,7 +107,11 @@ export class FieldViewerElement extends HTMLElement {
    * says so, rather than throwing or drawing a one-pixel picture of a curve — the axes, legend
    * and inverted-y convention a `C_p` plot needs belong to a separate widget.
    */
-  get result(): JobResult | null {
+  get result(): FieldResult | null {
+    // Deliberately narrower than the setter accepts. The setter takes any `JobResult`,
+    // because a custom-element property is reachable from untyped JS and plain HTML; by the
+    // time a value is stored it is known to be a field result, and saying so here saves every
+    // reader re-narrowing a union the setter has already made impossible.
     return this.#result;
   }
 

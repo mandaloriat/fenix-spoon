@@ -211,7 +211,8 @@
               "c_l",
               "circulation"
             ],
-            "when": "!kutta"
+            "when": "kutta",
+            "when_value": false
           },
           {
             "name": "two_dimensional",

@@ -37,11 +37,12 @@ magnitude and a phase, and that is what gets plotted — two curves with differe
 different axes. A complex scalar type would need every consumer to decide which of the two it
 was drawing anyway, and JSON has no complex number.
 
-**Length is bounded, at three levels.** :data:`MAX_SERIES_POINTS` per trace,
-:data:`MAX_SERIES_TRACES` per collection, and :data:`MAX_SERIES_TOTAL_POINTS` across a whole
-result — the last because the first two multiply out to far more than either intends. Together
-they are what stops a "curve" being used to smuggle a full field into a payload that promises
-not to carry one. A few thousand points is already more than a plot can resolve.
+**Length is bounded, at four levels.** :data:`MAX_SERIES_POINTS` per trace,
+:data:`MAX_SERIES_TRACES` per curve set, :data:`MAX_SERIES_PER_RESULT` curve sets, and
+:data:`MAX_SERIES_TOTAL_POINTS` across a whole result — the last because the others multiply
+out to far more than any of them intends. Together they are what stops a "curve" being used to
+smuggle a full field into a payload that promises not to carry one. A few thousand points is
+already more than a plot can resolve.
 """
 
 from pydantic import BaseModel, Field, model_validator
@@ -59,10 +60,15 @@ from pydantic import BaseModel, Field, model_validator
 #: none. Asking for the curve costs a level name on the same request, not a second one.
 MAX_SERIES_POINTS = 4096
 
-#: Ceiling on how many traces one :class:`Series1DData` may hold, and on how many curve sets
-#: a single result may carry. Bounded for the same reason as the point count: thirty-two
-#: traces of four thousand points is a field, however small each one is on its own.
+#: Ceiling on how many traces one :class:`Series1DData` may hold.
 MAX_SERIES_TRACES = 32
+
+#: Ceiling on how many curve sets one result may carry.
+#:
+#: A separate constant from :data:`MAX_SERIES_TRACES` even though the two happen to be equal:
+#: they bound different dimensions, and one name for both means neither can be moved without
+#: silently moving the other — and an error message about the wrong one.
+MAX_SERIES_PER_RESULT = 32
 
 #: Ceiling on the total points across every trace of every series on one result.
 #:
@@ -70,6 +76,12 @@ MAX_SERIES_TRACES = 32
 #: is the gap an adapter would fall through — thirty-two legal traces of four thousand legal
 #: points is a field. This is the number that actually closes it, and it is an order of
 #: magnitude below the field it must not become.
+#:
+#: Applied by :func:`check_series` to *both* homes a result's curves can occupy: the `series`
+#: list beside a field, and the lone :class:`Series1DData` that is a `series1d` payload. The
+#: first version of this module only reached the former, so a `series1d` result could carry
+#: thirty-two full-length traces and no validator would object — the budget was documented as
+#: covering "a whole result" and covered one of the two shapes a result comes in.
 MAX_SERIES_TOTAL_POINTS = 8192
 
 
@@ -181,18 +193,23 @@ class Series1DData(BaseModel):
 
 
 def check_series(series: list[Series1DData]) -> None:
-    """Validate a result's whole `series` list: unique names, and a total-size ceiling.
+    """Validate everything a result's curves have to satisfy *collectively*.
 
-    The per-series models bound one curve set; this bounds the collection. Without it a
-    result could carry any number of legal series and still be the field arrays under
-    another name, which is the one thing :data:`MAX_SERIES_POINTS` exists to prevent.
+    The per-series models bound one curve set; this bounds the collection — unique names, a
+    count, and a total point budget. Without the last one a result could carry any number of
+    individually legal series and still be the field arrays under another name, which is the
+    one thing the ceilings exist to prevent.
+
+    Called for both homes a result's curves can occupy, which is why it takes a plain list: a
+    `series1d` payload passes a one-element list so that its total is bounded by the same
+    number as a field result's `series`.
     """
     names = [entry.name for entry in series]
     if len(names) != len(set(names)):
         raise ValueError(f"a result names a series twice: {names}")
-    if len(series) > MAX_SERIES_TRACES:
+    if len(series) > MAX_SERIES_PER_RESULT:
         raise ValueError(
-            f"a result carries {len(series)} series, over the {MAX_SERIES_TRACES} allowed"
+            f"a result carries {len(series)} series, over the {MAX_SERIES_PER_RESULT} allowed"
         )
     points = sum(len(trace.values) for entry in series for trace in entry.traces)
     if points > MAX_SERIES_TOTAL_POINTS:
@@ -203,7 +220,27 @@ def check_series(series: list[Series1DData]) -> None:
         )
 
 
+def curves_of(kind: str, data: dict, series: list[Series1DData]) -> list[Series1DData]:
+    """A result's curves, from whichever of the two places its `kind` puts them.
+
+    The wire has two homes — `data` for a `series1d`, the `series` list beside a field — and one
+    invariant, that `kind` selects the schema of `data`. Everything *downstream* of the envelope
+    wants neither: a compact level, a store column and a client accessor all want "the curves".
+    This is that accessor, and :func:`~fenixspoon.protocol.ResultEnvelope` is what guarantees
+    only one of the two is ever populated, so there is nothing here to reconcile.
+
+    Without it the `series` level answered `[]` for a `series1d` result — the one kind that is
+    nothing but curves — because it read the sibling key the envelope guarantees is empty there.
+    Nothing failed, because no shipped adapter emits `series1d` yet; the first one to would have
+    found a compact-results hole rather than CI finding it.
+    """
+    if kind != "series1d":
+        return list(series)
+    return [Series1DData.model_validate(data)]
+
+
 __all__ = [
+    "MAX_SERIES_PER_RESULT",
     "MAX_SERIES_POINTS",
     "MAX_SERIES_TOTAL_POINTS",
     "MAX_SERIES_TRACES",
@@ -211,4 +248,5 @@ __all__ = [
     "SeriesAxis",
     "SeriesTrace",
     "check_series",
+    "curves_of",
 ]

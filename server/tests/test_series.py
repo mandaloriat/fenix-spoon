@@ -17,6 +17,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
+from fenixspoon.core.results import build
 from fenixspoon.protocol import ResultEnvelope
 from fenixspoon.series import (
     MAX_SERIES_POINTS,
@@ -26,8 +27,10 @@ from fenixspoon.series import (
     SeriesAxis,
     SeriesTrace,
     check_series,
+    curves_of,
 )
 from fenixspoon.solvers.base import SolverResult
+from fenixspoon.store import JobRecord
 
 
 def axis(n: int, name: str = "x/c") -> SeriesAxis:
@@ -147,6 +150,19 @@ GRID = {
     "mask": [0, 0, 0, 0],
 }
 
+#: A surface distribution: two traces, sampled differently, so each carries its own abscissa.
+SURFACE = Series1DData(
+    name="surface_cp",
+    traces=[trace(5, "cp_upper", x=axis(5)), trace(9, "cp_lower", x=axis(9))],
+)
+
+#: A sweep: several traces against one shared abscissa.
+SWEEP = Series1DData(
+    name="lift_curve",
+    x=SeriesAxis(name="alpha", unit="deg", values=[-2.0, 0.0, 2.0]),
+    traces=[SeriesTrace(name="c_l", unit="1", values=[-0.24, 0.0, 0.24])],
+)
+
 
 def test_a_field_result_may_carry_curves_beside_its_field():
     """One solve, two questions. The airfoil adapters produce the flow field *and* the surface
@@ -193,3 +209,57 @@ def test_the_envelope_ceilings_apply_to_a_payload_from_the_wire():
     }
     with pytest.raises(ValidationError, match="names a series twice"):
         ResultEnvelope.model_validate(json.loads(json.dumps(body)))
+
+
+# ------------------------------------------------- the compact level, for both homes
+
+
+def test_the_series_level_finds_curves_in_either_home():
+    """`curves_of` is the accessor everything downstream of the envelope uses.
+
+    The wire deliberately has two homes for curves and one invariant about `kind`. Every
+    *consumer* — the compact level, the store column, the SDK — wants neither of those, it wants
+    "the curves", and reading the sibling key directly meant the `series` level answered `[]` for
+    a `series1d` result: the one kind that is nothing but curves. Nothing failed, because no
+    shipped adapter emits one yet, which is exactly why this is a test and not a bug report.
+    """
+    field_result = curves_of("grid2d", GRID, [SURFACE])
+    assert [entry.name for entry in field_result] == ["surface_cp"]
+    assert curves_of("mesh2d", {}, []) == []
+
+    # The case that was silently empty: curves in `data`, because `kind` selects `data`.
+    curve_result = curves_of("series1d", SWEEP.model_dump(), [])
+    assert [entry.name for entry in curve_result] == ["lift_curve"]
+    assert curve_result[0].traces[0].values == SWEEP.traces[0].values
+
+
+def test_a_series1d_result_reaches_the_compact_level_through_the_store(tmp_path):
+    """End to end, through the summary a store builds — the path a real `series1d` adapter takes.
+
+    Asserted through `JobRecord.summarize()` rather than a live solve because no shipped adapter
+    emits `series1d`; this is the seam that would have been wrong for the first one that did.
+    """
+    record = JobRecord(
+        id="j-1",
+        solver="future.sweep",
+        status="done",
+        result=SolverResult(kind="series1d", data=SWEEP.model_dump()),
+    )
+    summary = record.summarize()
+    assert summary is not None
+    assert [entry.name for entry in summary.series] == ["lift_curve"]
+
+    built = build(
+        job_id="j-1",
+        solver="future.sweep",
+        status="done",
+        error=None,
+        created_at="2026-07-30T09:00:00+00:00",
+        finished_at="2026-07-30T09:00:01+00:00",
+        summary=summary,
+        artifacts=[],
+        data=None,
+        levels=("series",),
+    )
+    assert built.series is not None
+    assert [entry.name for entry in built.series] == ["lift_curve"]

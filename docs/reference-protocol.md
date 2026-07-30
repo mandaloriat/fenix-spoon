@@ -488,7 +488,8 @@ A modelling assumption in force, and where it stops applying (issue #70).
 | `limit` | `float \| null` | no | `None` | Value of `quantity` at which the assumption fails. Null when there is no single number, which is most of them. |
 | `comparator` | `'<' \| '<=' \| '>' \| '>=' \| null` | no | `None` | Which side of `limit` is valid: `<` means the assumption holds while `quantity` is below it. Null exactly when `limit` is null. |
 | `excludes` | `list[str]` | no | `[]` | Quantities this assumption puts out of reach entirely — `drag` for an inviscid model. A caller asking for one of these should be told no, not given a zero. |
-| `when` | `str \| null` | no | `None` | Boolean param that puts this assumption in force, `!name` for one that puts it in force by being false. Null — the usual case — means it always applies. |
+| `when` | `str \| null` | no | `None` | Name of the boolean param that puts this assumption in force. Null — the usual case — means it always applies. Read `when_value` for which setting arms it. |
+| `when_value` | `bool` | no | `True` | The value of `when` that puts this assumption in force. `false` is how an assumption in force when a feature is *disabled* is declared. Ignored when `when` is null. |
 
 ## `ArtifactSpec`
 

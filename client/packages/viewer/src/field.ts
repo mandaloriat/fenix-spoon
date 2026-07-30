@@ -12,7 +12,13 @@
  * this one, and the compiler is the right place to say so.
  */
 
-import type { FieldResult, Grid2DData, Mesh2DData } from '@fenix-spoon/client';
+import {
+  type FieldResult,
+  type Grid2DData,
+  type Mesh2DData,
+  fieldNames,
+  fieldValues,
+} from '@fenix-spoon/client';
 
 export type Point = [number, number];
 export type Segment = [Point, Point];
@@ -21,17 +27,12 @@ export function resultBounds(result: FieldResult): [number, number, number, numb
   return result.data.bounds;
 }
 
-export function resultFieldNames(result: FieldResult): string[] {
-  return Object.keys(
-    result.kind === 'grid2d' ? result.data.fields : result.data.point_fields,
-  );
-}
-
-export function resultFieldValues(result: FieldResult, field: string): number[] | undefined {
-  return result.kind === 'grid2d'
-    ? result.data.fields[field]
-    : result.data.point_fields[field];
-}
+// Delegated rather than reimplemented. These were a byte-for-byte copy of the client
+// package's pair, and this widget already imports values from it — so the copy bought
+// nothing and cost a lockstep edit every time the result kinds change, which protocol 1.4
+// duly demanded. Re-exported under the `result*` names the rest of this module uses.
+export const resultFieldNames = fieldNames;
+export const resultFieldValues = fieldValues;
 
 export function resultMask(result: FieldResult): number[] | undefined {
   return result.kind === 'grid2d' ? result.data.mask : undefined;

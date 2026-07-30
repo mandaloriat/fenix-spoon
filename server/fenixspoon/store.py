@@ -32,7 +32,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .series import Series1DData
+from .series import Series1DData, curves_of
 from .solvers.base import SolverResult
 
 
@@ -111,9 +111,18 @@ class JobRecord:
                 converged=self.result.converged,
                 residual=self.result.residual,
                 warnings=list(self.result.warnings),
-                series=list(self.result.series),
+                # `curves_of`, not `result.series`: a `series1d` adapter puts its curves in
+                # `data`, and this column is what the compact `series` level reads. Storing them
+                # here duplicates them for that one kind — `result.json` has the same bytes — and
+                # that is the price of the level costing a row read instead of a payload read.
+                series=curves_of(self.result.kind, self.result.data, self.result.series),
             )
         return self.summary
+
+
+def _without_series(summary: "ResultSummary | None") -> "ResultSummary | None":
+    """A summary with its curves removed, for a listing that will not report them."""
+    return None if summary is None else replace(summary, series=[])
 
 
 class JobStore(ABC):
@@ -252,6 +261,11 @@ class MemoryJobStore(JobStore):
         # `artifacts` is copied for the same reason as in `get()`: `replace` copies the
         # dataclass, not the lists inside it, and `Job.from_record` hands this list straight
         # to a live `Job` — so a caller appending to it would rewrite the stored record.
+        #
+        # `series` is dropped to match the SQLite store, which does not parse the column for a
+        # listing. Nothing is saved by withholding it here — the objects are already in memory —
+        # but a backend-dependent answer to "does a history page carry curves?" is worse than
+        # either answer, and this interface exists so the two are interchangeable.
         return [
             replace(
                 r,
@@ -259,7 +273,7 @@ class MemoryJobStore(JobStore):
                 events=[],
                 artifacts=list(r.artifacts),
                 inputs=dict(r.inputs),
-                summary=r.summarize(),
+                summary=_without_series(r.summarize()),
             )
             for r in ordered[offset : offset + limit]
         ]
@@ -470,12 +484,24 @@ class SqliteJobStore(JobStore):
         return seq
 
     def _record(
-        self, row: sqlite3.Row, events: list[dict[str, Any]], *, with_result: bool = True
+        self,
+        row: sqlite3.Row,
+        events: list[dict[str, Any]],
+        *,
+        with_result: bool = True,
+        with_series: bool = True,
     ) -> JobRecord:
         stored_diagnostics = json.loads(row["diagnostics"] or "{}")
-        stored_series = [
-            Series1DData.model_validate(entry) for entry in json.loads(row["series"] or "[]")
-        ]
+        # `with_series` exists for the same reason `with_result` does: the expensive parts of a
+        # record are rarely the parts a caller wants. Curves are the one summary field that is
+        # not a handful of scalars — a surface distribution is tens of kilobytes of JSON and a
+        # few hundred pydantic models — so parsing them for every row of a history page that
+        # discards the result costs ~0.3 ms a row against ~2 us for the diagnostics beside it.
+        stored_series = (
+            [Series1DData.model_validate(entry) for entry in json.loads(row["series"] or "[]")]
+            if with_series
+            else []
+        )
         result = None
         if row["result_kind"] and with_result:
             path = self._result_path(row["id"])
@@ -554,7 +580,9 @@ class SqliteJobStore(JobStore):
                 "LIMIT ? OFFSET ?",
                 (*params, limit, offset),
             ).fetchall()
-        return [self._record(row, [], with_result=False) for row in rows]
+        # No series either: a listing is `JobStatus` per row — id, solver, status, timestamps —
+        # and nothing downstream of here can reach a curve.
+        return [self._record(row, [], with_result=False, with_series=False) for row in rows]
 
     def count(self, owner: str | None = None) -> int:
         where, params = ("WHERE owner = ?", [owner]) if owner is not None else ("", [])

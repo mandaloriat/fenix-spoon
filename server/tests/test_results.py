@@ -194,13 +194,26 @@ def test_the_series_level_costs_a_row_read_not_the_field_payload(core, me):
     )
 
 
-def test_curves_survive_a_round_trip_through_the_store(core, me):
-    job = solve(core, me)
-    original = core.result_levels(job.id, me, ["series"]).series
-    reread = core.result_levels(job.id, me, ["series"]).series
-    assert original == reread
-    trace = original[0].traces[0]
-    assert trace.unit == "1" and trace.x.name == "x/c"
+def test_curves_survive_a_round_trip_through_a_reopened_store(tmp_path, me):
+    """A curve is JSON in a column, so it has to come back as the model it went in as.
+
+    Reopening the database is what makes this a round trip: two reads from one live store share
+    the same parsed objects and would agree even if the column were never written. This asserts
+    against a second `FenixSpoonCore` over the same directory — the restart case the durability
+    contract promises.
+    """
+    first = FenixSpoonCore(JobManager(data_dir=tmp_path / "jobs"))
+    job = solve(first, me)
+    before = first.result_levels(job.id, me, ["series"]).series
+    first.jobs.store.close()
+
+    reopened = FenixSpoonCore(JobManager(data_dir=tmp_path / "jobs"))
+    after = reopened.result_levels(job.id, me, ["series"]).series
+    assert after == before, "curves did not survive the database being reopened"
+
+    trace = after[0].traces[0]
+    assert trace.unit == "1" and trace.x is not None and trace.x.name == "x/c"
+    assert len(trace.values) == len(trace.x.values)
 
 
 def test_an_unknown_level_is_refused_not_ignored(core, me):

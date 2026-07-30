@@ -16,6 +16,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 from geometries import SOLENOID
+from pydantic import ValidationError
 
 from fenixspoon.core import FenixSpoonCore, discovery, errors
 from fenixspoon.core.discovery import SECTIONS, schema_ref
@@ -25,7 +26,7 @@ from fenixspoon.jobs import JobManager
 from fenixspoon.main import create_app
 from fenixspoon.protocol import PROTOCOL_VERSION
 from fenixspoon.solvers import registered_solvers
-from fenixspoon.solvers.base import Solver
+from fenixspoon.solvers.base import MetricSpec, Solver
 
 AIRFOIL = Domain2D(
     bounds=(-1.0, -1.0, 2.0, 1.0),
@@ -370,27 +371,31 @@ def test_every_declared_metric_comes_back_from_a_real_solve(core, me, solver):
         )
 
 
-def test_a_boundary_metric_names_no_field_and_a_field_metric_names_no_boundary():
-    """The two are alternatives, not a pair. A metric is a reduction of a field *or* an integral
-    over a boundary; declaring both would leave `fill_declared_metrics` with two recipes and no
-    rule for choosing, and declaring neither is the honest "the adapter works this out"."""
-    for cls in registered_solvers():
-        for metric in cls.metrics:
-            assert not (metric.field and metric.boundary), (
-                f"{cls.name} metric {metric.name!r} declares both a field and a boundary"
-            )
+def test_a_metric_names_exactly_one_route_to_its_value():
+    """A metric is a reduction of a field, or an integral over a boundary, or the adapter's own
+    arithmetic — one of the three, never a mixture and never half of one.
 
+    Asserted against the **constructor** rather than by walking `registered_solvers()`. The two
+    tests this replaces did the latter, which made them tautologies the moment the rule became a
+    validator, and bound the four adapters in this repository when the declaration system exists
+    for adapters it does not contain. The invariant also guards shared machinery:
+    `fill_declared_metrics` branches on `field`/`reduction` and knows nothing about `boundary`,
+    so a spec setting both would quietly compute the reduction and shadow the boundary integral.
+    """
+    # The three legal shapes.
+    MetricSpec(name="t_max", unit="K", description="…", field="T", reduction="max")
+    MetricSpec(name="c_l", unit="1", description="…", boundary="body")
+    MetricSpec(name="t_rise", unit="K", description="…")
 
-def test_a_metric_declares_a_reduction_exactly_when_it_declares_a_field():
-    """The two travel together: a field with no reduction cannot be evaluated, and a
-    reduction with no field has nothing to reduce. Either alone is a half-declaration
-    #46 would have to guess at."""
-    for cls in registered_solvers():
-        for metric in cls.metrics:
-            assert (metric.field is None) == (metric.reduction is None), (
-                f"{cls.name} metric {metric.name!r}: field={metric.field!r} "
-                f"reduction={metric.reduction!r}"
-            )
+    with pytest.raises(ValidationError, match="cannot be evaluated"):
+        MetricSpec(name="half", unit="K", description="…", field="T")
+    with pytest.raises(ValidationError, match="nothing to reduce"):
+        MetricSpec(name="half", unit="K", description="…", reduction="max")
+    with pytest.raises(ValidationError, match="not both"):
+        MetricSpec(
+            name="both", unit="1", description="…",
+            field="T", reduction="max", boundary="body",
+        )
 
 
 def test_metric_names_are_unique_within_a_capability():
@@ -509,7 +514,7 @@ def test_a_conditional_assumption_names_a_boolean_parameter_that_exists():
         for assumption in cls.assumptions:
             if assumption.when is None:
                 continue
-            name = assumption.when.removeprefix("!")
+            name = assumption.when
             assert name in schema, (
                 f"{cls.name} assumption {assumption.name!r} is conditional on {name!r}, "
                 f"which is not a parameter: {sorted(schema)}"

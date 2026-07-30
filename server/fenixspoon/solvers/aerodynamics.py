@@ -56,8 +56,8 @@ below is the Kutta–Joukowski value and the pressure integral is used to *check
 independent routes to the same number, and a disagreement is reported rather than averaged.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
 
 import numpy as np
 
@@ -87,6 +87,26 @@ CONTOUR_MARGIN = 3
 LIFT_AGREEMENT_TOLERANCE = 0.25
 
 
+#: The metrics that exist only because a circulation was determined.
+#:
+#: Single-sourced because this list had been written out in four places — two adapters'
+#: warnings, :func:`describe_unavailable`, and the `no_circulation` assumption's `excludes` —
+#: so the fifth aerodynamic quantity anyone adds had to be found in all of them.
+LIFT_METRICS: tuple[str, ...] = ("circulation", "c_l", "c_m_c4", "x_cp")
+
+#: Said on every run that turns the Kutta condition off, not merely declared in `assumptions`.
+#:
+#: A caller who reached that mode by accident is exactly the caller who has not read the
+#: capability declaration, and a zero lift with no explanation beside it is the failure #68 was
+#: filed about. Lives here rather than in each adapter because it was byte-identical in both.
+NO_CIRCULATION_WARNING = (
+    "no Kutta condition was imposed (`kutta` is false), so the circulation is an artefact of "
+    "where the body's streamline was fixed and lift is not a physical result. "
+    + ", ".join(f"`{name}`" for name in LIFT_METRICS[:-1])
+    + f" and `{LIFT_METRICS[-1]}` are therefore absent."
+)
+
+
 class AerodynamicsUnavailable(ValueError):
     """The body or the grid cannot support this post-processing, with prose saying why.
 
@@ -94,6 +114,36 @@ class AerodynamicsUnavailable(ValueError):
     search is exactly the *"wrong-looking-but-correct"* zero #68 was filed about, and repeating
     it under a new name would be the whole point missed.
     """
+
+
+def velocity_on_grid(
+    psi: np.ndarray, x: np.ndarray, y: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """``(u, v)`` from a streamfunction on a regular grid: ``u = dpsi/dy``, ``v = -dpsi/dx``.
+
+    Lives here, beside the docstring that derives the sign convention the rest of this module
+    rests on, because it had been written out three times — the mock adapter's field, this
+    module's contour integral, and the FEniCSx adapter's sampled speed. Those are precisely the
+    quantities whose agreement :func:`analyse` uses as a per-run self-check, so a minus sign
+    fixed in one of three places would have made the check compare two different conventions.
+    """
+    return (
+        np.gradient(psi, y[1] - y[0], axis=0),
+        -np.gradient(psi, x[1] - x[0], axis=1),
+    )
+
+
+def speed_on_grid(
+    psi: np.ndarray, x: np.ndarray, y: np.ndarray, mask: np.ndarray
+) -> np.ndarray:
+    """``|grad psi|`` on a regular grid, zeroed inside the body.
+
+    Zeroed rather than left as a stale gradient for the reason the adapters already documented
+    about their vector fields: there is no flow inside the obstacle, and a leftover value there
+    draws arrows into the body and poisons a reduction over the field.
+    """
+    u, v = velocity_on_grid(psi, x, y)
+    return np.where(mask, 0.0, np.hypot(u, v))
 
 
 def _unit(vector: np.ndarray) -> np.ndarray:
@@ -189,12 +239,6 @@ def profile_of(points) -> Profile:
     return Profile(points=pts, te_index=te_index, le_index=le_index)
 
 
-def free_stream(u_inf: float, alpha_deg: float) -> np.ndarray:
-    """Free-stream velocity vector for a speed and an incidence in degrees."""
-    alpha = np.radians(alpha_deg)
-    return np.array([u_inf * np.cos(alpha), u_inf * np.sin(alpha)])
-
-
 def far_field_psi(xx: np.ndarray, yy: np.ndarray, u_inf: float, alpha_deg: float) -> np.ndarray:
     """The uniform-stream streamfunction at incidence: ``U (y cos a - x sin a)``.
 
@@ -207,6 +251,18 @@ def far_field_psi(xx: np.ndarray, yy: np.ndarray, u_inf: float, alpha_deg: float
 
 
 # ------------------------------------------------------------------- the Kutta condition
+
+
+def centroid_body_value(points, u_inf: float, alpha_deg: float) -> float:
+    """The free-stream streamfunction through a body's centroid.
+
+    What both adapters held the body at before #68, and what they still fall back to when there
+    is no Kutta condition to do better — as a shared function because it is the same formula and
+    the same caveat in both, and the caveat is the point: this is a *choice*, it sets the
+    circulation, and nothing about it is physical.
+    """
+    centre = np.asarray(points, dtype=float).mean(axis=0)
+    return float(far_field_psi(centre[0], centre[1], u_inf, alpha_deg))
 
 
 def probe_points(profile: Profile, offset: float) -> tuple[np.ndarray, np.ndarray]:
@@ -308,54 +364,53 @@ class GridField:
         )
 
 
-@dataclass(frozen=True)
-class KuttaSolution:
-    """What the trailing-edge condition determined, and where it was evaluated."""
-
-    body_value: float
-    """``lam``: the streamfunction on the body, and hence the circulation."""
-
-    offset: float
-    """Distance from the trailing edge at which the probes landed."""
-
-    probes: tuple[np.ndarray, np.ndarray]
+#: How a caller hands this module a way to read a solution at a point.
+#:
+#: ``None`` means "not evaluable there" — outside the domain, inside the body, or in a cell the
+#: solver did not solve. Returning it rather than a filler value is what lets
+#: :func:`resolve_kutta` grow its probe distance instead of quietly differencing a placeholder.
+Sampler = Callable[[float, float], float | None]
 
 
 def resolve_kutta(
     profile: Profile,
-    psi_a: GridField,
-    psi_gamma: GridField,
+    stream: Sampler,
+    circulatory: Sampler,
     *,
+    step: float,
     growth: float = 1.5,
     attempts: int = 10,
-) -> KuttaSolution:
-    """Place the trailing-edge probes on this grid and solve for the body value.
+) -> float:
+    """Place the trailing-edge probes and solve for the body streamfunction value.
 
-    The probe distance is *searched* rather than chosen. It wants to be as small as possible —
-    the condition is a statement about the trailing edge itself — and it has to be large
-    enough that both probes sit in a cell whose four corners were all solved, which on a
-    staircase approximation of a thin trailing edge can take a couple of cells. Starting small
-    and growing gives the tightest offset this grid can support, and the alternative — a fixed
-    fraction of chord — is either needlessly loose on a fine grid or fails on a coarse one.
+    Takes two **samplers** rather than two grids, because the Kutta condition needs exactly two
+    point evaluations per basis solution and nothing else. That is what lets each adapter answer
+    from its own representation — :meth:`GridField.at` interpolates a raster, and the FEniCSx
+    adapter evaluates its P1 solution on the triangulation directly. The first version of this
+    function took grids, which forced the FEniCSx adapter to resolve a **Dirichlet value of the
+    field it returns** by Cartesian interpolation: `mesh_size` alone could not converge `c_l`,
+    and the trailing edge — the one place an unstructured mesh is decisively better — was the
+    one place the grid was consulted.
+
+    ``step`` seeds the probe distance in the units of whatever resolves the geometry: a grid
+    spacing, or a target element size. The distance is then *searched* rather than fixed. It
+    wants to be as small as possible — the condition is a statement about the trailing edge
+    itself — and large enough that both probes land somewhere the solution can be read, which
+    near a thin trailing edge can take a couple of cells. A fixed fraction of chord would be
+    needlessly loose on a fine discretisation and would fail on a coarse one.
     """
-    step = max(psi_a.x[1] - psi_a.x[0], psi_a.y[1] - psi_a.y[0])
     offset = 1.25 * float(step)
     for _ in range(attempts):
         first, second = probe_points(profile, offset)
-        samples = [
-            (field.at(*first), field.at(*second)) for field in (psi_a, psi_gamma)
-        ]
-        if all(value is not None for pair in samples for value in pair):
-            return KuttaSolution(
-                body_value=kutta_body_value(samples[0], samples[1]),  # type: ignore[arg-type]
-                offset=offset,
-                probes=(first, second),
-            )
+        readings = [(sample(*first), sample(*second)) for sample in (stream, circulatory)]
+        if all(value is not None for pair in readings for value in pair):
+            (stream_pair, circulatory_pair) = readings
+            return kutta_body_value(stream_pair, circulatory_pair)  # type: ignore[arg-type]
         offset *= growth
     raise AerodynamicsUnavailable(
-        f"no trailing-edge probe distance between {1.25 * step:.3g} and {offset:.3g} put both "
-        f"probes in fully-solved cells; the body is too small for this grid, or too close to "
-        f"the domain edge. Raise `resolution`."
+        f"no trailing-edge probe distance between {1.25 * step:.3g} and {offset:.3g} let both "
+        f"probes be evaluated; the body is too small for this discretisation, or too close to "
+        f"the domain edge. Refine it, or enlarge the domain."
     )
 
 
@@ -415,8 +470,7 @@ def circulation(
             "contour. Enlarge the domain bounds or raise `resolution`."
         )
 
-    u = np.gradient(psi, y[1] - y[0], axis=0)
-    v = -np.gradient(psi, x[1] - x[0], axis=1)
+    u, v = velocity_on_grid(psi, x, y)
     xs = x[left : right + 1]
     ys = y[bottom : top + 1]
     # Counter-clockwise: downstream along the bottom, up the right side, back along the top,
@@ -563,10 +617,10 @@ def surface_loads(
     chord = profile.chord
     weighted = np.asarray(cp, dtype=float) * surface.length
     # Pressure pushes *inward*, along -n: the force on the body is -∮ p n ds.
-    force = -(weighted[:, None] * surface.normal).sum(axis=0) / chord
+    per_face = -(weighted[:, None] * surface.normal)
+    force = per_face.sum(axis=0) / chord
 
     lever = surface.at - profile.quarter_chord
-    per_face = -(weighted[:, None] * surface.normal)
     # Right-hand moment about +z, then negated: nose-up is a *clockwise* rotation with x aft
     # and y up, and nose-up is what the aerodynamic convention calls positive.
     moment_z = float(
@@ -740,33 +794,40 @@ def describe_unavailable(exc: AerodynamicsUnavailable) -> str:
     therefore missing. The alternative is the metrics quietly not being in the payload, which
     is the shape of problem #68 exists to close.
     """
+    named = ", ".join(f"`{name}`" for name in LIFT_METRICS[:-1])
     return (
-        f"no circulation could be determined, so `circulation`, `c_l`, `c_m_c4` and `x_cp` "
-        f"are absent from this result: {exc}"
+        f"no circulation could be determined, so {named} and `{LIFT_METRICS[-1]}` are absent "
+        f"from this result: {exc}"
     )
 
 
-__all__: list[Any] = [
+__all__ = [
     "Aerodynamics",
     "AerodynamicsUnavailable",
     "BodySurface",
     "GridField",
-    "KuttaSolution",
+    "LIFT_METRICS",
     "MAX_SURFACE_SAMPLES",
+    "NO_CIRCULATION_WARNING",
     "Profile",
+    "Sampler",
     "SurfaceLoads",
     "analyse",
+    "CONTOUR_MARGIN",
+    "LIFT_AGREEMENT_TOLERANCE",
     "body_surface",
     "centre_of_pressure",
+    "centroid_body_value",
     "circulation",
     "describe_unavailable",
     "far_field_psi",
-    "free_stream",
     "kutta_body_value",
     "pressure_coefficient",
     "probe_points",
     "profile_of",
     "resolve_kutta",
+    "speed_on_grid",
     "surface_cp_series",
     "surface_loads",
+    "velocity_on_grid",
 ]

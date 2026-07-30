@@ -126,7 +126,12 @@ def _cp_min(speed_max: float, u_inf: float) -> dict[str, float]:
     the coefficient is normalised by the dynamic pressure, and there is none — so it is
     omitted rather than reported as an infinity a caller would have to special-case.
     """
-    return {"cp_min": 1.0 - (speed_max / u_inf) ** 2} if u_inf else {}
+    if not u_inf:
+        return {}
+    # The formula itself comes from `aerodynamics`, so the declared metric and the surface
+    # distribution beside it cannot end up with two definitions of one coefficient. The
+    # zero-free-stream *policy* stays different: a missing metric is fine, a failed curve is not.
+    return {"cp_min": float(aero.pressure_coefficient(np.array(speed_max), u_inf))}
 
 
 class _Clock:
@@ -143,6 +148,10 @@ class _Clock:
         self._every = every
         self.total = total
         self.done = 0
+
+    def check_cancelled(self) -> None:
+        """Cooperative cancellation, so a relaxation needs the clock and not also the context."""
+        self._ctx.check_cancelled()
 
     def tick(self, residual: float, stage: str, *, final: bool = False) -> None:
         self.done += 1
@@ -262,8 +271,7 @@ class MockLaplace2D(Solver):
         edges: np.ndarray,
         body_value: float,
         mask: np.ndarray,
-        params: "MockLaplace2D.Params",
-        ctx: SolverContext,
+        iterations: int,
         clock: _Clock,
         stage: str,
     ) -> tuple[np.ndarray, float]:
@@ -278,8 +286,8 @@ class MockLaplace2D(Solver):
         psi = np.asarray(edges, dtype=np.float64).copy()
         psi[mask] = body_value
         residual = float("inf")
-        for sweep in range(1, params.iterations + 1):
-            ctx.check_cancelled()
+        for sweep in range(1, iterations + 1):
+            clock.check_cancelled()
             new = psi.copy()
             new[1:-1, 1:-1] = 0.25 * (
                 psi[1:-1, :-2] + psi[1:-1, 2:] + psi[:-2, 1:-1] + psi[2:, 1:-1]
@@ -288,7 +296,7 @@ class MockLaplace2D(Solver):
             residual = float(np.max(np.abs(new - psi)))
             psi = new
             settled = residual < 1e-9
-            clock.tick(residual, stage, final=settled or sweep == params.iterations)
+            clock.tick(residual, stage, final=settled or sweep == iterations)
             if settled:
                 break
         return psi, residual
@@ -312,18 +320,17 @@ class MockLaplace2D(Solver):
 
         stream = aero.far_field_psi(xx, yy, params.u_inf, params.alpha)
         clock = _Clock(ctx, params.report_every, params.iterations * (2 if params.kutta else 1))
-        # The streamline through the obstacle's centroid: what this adapter used to hold the
-        # body at, and still does when there is no Kutta condition to do better.
-        centroid = pts.mean(axis=0)
-        heuristic = float(
-            aero.far_field_psi(centroid[0], centroid[1], params.u_inf, params.alpha)
-        )
+        heuristic = aero.centroid_body_value(pts, params.u_inf, params.alpha)
 
+        # `profile` is the resolved geometry; `kutta_ok` is whether the condition could be
+        # imposed. Two facts, so two names — the first version reset `profile` to None on
+        # failure purely to make a guard twenty lines later skip, which coupled them invisibly.
         profile: aero.Profile | None = None
+        kutta_ok = False
         aero_warnings: list[str] = []
         if not params.kutta:
             psi, residual = self._relax(
-                stream, heuristic, mask, params, ctx, clock, "relaxing the streamfunction"
+                stream, heuristic, mask, params.iterations, clock, "relaxing the streamfunction"
             )
         else:
             # The superposition #68 is built on: `psi_a` is the free stream with the body held
@@ -333,10 +340,10 @@ class MockLaplace2D(Solver):
             # trailing edge can determine — and the condition that determines it is linear, so
             # there is no iteration on top.
             psi_a, residual_a = self._relax(
-                stream, 0.0, mask, params, ctx, clock, "relaxing the free-stream mode"
+                stream, 0.0, mask, params.iterations, clock, "relaxing the free-stream mode"
             )
             psi_gamma, residual_g = self._relax(
-                np.zeros_like(stream), 1.0, mask, params, ctx, clock,
+                np.zeros_like(stream), 1.0, mask, params.iterations, clock,
                 "relaxing the circulatory mode",
             )
             residual = max(residual_a, residual_g)
@@ -345,25 +352,23 @@ class MockLaplace2D(Solver):
                 profile = aero.profile_of(pts)
                 body_value = aero.resolve_kutta(
                     profile,
-                    aero.GridField(x=x, y=y, values=psi_a, mask=mask),
-                    aero.GridField(x=x, y=y, values=psi_gamma, mask=mask),
-                ).body_value
+                    aero.GridField(x=x, y=y, values=psi_a, mask=mask).at,
+                    aero.GridField(x=x, y=y, values=psi_gamma, mask=mask).at,
+                    step=max(x[1] - x[0], y[1] - y[0]),
+                )
+                kutta_ok = True
             except aero.AerodynamicsUnavailable as exc:
                 # The field is still a valid potential flow — only the *choice* of circulation
                 # failed — so the job succeeds with the heuristic body value and a warning
                 # naming what is missing. Failing the whole solve would throw away a usable
                 # flow field over a post-processing step.
-                profile = None
                 aero_warnings.append(aero.describe_unavailable(exc))
             psi = psi_a + body_value * psi_gamma
 
-        # Velocity magnitude from psi: u = d(psi)/dy, v = -d(psi)/dx.
-        dy_ = y[1] - y[0]
-        dx_ = x[1] - x[0]
-        u = np.gradient(psi, dy_, axis=0)
-        v = -np.gradient(psi, dx_, axis=1)
-        speed = np.sqrt(u**2 + v**2)
-        speed[mask] = 0.0
+        # Velocity from psi: u = d(psi)/dy, v = -d(psi)/dx. The convention lives in
+        # `aerodynamics`, beside the derivation the circulation sign depends on.
+        u, v = aero.velocity_on_grid(psi, x, y)
+        speed = np.where(mask, 0.0, np.hypot(u, v))
         # The velocity itself, not just its magnitude. Direction is the whole reason to
         # look at a flow field, and until protocol 1.1 there was nowhere to put it — the
         # result kinds carried scalars only, so this adapter computed `u` and `v` and threw
@@ -376,7 +381,7 @@ class MockLaplace2D(Solver):
         # The aerodynamic post-processing reads the *combined* field, so it has to come after
         # the superposition rather than beside the solves that make it up.
         aerodynamics: aero.Aerodynamics | None = None
-        if profile is not None:
+        if kutta_ok and profile is not None:
             try:
                 aerodynamics = aero.analyse(
                     profile=profile,
@@ -398,22 +403,14 @@ class MockLaplace2D(Solver):
 
         stats = {"cells": float(nx * ny), "iterations": float(clock.done)}
         converged = residual < 1e-9
-        warnings = list(aero_warnings)
+        warnings = aero_warnings
         if not converged:
             warnings.append(
                 f"stopped at the iteration cap ({params.iterations} sweeps per solve) with "
                 f"residual {residual:.3g}; raise `iterations` for a converged field"
             )
         if not params.kutta:
-            # Said on every run rather than left to the capability declaration. A caller that
-            # reached this mode by accident is exactly the caller who will not have read the
-            # `assumptions` section, and a zero lift with no explanation beside it is the
-            # failure #68 was filed about.
-            warnings.append(
-                "no Kutta condition was imposed (`kutta` is false), so the circulation is an "
-                "artefact of where the body's streamline was fixed and lift is not a physical "
-                "result. `circulation`, `c_l`, `c_m_c4` and `x_cp` are therefore absent."
-            )
+            warnings.append(aero.NO_CIRCULATION_WARNING)
         common = {
             "stats": stats,
             "metrics": {

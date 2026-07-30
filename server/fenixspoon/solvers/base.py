@@ -46,7 +46,9 @@ class ProgressEvent(BaseModel):
 class SolverResult(BaseModel):
     """Result envelope. ``kind`` selects the schema of ``data`` (see docs/04-wire-protocol.md)."""
 
-    kind: str = Field(description='Result schema selector: `"grid2d"` or `"mesh2d"`.')
+    kind: str = Field(
+        description='Result schema selector: `"grid2d"`, `"mesh2d"` or `"series1d"`.'
+    )
     data: dict[str, Any] = Field(description="The field data, shaped according to `kind`.")
     stats: dict[str, float] = {}
     """What the solve actually cost: ``cells``, ``dofs``, and whatever else the adapter
@@ -95,7 +97,8 @@ class SolverResult(BaseModel):
         # Enforced at construction, inside the adapter, rather than only on the wire: the
         # collection-level ceiling is the thing standing between "a curve" and "the field
         # arrays under another key", and an adapter should learn it wrote too much where it
-        # wrote it.
+        # wrote it. A `series1d` adapter puts its curves in `data`, which is an untyped dict
+        # here, so that shape is bounded by the envelope rather than by this model.
         check_series(self.series)
         return self
 
@@ -133,6 +136,12 @@ class MetricSpec(BaseModel):
         default=None,
         description="How `field` becomes a scalar. Null exactly when `field` is null.",
     )
+    # Added by #68. Lift, moment and centre of pressure are integrals over the *body surface*,
+    # not over the domain, so before this they could only be declared with `field` null —
+    # honest, but indistinguishable from an arbitrary derived ratio and outside the reach of
+    # `test_declared_metrics_reduce_a_field_the_solver_emits`. Boundary integrals recur rather
+    # than being a one-off: lift and moment here, gap force in magnetostatics, reaction forces
+    # in elasticity, wall heat flux in conduction.
     boundary: str | None = Field(
         default=None,
         description=(
@@ -141,16 +150,33 @@ class MetricSpec(BaseModel):
             "Mutually exclusive with `field`: a quantity is one or the other."
         ),
     )
-    """Named boundary this metric integrates over (protocol 1.4, issue #68).
 
-    Lift, moment and centre of pressure are integrals over the **body surface**, not over the
-    domain, so before this they could only be declared with `field` null — honest, but
-    indistinguishable from an arbitrary derived ratio, and outside the reach of
-    ``test_declared_metrics_reduce_a_field_the_solver_emits``. Boundary integrals are a
-    recurring shape rather than a one-off: lift and moment here, gap force in magnetostatics,
-    reaction forces in elasticity, wall heat flux in conduction. Naming the boundary is what
-    lets a caller tell "the solver integrates this over the body" from "the solver worked this
-    out somehow", and lets a test insist the adapter actually returns it."""
+    @model_validator(mode="after")
+    def _check_recipe(self) -> "MetricSpec":
+        """A metric names one route to its value, never two and never half of one.
+
+        Enforced in the constructor rather than by a test over ``registered_solvers()``, for
+        the same reason :meth:`SolverResult._check_series` is: the declaration system exists
+        for adapters this repository does not contain, and a test that iterates the installed
+        set binds four of them and nothing else. It also guards shared machinery —
+        :func:`fill_declared_metrics` branches on ``field``/``reduction`` and knows nothing
+        about ``boundary``, so a spec setting both would quietly compute the reduction and
+        shadow the boundary integral, which is exactly the ambiguity naming the boundary was
+        supposed to remove.
+        """
+        if (self.field is None) != (self.reduction is None):
+            raise ValueError(
+                f"metric {self.name!r} declares field={self.field!r} with "
+                f"reduction={self.reduction!r}: a field with no reduction cannot be evaluated, "
+                f"and a reduction with no field has nothing to reduce"
+            )
+        if self.field is not None and self.boundary is not None:
+            raise ValueError(
+                f"metric {self.name!r} declares both a field ({self.field!r}) and a boundary "
+                f"({self.boundary!r}); a quantity is a reduction of a field or an integral "
+                f"over a boundary, not both"
+            )
+        return self
 
 
 class Assumption(BaseModel):
@@ -211,10 +237,28 @@ class Assumption(BaseModel):
     when: str | None = Field(
         default=None,
         description=(
-            "Boolean param that puts this assumption in force, `!name` for one that puts it "
-            "in force by being false. Null — the usual case — means it always applies."
+            "Name of the boolean param that puts this assumption in force. Null — the usual "
+            "case — means it always applies. Read `when_value` for which setting arms it."
         ),
     )
+    when_value: bool = Field(
+        default=True,
+        description=(
+            "The value of `when` that puts this assumption in force. `false` is how an "
+            "assumption in force when a feature is *disabled* is declared. Ignored when "
+            "`when` is null."
+        ),
+    )
+    """Which setting of ``when`` arms this assumption.
+
+    A second field rather than a sigil inside ``when``. The first version of this model spelled
+    it ``when="!kutta"``, which read fine and was the wrong depth twice over: this class had
+    already decided three fields down that machine-readable conditions get *structure*
+    (``quantity``/``limit``/``comparator``), and :class:`ArtifactSpec` has carried a ``when``
+    of its own since #43 whose grammar is a bare parameter name. Two sibling models exposing
+    one field name with two grammars is a consumer reading either and mis-parsing the other.
+    With the value in a field of its own, ``when`` means the same thing in both — and
+    ``ArtifactSpec``'s implicit "must be true" is just this field's default."""
 
     def applies(self, params: dict[str, Any] | None = None) -> bool:
         """Whether this assumption is in force for a given parameter set.
@@ -229,10 +273,7 @@ class Assumption(BaseModel):
         """
         if self.when is None:
             return True
-        negated = self.when.startswith("!")
-        name = self.when[1:] if negated else self.when
-        value = bool((params or {}).get(name))
-        return value != negated
+        return bool((params or {}).get(self.when)) is self.when_value
 
 
 class ArtifactSpec(BaseModel):

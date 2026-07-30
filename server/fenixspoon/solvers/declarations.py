@@ -119,9 +119,9 @@ POTENTIAL_FLOW_METRICS = [
 #:
 #: `kutta_condition` and `no_circulation` are the two halves of the same switch, declared
 #: separately because a caller filters on names and "the circulation is a modelling choice"
-#: reads very differently from "there is none". Both carry `when`, so a caller can see which
-#: applies to the run it is about to submit — and a caller that has not chosen yet sees both,
-#: which is the honest answer to "what might this assume".
+#: reads very differently from "there is none". Both carry `when` and `when_value`, so a caller
+#: can see which applies to the run it is about to submit — and one that has not chosen yet sees
+#: both, which is the honest answer to "what might this assume".
 POTENTIAL_FLOW_ASSUMPTIONS = [
     Assumption(
         name="incompressible",
@@ -171,7 +171,8 @@ POTENTIAL_FLOW_ASSUMPTIONS = [
             "Use it to look at the flow field, never to read a lift coefficient."
         ),
         excludes=["lift", "c_l", "circulation", "c_m_c4", "x_cp"],
-        when="!kutta",
+        when="kutta",
+        when_value=False,
     ),
     TWO_DIMENSIONAL,
 ]

@@ -261,7 +261,8 @@ and which previously existed only as prose inside `description`, if at all:
      "excludes": ["drag", "c_d", "skin_friction", "stall", "alpha_stall", "separation"]},
     {"name": "no_circulation",
      "statement": "With `kutta` false the streamfunction is set to an arbitrary constant on the body ...",
-     "excludes": ["lift", "c_l", "circulation", "c_m_c4", "x_cp"], "when": "!kutta"},
+     "excludes": ["lift", "c_l", "circulation", "c_m_c4", "x_cp"],
+     "when": "kutta", "when_value": false},
     {"name": "two_dimensional", "statement": "A cross-section of a body infinitely long in z ...",
      "excludes": ["end_effects", "span_efficiency", "three_dimensional_flow"]}
   ]
@@ -283,8 +284,10 @@ and was unusable, being prose inside a metric. The per-run half — "this run ha
 the 0.3 limit" — is a *diagnostic* and belongs with `warnings`; declaring the limit here is what
 lets such a warning name the assumption it violated instead of restating it.
 
-**`when` marks a conditional assumption**, as a parameter name, or `!name` for one in force when
-that parameter is false. Almost all assumptions are unconditional and omit it. The one that is
+**`when` marks a conditional assumption** by naming a boolean parameter, and `when_value` says
+which setting of it arms the assumption. Almost all assumptions are unconditional and omit both.
+(`when` is a bare parameter name in `ArtifactSpec` too, and means the same thing there — that
+consistency is why the value lives in a field of its own rather than in a `!` prefix.) The one that is
 not is worth the field: run `mock.laplace2d` with `kutta` false and there genuinely is no
 circulation, so `c_l` is genuinely absent — and a caller reading the section before it has chosen
 its parameters sees both `kutta_condition` and `no_circulation`, which is the honest answer to
