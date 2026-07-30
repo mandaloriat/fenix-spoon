@@ -221,7 +221,16 @@ class DolfinxMagnetostatics2D(Solver):
             "cells": float(msh.topology.index_map(msh.topology.dim).size_local),
             "dofs": float(V.dofmap.index_map.size_local),
         }
-        return SolverResult(kind="mesh2d", data=data, stats=stats)
+        # `b_max` and `a_max` are declared reductions; the runtime fills both.
+        return SolverResult(
+            kind="mesh2d",
+            data=data,
+            stats=stats,
+            # A direct LU factorisation does not iterate toward a tolerance, so
+            # `converged` is True by construction and there is no residual to report.
+            # Saying so beats leaving both null, which reads as "nobody checked".
+            converged=True,
+        )
 
 
 def _nodal_material(points, triangles, msh, cell_tags, geometry: Regions2D) -> np.ndarray:

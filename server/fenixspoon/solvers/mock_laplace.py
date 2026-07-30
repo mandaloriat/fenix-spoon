@@ -109,6 +109,17 @@ def write_vtk_structured_points(
             np.savetxt(f, values.ravel(), fmt="%.9g")
 
 
+def _cp_min(speed_max: float, u_inf: float) -> dict[str, float]:
+    """Minimum pressure coefficient from the peak speed, as declared in `POTENTIAL_FLOW_METRICS`.
+
+    Not a field reduction, which is why the adapter computes it rather than the generic path:
+    it needs `u_inf`, and a parameter is not in the result. Undefined at zero free stream —
+    the coefficient is normalised by the dynamic pressure, and there is none — so it is
+    omitted rather than reported as an infinity a caller would have to special-case.
+    """
+    return {"cp_min": 1.0 - (speed_max / u_inf) ** 2} if u_inf else {}
+
+
 @register
 class MockLaplace2D(Solver):
     name = "mock.laplace2d"
@@ -219,10 +230,25 @@ class MockLaplace2D(Solver):
             )
 
         stats = {"cells": float(nx * ny), "iterations": float(it)}
+        converged = residual < 1e-9
+        common = {
+            "stats": stats,
+            "metrics": _cp_min(float(speed[~mask].max(initial=0.0)), params.u_inf),
+            "converged": converged,
+            "residual": residual,
+            "warnings": (
+                []
+                if converged
+                else [
+                    f"stopped at the iteration cap ({params.iterations}) with residual "
+                    f"{residual:.3g}; raise `iterations` for a converged field"
+                ]
+            ),
+        }
         if params.output == "mesh2d":
             return SolverResult(
                 kind="mesh2d",
-                stats=stats,
+                **common,
                 data={
                     "bounds": [xmin, ymin, xmax, ymax],
                     **grid_to_mesh2d(
@@ -233,7 +259,7 @@ class MockLaplace2D(Solver):
 
         return SolverResult(
             kind="grid2d",
-            stats=stats,
+            **common,
             data={
                 "bounds": [xmin, ymin, xmax, ymax],
                 "shape": [ny, nx],

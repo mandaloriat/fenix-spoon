@@ -238,7 +238,11 @@ def test_result_metadata_without_its_payload_is_not_a_crash(data_dir):
         assert client.get(f"/api/v1/jobs/{job_id}").json()["status"] == "done"
         assert client.get("/api/v1/jobs").json()["total"] == 1
         # The result itself is genuinely gone, and says so rather than serving nothing.
-        assert client.get(f"/api/v1/jobs/{job_id}/result").status_code == 409
+        # This was a `409` until protocol 1.3: the underlying error was `JobNotFinished`
+        # with a status of `done`, which is self-contradictory and told a caller to keep
+        # polling something that had already finished. `410 Gone` is the honest code — the
+        # job is there, only its arrays are not.
+        assert client.get(f"/api/v1/jobs/{job_id}/result").status_code == 410
 
 
 @pytest.mark.parametrize("store_factory", ["memory", "sqlite"])

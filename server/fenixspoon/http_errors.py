@@ -30,12 +30,19 @@ STATUS: dict[type[errors.CoreError], int] = {
     errors.WrongObjectType: 422,
     errors.InvalidObject: 422,
     errors.InvalidPatch: 422,
+    errors.UnknownLevel: 422,
+    errors.FieldQueryFailed: 422,
+    errors.RegionUnavailable: 422,
     errors.JobAlreadyFinished: 409,
     errors.JobNotFinished: 409,
     errors.JobDidNotSucceed: 409,
     errors.PatchChangedNothing: 409,
     errors.CannotPatchRevision: 409,
     errors.QuotaExceeded: 429,
+    # The job succeeded and its arrays have since been removed. `410` rather than `404`
+    # because the job itself is very much there — only the payload is gone, and the
+    # compact levels still answer for it.
+    errors.ResultPayloadMissing: 410,
 }
 
 # The workspace errors above have no route behind them yet: issue #44 is core-only, and the

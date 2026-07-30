@@ -29,6 +29,7 @@ from ..geometry import Domain2D
 from ._gmsh import gmsh_session
 from .base import CapabilityExample, ProgressEvent, Solver, SolverContext, SolverResult
 from .declarations import POTENTIAL_FLOW_METRICS, VTK_ARTIFACT
+from .mock_laplace import _cp_min
 from .registry import register
 
 # Equilateral triangles of side h tile an area A with 2A/h^2 of them, but that is a
@@ -217,7 +218,18 @@ class DolfinxPotentialFlow2D(Solver):
             "cells": float(msh.topology.index_map(msh.topology.dim).size_local),
             "dofs": float(V.dofmap.index_map.size_local),
         }
-        return SolverResult(kind=params.output, data=data, stats=stats)
+        speed_key = "fields" if params.output == "grid2d" else "point_fields"
+        peak_speed = max(data[speed_key]["speed"], default=0.0)
+        return SolverResult(
+            kind=params.output,
+            data=data,
+            stats=stats,
+            metrics=_cp_min(float(peak_speed), params.u_inf),
+            # A direct LU factorisation does not iterate toward a tolerance, so
+            # `converged` is True by construction and there is no residual to report.
+            # Saying so beats leaving both null, which reads as "nobody checked".
+            converged=True,
+        )
 
 
 def _p1_mesh_data(V, psi_h):

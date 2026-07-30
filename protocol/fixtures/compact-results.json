@@ -1,0 +1,133 @@
+{
+  "$comment": "Conformance cases for the compact result payload (`GET /api/v1/jobs/{id}/summary`), added by protocol 1.3 with issue #46. Validated against fenixspoon.core.results.LeveledResult by server/tests/test_protocol_fixtures.py. Like the discovery corpora, not read by the JS SDK's conformance suite: the browser SDK types the *full* envelope, which is what a viewer needs, and the levels serve local callers. The invariant these cases exist to pin is that an unrequested level is absent rather than null, and that no compact level ever carries a full numeric array.",
+  "valid": [
+    {
+      "name": "the default answer",
+      "$comment": "Everything except `fields`. This is the payload the acceptance criterion sizes: under a kilobyte, no array longer than a handful.",
+      "payload": {
+        "job_id": "j-2c4f9a1b7e30",
+        "solver": "mock.heat2d",
+        "status": {
+          "status": "done",
+          "error": null,
+          "created_at": "2026-07-30T09:12:44.120000+00:00",
+          "finished_at": "2026-07-30T09:12:46.880000+00:00",
+          "seconds": 2.76
+        },
+        "metrics": { "t_max": 68.4, "t_rise": 48.4, "flux_max": 121500.0 },
+        "diagnostics": {
+          "stats": { "cells": 25600.0, "solid_cells": 6144.0, "iterations": 3000.0, "seconds": 2.76 },
+          "converged": true,
+          "residual": 8.4e-10,
+          "warnings": []
+        },
+        "artifacts": [
+          {
+            "name": "solution.vtk",
+            "content_type": "model/vnd.vtk",
+            "size": 1244160,
+            "path": "/var/lib/fenixspoon/j-2c4f9a1b7e30/solution.vtk"
+          }
+        ]
+      }
+    },
+    {
+      "name": "one level only",
+      "$comment": "`levels=metrics` answers with metrics and the identity, and nothing else. Absent, not null — the difference between a compact answer and a compact-looking one.",
+      "payload": {
+        "job_id": "j-2c4f9a1b7e30",
+        "solver": "mock.heat2d",
+        "metrics": { "t_max": 68.4, "t_rise": 48.4 }
+      }
+    },
+    {
+      "name": "a capability that declares no metrics",
+      "$comment": "An empty map, not a missing level: the caller asked, and the honest answer is that this capability reports none.",
+      "payload": { "job_id": "j-1", "solver": "third_party.thing", "metrics": {} }
+    },
+    {
+      "name": "a solve that did not converge",
+      "$comment": "The three fields `stats` could never hold: a flag, and a warning string. `stats` is typed dict[str, float].",
+      "payload": {
+        "job_id": "j-1",
+        "solver": "mock.laplace2d",
+        "diagnostics": {
+          "stats": { "cells": 6144.0, "iterations": 400.0 },
+          "converged": false,
+          "residual": 0.0013,
+          "warnings": ["stopped at the iteration cap (400) with residual 0.0013"]
+        }
+      }
+    },
+    {
+      "name": "a direct solve, where convergence does not apply",
+      "$comment": "`converged` true with a null residual: an LU factorisation does not iterate toward a tolerance, and saying so beats leaving both null, which reads as 'nobody checked'.",
+      "payload": {
+        "job_id": "j-1",
+        "solver": "dolfinx.heat2d",
+        "diagnostics": {
+          "stats": { "cells": 41230.0, "dofs": 21015.0 },
+          "converged": true,
+          "residual": null,
+          "warnings": []
+        }
+      }
+    },
+    {
+      "name": "fields requested explicitly",
+      "$comment": "The one level measured in megabytes, and the only way to get it from this route is to name it.",
+      "payload": {
+        "job_id": "j-1",
+        "solver": "mock.laplace2d",
+        "fields": {
+          "kind": "grid2d",
+          "data": {
+            "bounds": [0.0, 0.0, 1.0, 1.0],
+            "shape": [2, 2],
+            "fields": { "psi": [0.0, 0.0, 1.0, 1.0] },
+            "mask": [0, 0, 0, 0]
+          }
+        }
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "no job_id",
+      "reason": "Identity is always present, at every level selection, so an answer can be recognised without correlating it back to the request that produced it.",
+      "payload": { "solver": "mock.laplace2d", "metrics": { "speed_max": 1.4 } }
+    },
+    {
+      "name": "no solver",
+      "reason": "Which capability produced a number is part of what the number means; two adapters for the same physics can differ by more than their names.",
+      "payload": { "job_id": "j-1", "metrics": { "speed_max": 1.4 } }
+    },
+    {
+      "name": "diagnostics without stats",
+      "reason": "`stats` is the level's core — the diagnostics level was grown out of it rather than opened beside it, so a diagnostics object without it is describing something else.",
+      "payload": {
+        "job_id": "j-1",
+        "solver": "mock.laplace2d",
+        "diagnostics": { "converged": true, "warnings": [] }
+      }
+    },
+    {
+      "name": "a metric that is not a number",
+      "reason": "Metrics are scalars. A string here would be a diagnostic or a warning wearing a metric's name, and a caller comparing runs would have to type-check every value.",
+      "payload": {
+        "job_id": "j-1",
+        "solver": "mock.heat2d",
+        "metrics": { "t_max": "hot" }
+      }
+    },
+    {
+      "name": "an artifact inlined instead of referenced",
+      "reason": "The artifacts level is references only — name, type, size, where it is. Bytes in this payload would defeat the level's entire purpose.",
+      "payload": {
+        "job_id": "j-1",
+        "solver": "mock.laplace2d",
+        "artifacts": [{ "name": "solution.vtk", "content_type": "model/vnd.vtk", "size": 12 }]
+      }
+    }
+  ]
+}

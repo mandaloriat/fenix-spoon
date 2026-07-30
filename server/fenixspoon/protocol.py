@@ -28,7 +28,7 @@ from .solvers.base import ProgressEvent  # noqa: F401  (re-export for consumers)
 #: repeating it on each event and result would be per-message overhead for something one
 #: call answers — see `GET /api/v1/version`, and `docs/04-wire-protocol.md` for the
 #: reasoning and the bump procedure.
-PROTOCOL_VERSION = "1.2"
+PROTOCOL_VERSION = "1.3"
 
 
 class ProtocolVersion(BaseModel):
@@ -161,6 +161,23 @@ class ResultEnvelope(BaseModel):
         description=(
             "What the solve cost — `cells`, `dofs`, `iterations`, `seconds`. Keys are "
             "server-defined and all optional: display them, never branch on one existing."
+        ),
+    )
+    metrics: dict[str, float] = Field(
+        default={},
+        description=(
+            "The engineering answer: the scalars this capability declared, keyed by the "
+            "names `GET /capabilities/{name}?sections=metrics` reports. Added in protocol "
+            "1.3. Distinct from `stats`, which is what the solve *cost* — `t_max` and "
+            "`t_rise` moved here from `stats` in 1.3 for exactly that reason."
+        ),
+    )
+    diagnostics: dict[str, Any] = Field(
+        default={},
+        description=(
+            "How the solve went: `converged`, `residual`, `warnings`. Added in protocol "
+            "1.3, because `stats` is typed `dict[str, float]` and a flag or a warning "
+            "string had nowhere to go in it."
         ),
     )
     artifacts: list[ArtifactRef] = Field(

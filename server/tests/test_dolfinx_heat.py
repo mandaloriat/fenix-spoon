@@ -20,7 +20,7 @@ from geometries import rect  # noqa: E402
 
 from fenixspoon.geometry import Region2D, Regions2D  # noqa: E402
 from fenixspoon.solvers import get_solver  # noqa: E402
-from fenixspoon.solvers.base import SolverContext  # noqa: E402
+from fenixspoon.solvers.base import SolverContext, fill_declared_metrics  # noqa: E402
 from fenixspoon.solvers.dolfinx_heat import DolfinxHeat2D  # noqa: E402
 from fenixspoon.solvers.mock_heat import MockHeat2D  # noqa: E402
 
@@ -60,7 +60,11 @@ def solve(geometry, tmp_path, **params):
     # write_vtk off by default: none of these assert on the artifact, and a FEM run per
     # test writing a file it never reads is pure I/O. `test_vtk_artifact` opts back in.
     settings = {"write_vtk": False, **params}
-    return DolfinxHeat2D().solve(geometry, DolfinxHeat2D.Params(**settings), make_ctx(tmp_path))
+    result = DolfinxHeat2D().solve(geometry, DolfinxHeat2D.Params(**settings), make_ctx(tmp_path))
+    # The runtime's generic metric fill, which a direct `solve()` call does not get. See
+    # the same helper in test_mock_heat.py.
+    fill_declared_metrics(DolfinxHeat2D, result)
+    return result
 
 
 def test_adapter_is_registered():
@@ -84,8 +88,8 @@ def test_agrees_with_the_mock_solver(tmp_path):
         make_ctx(tmp_path),
     )
 
-    fem_rise = fem_result.stats["t_rise"]
-    mock_rise = mock_result.stats["t_rise"]
+    fem_rise = fem_result.metrics["t_rise"]
+    mock_rise = mock_result.metrics["t_rise"]
     assert fem_rise == pytest.approx(mock_rise, rel=0.15), (
         f"FEM {fem_rise:.2f} K vs mock {mock_rise:.2f} K"
     )
@@ -135,7 +139,7 @@ def test_energy_balances_at_convergence(tmp_path):
 
 def test_more_fins_cool_the_chip(tmp_path):
     """The example's whole lesson, asserted on the FEM path too."""
-    rises = [solve(heat_sink(n), tmp_path, mesh_size=0.002).stats["t_rise"] for n in (0, 2, 5)]
+    rises = [solve(heat_sink(n), tmp_path, mesh_size=0.002).metrics["t_rise"] for n in (0, 2, 5)]
     assert rises == sorted(rises, reverse=True), rises
     assert rises[0] > 1.5 * rises[-1], rises
 
@@ -143,15 +147,15 @@ def test_more_fins_cool_the_chip(tmp_path):
 def test_stronger_convection_cools(tmp_path):
     gentle = solve(heat_sink(5), tmp_path, mesh_size=0.002, h=10.0)
     forced = solve(heat_sink(5), tmp_path, mesh_size=0.002, h=200.0)
-    assert forced.stats["t_rise"] < gentle.stats["t_rise"] / 5
+    assert forced.metrics["t_rise"] < gentle.metrics["t_rise"] / 5
 
 
 def test_a_hotter_ambient_shifts_the_whole_solution(tmp_path):
     """Conduction is linear: only the offset moves, the rise is unchanged."""
     cool = solve(heat_sink(3), tmp_path, mesh_size=0.002, t_ambient=20.0)
     warm = solve(heat_sink(3), tmp_path, mesh_size=0.002, t_ambient=60.0)
-    assert warm.stats["t_max"] == pytest.approx(cool.stats["t_max"] + 40.0, abs=0.2)
-    assert warm.stats["t_rise"] == pytest.approx(cool.stats["t_rise"], rel=1e-3)
+    assert warm.metrics["t_max"] == pytest.approx(cool.metrics["t_max"] + 40.0, abs=0.2)
+    assert warm.metrics["t_rise"] == pytest.approx(cool.metrics["t_rise"], rel=1e-3)
 
 
 def test_only_the_regions_are_meshed(tmp_path):

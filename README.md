@@ -23,11 +23,12 @@ solvers, typed parameters, jobs, results — is meant to be drivable from a loca
 scripts, CLI, and software agents on a machine that already has FEniCSx, over a structured local
 interface with compact answers instead of a web app. That direction is
 [M2.5](docs/03-roadmap.md#m25-local-automation-and-agent-interface), designed in
-[docs/07-local-agent-interface.md](docs/07-local-agent-interface.md). Three of its ten items have
-landed — the transport-neutral core, progressive capability discovery, and the local workspace —
-so a script can already ask what this installation can simulate, keep its designs under stable
-ids, patch one control point of a geometry, and re-solve by reference without HTTP. The local
-transports themselves (JSON-RPC over stdio, CLI, MCP) are still design.
+[docs/07-local-agent-interface.md](docs/07-local-agent-interface.md). Four of its ten items have
+landed — the transport-neutral core, progressive capability discovery, the local workspace and
+compact results — so a script can already ask what this installation can simulate, keep its
+designs under stable ids, patch one control point of a geometry, re-solve by reference, and read
+back an answer in a few hundred bytes instead of a few hundred kilobytes. The local transports
+themselves (JSON-RPC over stdio, CLI, MCP) are still design.
 
 > **Status: M1 and M2 done, M3 mostly.** Two physics examples run end to end on real FEniCSx
 > solves (potential flow, magnetostatics), the three browser packages — SDK, geometry editor,
@@ -57,6 +58,7 @@ see the [state-of-the-art survey](docs/01-state-of-the-art.md). Fenix Spoon is t
 | **Wire protocol** — JSON schemas for geometry (`domain2d`, `regions2d`), jobs, events, `grid2d`/`mesh2d` results, artifacts — with a conformance fixture corpus | [`docs/04-wire-protocol.md`](docs/04-wire-protocol.md), [`protocol/fixtures/`](protocol/fixtures/) | ✅ v0 implemented |
 | **Progressive discovery** — ask what an installation *is*, list capabilities in a line each, describe one in the sections you need; solver adapters declare their metrics, artifacts and cost | [`core/discovery.py`](server/fenixspoon/core/discovery.py) | ✅ protocol 1.2 |
 | **Local workspace** — versioned `geometry` / `material` / `design` objects as diffable JSON files under stable ids, edited with RFC 6902 patches, solved by reference | [`objects.py`](server/fenixspoon/objects.py), [`core/workspace.py`](server/fenixspoon/core/workspace.py) | ✅ core API (no HTTP yet) |
+| **Compact results** — five response levels, declared engineering metrics, diagnostics, and nine bounded field queries (peak + location, integral, section, hotspots) that never move the array | [`core/results.py`](server/fenixspoon/core/results.py), [`fields.py`](server/fenixspoon/fields.py) | ✅ protocol 1.3 |
 | **Browser demos** — the airfoil built from the three packages, plus zero-dependency versions of both airfoil and solenoid kept as protocol references | [`examples/airfoil-2d/`](examples/airfoil-2d/), [`examples/solenoid-2d/`](examples/solenoid-2d/) | ✅ working |
 | **JS/TS SDK** — `@fenix-spoon/client`: typed protocol client with progress streaming, reconnection and runtime validators | [`client/packages/client/`](client/packages/client/) | ✅ working |
 | **Geometry editor widget** — `<fs-geometry-2d>`: SVG-based parametric profile editor, keyboard-operable, emits protocol JSON | [`client/packages/geometry-2d/`](client/packages/geometry-2d/) | ✅ working |

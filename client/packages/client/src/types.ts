@@ -18,8 +18,12 @@
  * progressive discovery operations (`/environment`, `/capabilities`); those serve local
  * callers rather than browsers, so the SDK tracks the version without typing them — the
  * fixtures for those payloads are validated on the server side only, and say so.
+ *
+ * 1.3 added `metrics` and `diagnostics` to the result envelope, which this SDK does type:
+ * a metric is the number a page shows, and the heat-sink demo reads its temperature rise
+ * from there now that `stats` no longer carries it.
  */
-export const PROTOCOL_VERSION = '1.2';
+export const PROTOCOL_VERSION = '1.3';
 
 /** What `GET /api/v1/version` returns. The one endpoint that never requires a key. */
 export interface ProtocolVersion {
@@ -251,11 +255,33 @@ export interface ArtifactRef {
  */
 export type JobStats = Record<string, number>;
 
+/**
+ * The engineering answer, as opposed to what it cost. Keys are whatever the capability
+ * declared — ask `GET /capabilities/{name}?sections=metrics` for their units and meanings.
+ * Added in protocol 1.3; a 1.2 server sends `{}`, so read it defensively.
+ *
+ * This is where `t_max` and `t_rise` live now. They were `stats` keys until 1.3, which
+ * conflated the cost of a solve with its result.
+ */
+export type JobMetrics = Record<string, number>;
+
+/** How the solve went, as distinct from what it produced. Added in protocol 1.3. */
+export interface JobDiagnostics {
+  /** Whether an iterative solve reached tolerance; null where it does not apply. */
+  converged?: boolean | null;
+  /** Final residual, when the solver iterates. */
+  residual?: number | null;
+  /** Non-fatal things worth surfacing — an iteration cap hit, a coarsened mesh. */
+  warnings?: string[];
+}
+
 export interface Grid2DResult {
   job_id: string;
   kind: 'grid2d';
   data: Grid2DData;
   stats: JobStats;
+  metrics?: JobMetrics;
+  diagnostics?: JobDiagnostics;
   artifacts: ArtifactRef[];
 }
 
@@ -264,6 +290,8 @@ export interface Mesh2DResult {
   kind: 'mesh2d';
   data: Mesh2DData;
   stats: JobStats;
+  metrics?: JobMetrics;
+  diagnostics?: JobDiagnostics;
   artifacts: ArtifactRef[];
 }
 

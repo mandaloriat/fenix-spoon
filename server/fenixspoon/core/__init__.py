@@ -5,7 +5,7 @@ builds a URL — those are an adapter's job. `errors` is the vocabulary an adapt
 its own failure representation.
 """
 
-from . import discovery, errors, workspace
+from . import discovery, errors, results, workspace
 from .discovery import (
     SECTIONS,
     CapabilityDescription,
@@ -13,10 +13,19 @@ from .discovery import (
     EnvironmentInfo,
 )
 from .errors import CoreError
+from .results import (
+    DEFAULT_LEVELS,
+    LEVELS,
+    FieldQuery,
+    FieldQueryResult,
+    LeveledResult,
+)
 from .service import ArtifactHandle, FenixSpoonCore, ResultView
 from .workspace import ObjectSummary, ObjectView, ResolvedDesign, Workspace, WorkspaceInfo
 
 __all__ = [
+    "DEFAULT_LEVELS",
+    "LEVELS",
     "SECTIONS",
     "ArtifactHandle",
     "CapabilityDescription",
@@ -24,6 +33,9 @@ __all__ = [
     "CoreError",
     "EnvironmentInfo",
     "FenixSpoonCore",
+    "FieldQuery",
+    "FieldQueryResult",
+    "LeveledResult",
     "ObjectSummary",
     "ObjectView",
     "ResolvedDesign",
@@ -32,5 +44,6 @@ __all__ = [
     "WorkspaceInfo",
     "discovery",
     "errors",
+    "results",
     "workspace",
 ]

@@ -22,7 +22,13 @@ from pydantic import BaseModel
 
 from .events import EventBus
 from .geometry import Geometry
-from .solvers.base import JobCancelled, ProgressEvent, Solver, SolverContext
+from .solvers.base import (
+    JobCancelled,
+    ProgressEvent,
+    Solver,
+    SolverContext,
+    fill_declared_metrics,
+)
 from .store import JobRecord, JobStore
 
 
@@ -103,6 +109,10 @@ async def run_solve(
             **record.result.stats,
             "seconds": round(time.monotonic() - started, 4),
         }
+        # After the timing, before persisting: the metrics belong to the stored record, and
+        # computing them here rather than in each adapter is what keeps the declaration in
+        # #43 and the value in #46 from being two independent statements about one number.
+        fill_declared_metrics(solver_cls, record.result)
         record.artifacts = ctx.artifacts
         record.status = "done"
     except TimeoutError:

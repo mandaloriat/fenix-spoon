@@ -6,6 +6,7 @@ providing progress reporting, cooperative cancellation, and artifact registratio
 ``mock_laplace.py`` for the reference implementation.
 """
 
+import logging
 import mimetypes
 import threading
 from abc import ABC, abstractmethod
@@ -15,7 +16,10 @@ from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, Field
 
+from .. import fields
 from ..geometry import Geometry
+
+logger = logging.getLogger(__name__)
 
 
 class JobCancelled(Exception):
@@ -46,7 +50,36 @@ class SolverResult(BaseModel):
     stats: dict[str, float] = {}
     """What the solve actually cost: ``cells``, ``dofs``, and whatever else the adapter
     knows. The job manager adds ``seconds``. Reported so a user can see why a job was
-    slow, and so an operator can pick a sensible cap."""
+    slow, and so an operator can pick a sensible cap.
+
+    **Cost, not answer.** The engineering quantities go in ``metrics``; keeping them apart
+    is what lets an operator size a machine and an engineer make a decision from the same
+    result without either having to work out which keys are which."""
+
+    metrics: dict[str, float] = {}
+    """The engineering answer: the scalars this capability declared in :attr:`Solver.metrics`
+    (roadmap M2.5, issue #46).
+
+    An adapter only fills in what the generic path cannot. Any declared metric that is a
+    stated reduction of a result field — ``t_max`` is the ``max`` of ``T`` — is computed
+    after the solve returns, from the declaration, so no adapter writes that code twice.
+    What an adapter *must* supply is the derived ones: ``t_rise`` needs the ``t_ambient``
+    parameter, ``cp_min`` needs ``u_inf``, and neither is a reduction of anything."""
+
+    converged: bool | None = None
+    """Whether the solve reached its tolerance. ``None`` where the question does not apply —
+    a direct LU factorisation does not iterate toward anything.
+
+    This had nowhere to live before: ``stats`` is ``dict[str, float]``, so a flag could only
+    be smuggled in as 0.0/1.0 and hoped about."""
+
+    residual: float | None = None
+    """Final residual for an iterative solve; ``None`` for a direct one."""
+
+    warnings: list[str] = []
+    """Things the caller should know that did not fail the job — a solve stopped at its
+    iteration cap, a mesh coarser than requested. Previously these could only be said in a
+    progress event, which is to say only to a client that happened to be watching."""
 
 
 class MetricSpec(BaseModel):
@@ -307,3 +340,35 @@ class Solver(ABC):
     def solve(
         self, geometry: Geometry, params: "Solver.Params", ctx: SolverContext
     ) -> SolverResult: ...
+
+
+def fill_declared_metrics(solver_cls: type[Solver], result: SolverResult) -> None:
+    """Compute the declared metrics the adapter did not supply (roadmap M2.5, issue #46).
+
+    Issue #43 let a capability declare that `t_max` is the `max` of the field `T`. This is
+    where that declaration becomes a number — once, generically, so that four adapters do not
+    each write the same `float(T.max())`. An adapter that already put the metric in
+    ``result.metrics`` wins: the derived ones (`t_rise`, `cp_min`) depend on parameters and
+    only the adapter can compute them.
+
+    A metric that cannot be computed is **omitted and logged, never guessed**. A declaration
+    naming a field the adapter did not emit is a bug in the declaration — there is a test
+    that catches it — but a solve at runtime must not fail because of one, and a metric
+    reported as 0.0 because the field was missing would be far worse than an absent one.
+    """
+    for spec in solver_cls.metrics:
+        if spec.name in result.metrics or spec.field is None or spec.reduction is None:
+            continue
+        try:
+            result.metrics[spec.name] = fields.reduce_field(
+                result.data, result.kind, spec.field, spec.reduction
+            )
+        except (fields.FieldError, KeyError, ValueError) as exc:
+            logger.warning(
+                "solver %s declares metric %r over field %r, which this result cannot "
+                "supply: %s",
+                solver_cls.name,
+                spec.name,
+                spec.field,
+                exc,
+            )

@@ -10,7 +10,10 @@ So the metric sets live here once and both adapters point at them, the way the h
 already shares its parameter names and prose. `test_paired_adapters_declare_the_same_metrics`
 fails if a new adapter for an existing physics declares its own vocabulary instead.
 
-The values are declarations, not computations — issue #46 adds the level that returns them.
+These are declarations; the values come back with the result. A metric that names a `field`
+and a `reduction` is computed generically after the solve (`fill_declared_metrics`), so no
+adapter writes `float(T.max())` twice; the ones with neither are the adapter's own, because
+they need a parameter and a parameter is not in the result payload.
 """
 
 from .base import ArtifactSpec, MetricSpec
@@ -76,10 +79,9 @@ MAGNETOSTATICS_METRICS = [
 
 #: Heat conduction: the two numbers a heat-sink study exists to produce, plus the flux.
 #:
-#: `t_max` and `t_rise` are the ones already computed — both adapters put them in `stats`
-#: today, which is exactly the conflation issue #46 sets out to undo. Declaring them here
-#: says where they belong; #46 moves them, and until it does they remain readable in
-#: `stats` rather than being taken away from the demo that reads them.
+#: `t_max` and `t_rise` used to be `stats` keys on both adapters, which conflated what the
+#: solve cost with what it answered. Protocol 1.3 moved them here (#46), and the heat-sink
+#: demo reads them from `metrics` now.
 HEAT_METRICS = [
     MetricSpec(
         name="t_max",

@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 from fenixspoon.geometry import Polygon2D, Region2D, Regions2D
-from fenixspoon.solvers.base import SolverContext
+from fenixspoon.solvers.base import SolverContext, fill_declared_metrics
 from fenixspoon.solvers.mock_heat import MockHeat2D, solid_mask
 
 K_ALUMINIUM = 205.0
@@ -47,10 +47,19 @@ def heat_sink(fins: int) -> Regions2D:
 
 
 def solve(geometry: Regions2D, tmp_path, **overrides):
+    """Solve, then apply the runtime's generic metric fill.
+
+    `solve()` is the adapter's contract and returns only what the adapter itself computes;
+    the declared reductions (`t_max` is the `max` of `T`) are filled by the runtime — see
+    `fill_declared_metrics`. Doing it here means these tests read the same `metrics` a job
+    would report rather than half of it.
+    """
     settings = {"resolution": 120, "iterations": 1500, "write_vtk": False, **overrides}
     params = MockHeat2D.Params(**settings)
     ctx = SolverContext(progress_cb=lambda event: None, artifact_dir=tmp_path)
-    return MockHeat2D().solve(geometry, params, ctx), params
+    result = MockHeat2D().solve(geometry, params, ctx)
+    fill_declared_metrics(MockHeat2D, result)
+    return result, params
 
 
 def test_energy_balances_at_convergence(tmp_path):
@@ -99,7 +108,7 @@ def _neighbour(solid: np.ndarray, rows: int, cols: int) -> np.ndarray:
 
 def test_more_fins_cool_the_chip(tmp_path):
     """The whole point of the example, as an assertion."""
-    rises = [solve(heat_sink(n), tmp_path)[0].stats["t_rise"] for n in (0, 2, 5, 9)]
+    rises = [solve(heat_sink(n), tmp_path)[0].metrics["t_rise"] for n in (0, 2, 5, 9)]
     assert rises == sorted(rises, reverse=True), rises
     # And the effect is worth showing, not a rounding difference.
     assert rises[0] > 1.5 * rises[-1], rises
@@ -109,14 +118,14 @@ def test_a_hotter_ambient_shifts_the_whole_solution(tmp_path):
     """Conduction is linear in temperature: only the offset moves."""
     cool, _ = solve(heat_sink(5), tmp_path, t_ambient=20.0)
     warm, _ = solve(heat_sink(5), tmp_path, t_ambient=60.0)
-    assert warm.stats["t_max"] == pytest.approx(cool.stats["t_max"] + 40.0, abs=0.2)
-    assert warm.stats["t_rise"] == pytest.approx(cool.stats["t_rise"], rel=1e-3)
+    assert warm.metrics["t_max"] == pytest.approx(cool.metrics["t_max"] + 40.0, abs=0.2)
+    assert warm.metrics["t_rise"] == pytest.approx(cool.metrics["t_rise"], rel=1e-3)
 
 
 def test_stronger_convection_cools(tmp_path):
     gentle, _ = solve(heat_sink(5), tmp_path, h=10.0)
     forced, _ = solve(heat_sink(5), tmp_path, h=200.0)
-    assert forced.stats["t_rise"] < gentle.stats["t_rise"] / 5
+    assert forced.metrics["t_rise"] < gentle.metrics["t_rise"] / 5
 
 
 def test_no_source_means_everything_sits_at_ambient(tmp_path):
@@ -128,7 +137,7 @@ def test_no_source_means_everything_sits_at_ambient(tmp_path):
         background={"k": K_AIR},
     )
     result, _ = solve(geometry, tmp_path, t_ambient=20.0)
-    assert result.stats["t_rise"] == pytest.approx(0.0, abs=1e-6)
+    assert result.metrics["t_rise"] == pytest.approx(0.0, abs=1e-6)
 
 
 def test_fluid_is_marked_in_the_mask_not_solved(tmp_path):
@@ -172,7 +181,12 @@ def test_progress_and_stats_are_reported(tmp_path):
     ctx = SolverContext(progress_cb=events.append, artifact_dir=tmp_path)
     params = MockHeat2D.Params(resolution=64, iterations=300, report_every=50, write_vtk=False)
     result = MockHeat2D().solve(heat_sink(3), params, ctx)
+    fill_declared_metrics(MockHeat2D, result)
     assert [e.iteration for e in events] == sorted(e.iteration for e in events)
     assert all(e.residual is not None for e in events)
     assert result.stats["solid_cells"] > 0
-    assert result.stats["t_max"] > result.stats["t_rise"]  # t_max includes ambient
+    # Cost in `stats`, answer in `metrics` — the separation #46 made real. `t_max` came
+    # from the declaration, `t_rise` from the adapter, and neither is in `stats` any more.
+    assert "t_max" not in result.stats and "t_rise" not in result.stats
+    assert result.metrics["t_max"] > result.metrics["t_rise"]  # t_max includes ambient
+    assert result.residual is not None

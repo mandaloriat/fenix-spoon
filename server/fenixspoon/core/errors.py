@@ -220,6 +220,70 @@ class JobDidNotSucceed(CoreError):
         self.error = error
 
 
+class UnknownLevel(CoreError):
+    """A result was requested at a level that does not exist (roadmap M2.5, issue #46).
+
+    Refused rather than ignored, for the reason :class:`UnknownSection` is: a caller that
+    asks for `metric` and receives an answer with no metrics in it would conclude the solve
+    reported none.
+    """
+
+    def __init__(self, unknown: list[str], known: list[str]) -> None:
+        super().__init__(f"unknown result level(s) {unknown}: expected any of {known}")
+        self.unknown = unknown
+        self.known = known
+
+
+class ResultPayloadMissing(CoreError):
+    """The job succeeded, but its field arrays are no longer on disk.
+
+    A real state, not a defensive branch: the store deliberately tolerates a missing
+    `result.json` — manual cleanup, a half-deleted job, a partially swept retention run —
+    and reports the job rather than crashing. The metadata, metrics and diagnostics all
+    survive in the database, so the compact levels still answer; only the arrays are gone.
+
+    It needs a name of its own because the alternative was reporting `JobNotFinished` with
+    a status of `done`, which is self-contradictory and sends a caller to poll something
+    that will never change. Mapped to `410 Gone`: the resource existed and does not now,
+    which is exactly the case.
+    """
+
+    def __init__(self, job_id: str) -> None:
+        super().__init__(
+            f"the field data for job {job_id} is no longer on disk; its metrics, "
+            "diagnostics and artifacts are still available"
+        )
+        self.job_id = job_id
+
+
+class FieldQueryFailed(CoreError):
+    """A field query could not be answered as asked.
+
+    Wraps :class:`~fenixspoon.fields.FieldError`, which carries prose naming what is
+    available — the field names this result actually has, the operations that exist. That
+    detail is the whole value of the error: a caller that guessed a field name needs the
+    list, not a status code.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class RegionUnavailable(CoreError):
+    """`over_region` named a region this job's geometry cannot supply.
+
+    A result carries no region names — only arrays — so the region is resolved against the
+    geometry the job recorded in its workspace provenance. A job submitted with an inline
+    geometry kept none, and this says so rather than reporting an empty selection.
+    """
+
+    def __init__(self, region: str, reason: str) -> None:
+        super().__init__(f"cannot resolve region {region!r}: {reason}")
+        self.region = region
+        self.reason = reason
+
+
 class ArtifactNotFound(CoreError):
     """No artifact by that name on this job, or its file is gone from disk."""
 

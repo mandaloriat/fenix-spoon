@@ -141,6 +141,8 @@ What `GET /api/v1/jobs/{id}/result` returns once a job is `done`.
 | `kind` | `'grid2d' \| 'mesh2d'` | yes |  | Selects the schema of `data`: `Grid2DData` or `Mesh2DData`. |
 | `data` | `dict[str, Any]` | yes |  | The field data, shaped according to `kind`. |
 | `stats` | `dict[str, float]` | no | `{}` | What the solve cost — `cells`, `dofs`, `iterations`, `seconds`. Keys are server-defined and all optional: display them, never branch on one existing. |
+| `metrics` | `dict[str, float]` | no | `{}` | The engineering answer: the scalars this capability declared, keyed by the names `GET /capabilities/{name}?sections=metrics` reports. Added in protocol 1.3. Distinct from `stats`, which is what the solve *cost* — `t_max` and `t_rise` moved here from `stats` in 1.3 for exactly that reason. |
+| `diagnostics` | `dict[str, Any]` | no | `{}` | How the solve went: `converged`, `residual`, `warnings`. Added in protocol 1.3, because `stats` is typed `dict[str, float]` and a flag or a warning string had nowhere to go in it. |
 | `artifacts` | `list[ArtifactRef]` | no | `[]` | Files the solver wrote, downloadable from the artifact endpoint. |
 
 ## `Grid2DData`
@@ -177,6 +179,93 @@ A downloadable file the solver produced alongside the inline result.
 | `content_type` | `str` | yes |  | MIME type to serve it with. |
 | `size` | `int` | yes |  | Size on disk in bytes. |
 | `url` | `str` | yes |  | Server-relative download path; join with the API base URL. |
+
+
+# Compact results
+
+## `LeveledResult`
+
+What `result.get` returns. Unrequested levels are absent, not null.
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `job_id` | `str` | yes |  | The job this describes. |
+| `solver` | `str` | yes |  | Capability that produced it. |
+| `status` | `StatusView \| null` | no | `None` | Level `status`. |
+| `metrics` | `dict[str, float] \| null` | no | `None` | Level `metrics`: the declared engineering scalars, keyed by the names `capability.describe` reports. Empty if the capability declares none. |
+| `diagnostics` | `DiagnosticsView \| null` | no | `None` | Level `diagnostics`. |
+| `fields` | `FieldsView \| null` | no | `None` | Level `fields`. |
+| `artifacts` | `list[ArtifactView] \| null` | no | `None` | Level `artifacts`. |
+
+## `StatusView`
+
+The `status` level: did it finish, when, and why not.
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `status` | `str` | yes |  | `done`, `failed` or `cancelled`. |
+| `error` | `str \| null` | no | `None` | Why it failed; null otherwise. |
+| `created_at` | `str` | yes |  | When the job was accepted (RFC 3339, UTC). |
+| `finished_at` | `str \| null` | no | `None` | When it reached a terminal status. |
+| `seconds` | `float \| null` | no | `None` | Wall-clock seconds the solve took, when the run recorded it. |
+
+## `DiagnosticsView`
+
+The `diagnostics` level: what the solve cost and how well it went.
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `stats` | `dict[str, float]` | yes |  | What it cost: `cells`, `dofs`, `iterations`, `seconds`. Server-defined. |
+| `converged` | `bool \| null` | no | `None` | Whether an iterative solve reached tolerance. Null where it does not apply. |
+| `residual` | `float \| null` | no | `None` | Final residual, when iterative. |
+| `warnings` | `list[str]` | no | `[]` | Non-fatal things worth knowing about this solve. |
+
+## `FieldsView`
+
+The `fields` level: the arrays, in full, because somebody asked for them by name.
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `kind` | `str` | yes |  | `grid2d` or `mesh2d`; selects the shape of `data`. |
+| `data` | `dict[str, Any]` | yes |  | The full field payload. |
+
+## `ArtifactView`
+
+One file, by reference. The `artifacts` level never inlines bytes.
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `name` | `str` | yes |  | Bare filename, e.g. `solution.vtk`. |
+| `content_type` | `str` | yes |  | MIME type. |
+| `size` | `int` | yes |  | Size on disk in bytes. |
+| `path` | `str` | yes |  | Absolute path on the machine that ran it. A local caller opens this directly; an HTTP adapter replaces it with a URL to a route it serves. |
+
+## `FieldQuery`
+
+One bounded question about one field.
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `field` | `str` | yes |  | Scalar field name, as the result carries it (`T`, `speed`). |
+| `op` | `'max' \| 'min' \| 'mean' \| 'integral' \| 'at_point' \| 'over_region' \| 'section' \| 'sample' \| 'hotspots'` | yes |  | What to compute. |
+| `at` | `list[float] \| null` | no | `None` | `[x, y]` for `at_point`. |
+| `start` | `list[float] \| null` | no | `None` | `[x, y]` start for `section`. |
+| `end` | `list[float] \| null` | no | `None` | `[x, y]` end for `section`. |
+| `samples` | `int \| null` | no | `None` | Sample budget for `section` and `sample`. Capped server-side — an uncapped budget is the whole field with extra steps. |
+| `count` | `int \| null` | no | `None` | How many `hotspots` to return. |
+| `minimum` | `bool` | no | `False` | For `hotspots`: find the coldest rather than the hottest. |
+| `region` | `str \| null` | no | `None` | Region name for `over_region`. Resolved against the geometry the job recorded in its workspace provenance. |
+
+## `FieldQueryResult`
+
+A query's answer. `value` is whatever the operation returns — a scalar or a short list.
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `job_id` | `str` | yes |  | Job that was queried. |
+| `field` | `str` | yes |  | Field that was queried. |
+| `op` | `str` | yes |  | Operation that was run. |
+| `result` | `dict[str, Any]` | yes |  | The answer. `max`/`min` give `value` and `at`; `mean`/`integral` give `value`; `section`/`sample` give short parallel arrays; `hotspots` gives a handful of points. Every one is bounded. |
 
 
 # Discovery

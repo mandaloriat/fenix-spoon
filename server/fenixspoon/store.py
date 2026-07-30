@@ -36,6 +36,26 @@ from .solvers.base import SolverResult
 
 
 @dataclass
+class ResultSummary:
+    """A finished job's answer without its field arrays (roadmap M2.5, issue #46).
+
+    The reason this is a separate thing from :class:`~fenixspoon.solvers.base.SolverResult`
+    rather than a slice of one: every field here lives in a database column, so a store can
+    answer "what did it cost and what did it report" **without reading `result.json` off
+    disk**. That file is megabytes. A compact level that had to load it to stay compact
+    would be compact only in what it sent, which is half the saving and the less interesting
+    half — the local caller shares a filesystem with the server.
+    """
+
+    kind: str
+    stats: dict[str, float] = field(default_factory=dict)
+    metrics: dict[str, float] = field(default_factory=dict)
+    converged: bool | None = None
+    residual: float | None = None
+    warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
 class JobRecord:
     """The persistable half of a job — everything except its live runtime state."""
 
@@ -49,6 +69,12 @@ class JobRecord:
     result: SolverResult | None = None
     artifacts: list[dict[str, Any]] = field(default_factory=list)
     events: list[dict[str, Any]] = field(default_factory=list)
+    summary: ResultSummary | None = None
+    """The result's scalars, available whether or not the payload was loaded (#46).
+
+    Set by the store on read, from columns; derived from `result` on write. `None` until a
+    job finishes."""
+
     inputs: dict[str, Any] = field(default_factory=dict)
     """Which workspace object revisions this job came from, pinned (roadmap M2.5, #44).
 
@@ -60,6 +86,24 @@ class JobRecord:
     @property
     def artifact_bytes(self) -> int:
         return sum(int(entry.get("size", 0)) for entry in self.artifacts)
+
+    def summarize(self) -> "ResultSummary | None":
+        """This record's summary, preferring a loaded result over a stored one.
+
+        A live in-process job holds its `SolverResult` and may not have been read back from
+        the store yet, so deriving from `result` when it is there keeps the two consistent
+        without a round trip.
+        """
+        if self.result is not None:
+            return ResultSummary(
+                kind=self.result.kind,
+                stats=dict(self.result.stats),
+                metrics=dict(self.result.metrics),
+                converged=self.result.converged,
+                residual=self.result.residual,
+                warnings=list(self.result.warnings),
+            )
+        return self.summary
 
 
 class JobStore(ABC):
@@ -159,6 +203,7 @@ class MemoryJobStore(JobStore):
             artifacts=list(record.artifacts),
             events=events,
             inputs=dict(record.inputs),
+            summary=record.summarize(),
         )
 
     def add_event(self, job_id: str, event: dict[str, Any]) -> int:
@@ -185,6 +230,8 @@ class MemoryJobStore(JobStore):
             events=list(record.events) if with_events else [],
             artifacts=list(record.artifacts),
             inputs=dict(record.inputs),
+            # Survives dropping the payload — that is the point of holding it separately.
+            summary=record.summarize(),
         )
 
     def list_jobs(
@@ -196,7 +243,14 @@ class MemoryJobStore(JobStore):
         # dataclass, not the lists inside it, and `Job.from_record` hands this list straight
         # to a live `Job` — so a caller appending to it would rewrite the stored record.
         return [
-            replace(r, result=None, events=[], artifacts=list(r.artifacts), inputs=dict(r.inputs))
+            replace(
+                r,
+                result=None,
+                events=[],
+                artifacts=list(r.artifacts),
+                inputs=dict(r.inputs),
+                summary=r.summarize(),
+            )
             for r in ordered[offset : offset + limit]
         ]
 
@@ -234,7 +288,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     artifacts      TEXT NOT NULL DEFAULT '[]',
     owner          TEXT NOT NULL DEFAULT 'anonymous',
     artifact_bytes INTEGER NOT NULL DEFAULT 0,
-    inputs         TEXT NOT NULL DEFAULT '{}'
+    inputs         TEXT NOT NULL DEFAULT '{}',
+    metrics        TEXT NOT NULL DEFAULT '{}',
+    diagnostics    TEXT NOT NULL DEFAULT '{}'
 );
 CREATE TABLE IF NOT EXISTS events (
     job_id  TEXT NOT NULL,
@@ -251,6 +307,11 @@ _MIGRATIONS = {
     "owner": "ALTER TABLE jobs ADD COLUMN owner TEXT NOT NULL DEFAULT 'anonymous'",
     "artifact_bytes": "ALTER TABLE jobs ADD COLUMN artifact_bytes INTEGER NOT NULL DEFAULT 0",
     "inputs": "ALTER TABLE jobs ADD COLUMN inputs TEXT NOT NULL DEFAULT '{}'",
+    "metrics": "ALTER TABLE jobs ADD COLUMN metrics TEXT NOT NULL DEFAULT '{}'",
+    # `converged`, `residual` and `warnings` share one JSON column rather than three of
+    # their own. They are read together, always, and a migration per field is a cost paid
+    # by every deployment for a shape that is still settling.
+    "diagnostics": "ALTER TABLE jobs ADD COLUMN diagnostics TEXT NOT NULL DEFAULT '{}'",
 }
 
 _INDEXES = """
@@ -337,13 +398,14 @@ class SqliteJobStore(JobStore):
             self._db.execute(
                 """INSERT INTO jobs (id, solver, status, error, created_at, finished_at,
                                      result_kind, stats, artifacts, owner, artifact_bytes,
-                                     inputs)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                     inputs, metrics, diagnostics)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(id) DO UPDATE SET
                        status=excluded.status, error=excluded.error,
                        finished_at=excluded.finished_at, result_kind=excluded.result_kind,
                        stats=excluded.stats, artifacts=excluded.artifacts,
-                       artifact_bytes=excluded.artifact_bytes""",
+                       artifact_bytes=excluded.artifact_bytes,
+                       metrics=excluded.metrics, diagnostics=excluded.diagnostics""",
                 (
                     record.id,
                     record.solver,
@@ -357,6 +419,16 @@ class SqliteJobStore(JobStore):
                     record.owner,
                     record.artifact_bytes,
                     json.dumps(record.inputs),
+                    json.dumps(record.result.metrics if record.result else {}),
+                    json.dumps(
+                        {
+                            "converged": record.result.converged,
+                            "residual": record.result.residual,
+                            "warnings": record.result.warnings,
+                        }
+                        if record.result
+                        else {}
+                    ),
                 ),
             )
             self._db.commit()
@@ -379,6 +451,7 @@ class SqliteJobStore(JobStore):
     def _record(
         self, row: sqlite3.Row, events: list[dict[str, Any]], *, with_result: bool = True
     ) -> JobRecord:
+        stored_diagnostics = json.loads(row["diagnostics"] or "{}")
         result = None
         if row["result_kind"] and with_result:
             path = self._result_path(row["id"])
@@ -389,7 +462,24 @@ class SqliteJobStore(JobStore):
                     kind=row["result_kind"],
                     data=json.loads(path.read_text()),
                     stats=json.loads(row["stats"] or "{}"),
+                    metrics=json.loads(row["metrics"] or "{}"),
+                    converged=stored_diagnostics.get("converged"),
+                    residual=stored_diagnostics.get("residual"),
+                    warnings=stored_diagnostics.get("warnings") or [],
                 )
+        summary = None
+        if row["result_kind"]:
+            # Built from columns, so it is there whether or not `with_result` loaded the
+            # payload. This is what makes the `metrics` and `diagnostics` levels cost a row
+            # read instead of a multi-megabyte file read and a JSON parse.
+            summary = ResultSummary(
+                kind=row["result_kind"],
+                stats=json.loads(row["stats"] or "{}"),
+                metrics=json.loads(row["metrics"] or "{}"),
+                converged=stored_diagnostics.get("converged"),
+                residual=stored_diagnostics.get("residual"),
+                warnings=stored_diagnostics.get("warnings") or [],
+            )
         return JobRecord(
             id=row["id"],
             solver=row["solver"],
@@ -406,6 +496,7 @@ class SqliteJobStore(JobStore):
             # `inputs` is only ever written at insert; the UPDATE branch leaves it alone
             # because a job's provenance is fixed the moment it is accepted.
             inputs=json.loads(row["inputs"] or "{}"),
+            summary=summary,
         )
 
     def get(
