@@ -92,7 +92,7 @@ adapter. **You** are the author of the deployment; the anonymous caller is not. 
 application needs is: write the physics once, in Python, and expose it as a *named capability*
 with typed parameters.
 
-`dolfinx_poisson.py` is the reference, and its core is four lines that any FEniCSx user will
+`dolfinx_poisson.py` is the reference, and its core is five lines that any FEniCSx user will
 recognise:
 
 ```python
