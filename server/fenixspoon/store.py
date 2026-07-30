@@ -98,6 +98,20 @@ class JobRecord:
     revisions — the `design -> job -> result` relation, recorded at the one moment it is
     knowable. #47 adds the environment and the content hash beside it."""
 
+    provenance: dict[str, Any] = field(default_factory=dict)
+    """Solver version and environment fingerprint, captured when the job was accepted (#47).
+
+    Recorded rather than recomputed at read time, because provenance answers "what produced
+    this payload" and the live registry answers "what would produce it now". Those differ
+    exactly when the answer matters: after an adapter bumps `Solver.version`, after a
+    package upgrade, or when the solver is no longer installed at all. Recomputing would
+    also let a job contradict itself — its stored `cache_key` was built from the old version
+    while its provenance reported the new one. Raised in review of #47.
+
+    Empty for a job written before this column existed. That stays `unknown` on read: the
+    facts were never captured, and inventing them from today's registry is the misreport
+    this field exists to prevent."""
+
     @property
     def artifact_bytes(self) -> int:
         return sum(int(entry.get("size", 0)) for entry in self.artifacts)
@@ -260,6 +274,15 @@ class MemoryJobStore(JobStore):
         existing = self._records.get(record.id)
         # Keep the event log across metadata updates; put() is not about events.
         events = existing.events if existing is not None else record.events
+        # Nor about the cache columns. `mark_reused` is their only writer, and it lands on
+        # the *stored* record while the solve still holds the object it was handed at
+        # submission — where `reused` is forever 0. Writing that back would drop the
+        # increment and flip `cached` false again. The SQLite store never had the bug: its
+        # `ON CONFLICT DO UPDATE` list omits both columns. This is the same rule, spelled
+        # out, so the two stores answer identically. Raised in review of #47.
+        cache_key = existing.cache_key if existing is not None else record.cache_key
+        reused = existing.reused if existing is not None else record.reused
+        provenance = existing.provenance if existing is not None else record.provenance
         self._records[record.id] = JobRecord(
             id=record.id,
             solver=record.solver,
@@ -273,8 +296,9 @@ class MemoryJobStore(JobStore):
             events=events,
             inputs=dict(record.inputs),
             summary=record.summarize(),
-            cache_key=record.cache_key,
-            reused=record.reused,
+            cache_key=cache_key,
+            reused=reused,
+            provenance=dict(provenance),
         )
 
     def add_event(self, job_id: str, event: dict[str, Any]) -> int:
@@ -393,7 +417,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     metrics        TEXT NOT NULL DEFAULT '{}',
     diagnostics    TEXT NOT NULL DEFAULT '{}',
     cache_key      TEXT,
-    reused         INTEGER NOT NULL DEFAULT 0
+    reused         INTEGER NOT NULL DEFAULT 0,
+    provenance     TEXT NOT NULL DEFAULT '{}'
 );
 CREATE TABLE IF NOT EXISTS events (
     job_id  TEXT NOT NULL,
@@ -417,6 +442,9 @@ _MIGRATIONS = {
     "diagnostics": "ALTER TABLE jobs ADD COLUMN diagnostics TEXT NOT NULL DEFAULT '{}'",
     "cache_key": "ALTER TABLE jobs ADD COLUMN cache_key TEXT",
     "reused": "ALTER TABLE jobs ADD COLUMN reused INTEGER NOT NULL DEFAULT 0",
+    # Solver version and environment fingerprint together, for the reason `diagnostics`
+    # shares a column: they are read together, always, and neither is a thing to index on.
+    "provenance": "ALTER TABLE jobs ADD COLUMN provenance TEXT NOT NULL DEFAULT '{}'",
 }
 
 _INDEXES = """
@@ -507,8 +535,11 @@ class SqliteJobStore(JobStore):
             self._db.execute(
                 """INSERT INTO jobs (id, solver, status, error, created_at, finished_at,
                                      result_kind, stats, artifacts, owner, artifact_bytes,
-                                     inputs, metrics, diagnostics, cache_key)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                     inputs, metrics, diagnostics, cache_key, provenance)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   -- `cache_key`, `reused` and `provenance` are absent from this list on
+                   -- purpose: they are facts about the submission, written once, and a
+                   -- later status update must not be able to walk them back.
                    ON CONFLICT(id) DO UPDATE SET
                        status=excluded.status, error=excluded.error,
                        finished_at=excluded.finished_at, result_kind=excluded.result_kind,
@@ -539,6 +570,7 @@ class SqliteJobStore(JobStore):
                         else {}
                     ),
                     record.cache_key,
+                    json.dumps(record.provenance),
                 ),
             )
             self._db.commit()
@@ -609,6 +641,7 @@ class SqliteJobStore(JobStore):
             summary=summary,
             cache_key=row["cache_key"],
             reused=int(row["reused"] or 0),
+            provenance=json.loads(row["provenance"] or "{}"),
         )
 
     def get(

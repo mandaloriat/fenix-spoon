@@ -137,6 +137,7 @@ class Job:
     inputs: dict[str, Any] = field(default_factory=dict)
     cache_key: str | None = None
     reused: int = 0
+    provenance: dict[str, Any] = field(default_factory=dict)
     summary: ResultSummary | None = None
     cancel_event: threading.Event = field(default_factory=threading.Event)
 
@@ -154,6 +155,7 @@ class Job:
             inputs=self.inputs,
             cache_key=self.cache_key,
             reused=self.reused,
+            provenance=self.provenance,
         )
 
     def absorb(self, record: JobRecord) -> None:
@@ -185,6 +187,7 @@ class Job:
             inputs=record.inputs,
             cache_key=record.cache_key,
             reused=record.reused,
+            provenance=record.provenance,
             summary=record.summarize(),
         )
 
@@ -296,6 +299,7 @@ class JobManager:
         owner: str = "anonymous",
         inputs: dict[str, Any] | None = None,
         cache_key: str | None = None,
+        provenance: dict[str, Any] | None = None,
     ) -> Job:
         job = Job(
             id=f"j-{uuid.uuid4().hex[:12]}",
@@ -303,6 +307,7 @@ class JobManager:
             owner=owner,
             inputs=inputs or {},
             cache_key=cache_key,
+            provenance=provenance or {},
         )
         job.artifact_dir = self._data_dir / job.id
         record = job.to_record()

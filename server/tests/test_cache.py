@@ -333,6 +333,56 @@ def test_provenance_is_in_the_default_answer(core, me):
     assert provenance.environment["numpy"]
 
 
+def test_provenance_reports_what_ran_not_what_is_installed_now(core, me, monkeypatch):
+    """Recorded at submit, never recomputed at read (review of #47).
+
+    The first implementation asked the live registry, which answers a different question:
+    "what would produce this now". They diverge exactly when it matters — the day an
+    adapter ships a fix and bumps its version, every job it ever ran would start claiming
+    the new one. And the job would contradict itself, since the `cache_key` stored beside
+    the version was derived from the old one.
+    """
+    job = solve(core, me)
+    before = core.provenance(job.id, me)
+    assert before.solver_version == "1"
+
+    monkeypatch.setattr(core.capability("mock.laplace2d"), "version", "2")
+    after = core.provenance(job.id, me)
+    assert after.solver_version == "1", "an adapter bump rewrote a finished job's history"
+    assert after.cache_key == before.cache_key
+
+    # The bump does invalidate the *cache*, which is the other half of the same fact: the
+    # old job is still described truthfully, and it is no longer reused.
+    assert solve(core, me).id != job.id
+
+
+def test_provenance_records_the_environment_rather_than_re_reading_it(core, me, monkeypatch):
+    """Same reason, for the packages: an upgrade does not change what already ran."""
+    job = solve(core, me)
+    recorded = core.provenance(job.id, me).environment
+    assert recorded["numpy"]
+
+    monkeypatch.setattr(core.capability("mock.laplace2d"), "requires", ["numpy", "scipy"])
+    assert core.provenance(job.id, me).environment == recorded
+
+
+def test_a_job_recorded_before_provenance_existed_says_unknown(core, me):
+    """An upgraded database has rows with no fingerprint, and `unknown` is the honest answer.
+
+    Filling them in from today's registry is the misreport the whole field exists to
+    prevent — it would be indistinguishable from a job that really did run on this version.
+    The same answer covers a solver that is no longer installed.
+    """
+    from fenixspoon.store import JobRecord
+
+    core.jobs.store.put(
+        JobRecord(id="j-old", solver="mock.laplace2d", status="done", owner=me.id)
+    )
+    provenance = core.provenance("j-old", me)
+    assert provenance.solver_version == "unknown"
+    assert provenance.environment == {}
+
+
 def test_provenance_names_the_object_revisions_a_design_resolved(tmp_path, me):
     """The design → job → result relation, recorded where it is knowable."""
     core = FenixSpoonCore(JobManager(data_dir=tmp_path / "jobs"))

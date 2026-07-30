@@ -409,6 +409,12 @@ false means these numbers were computed for this request, true means they came f
 identical solve. It is the difference between a metric that reflects the edit you just made and
 one answering a question you asked ten minutes ago.
 
+`solver_version` and `environment` are **recorded when the job is accepted**, not read off the
+server as it stands when you ask. So they keep answering "what produced this payload" after the
+deployment has moved on — an adapter that bumps its version, or a package upgrade, does not
+rewrite the history of jobs that ran before it. A job stored before this was recorded reports
+`solver_version: "unknown"` and an empty `environment` rather than today's values.
+
 ## The result cache
 
 Added in protocol 1.4 ([#47](https://github.com/mandaloriat/fenix-spoon/issues/47)). In an

@@ -217,7 +217,14 @@ class FenixSpoonCore:
         if estimate is not None and limit and estimate > limit:
             raise errors.CellBudgetExceeded(estimate, limit)
 
-        key = self.cache_key_for(solver_cls, geometry, parsed)
+        # Captured here, once, and used for both things that need it: the cache key below
+        # and the provenance this job will report for as long as it exists. Read back from
+        # the record rather than recomputed, so a later `Solver.version` bump or package
+        # upgrade cannot rewrite what an old job says produced it.
+        fingerprint = cache.environment_fingerprint(list(solver_cls.requires))
+        provenance = {"solver_version": solver_cls.version, "environment": fingerprint}
+
+        key = self.cache_key_for(solver_cls, geometry, parsed, environment=fingerprint)
         if key is not None:
             reusable = self.jobs.store.find_cached(key, principal.id)
             if reusable is not None:
@@ -235,11 +242,22 @@ class FenixSpoonCore:
         check_quotas(principal, QuotaUsage(active, recent, artifact_bytes))
 
         return await self.jobs.submit(
-            solver_cls, geometry, parsed, owner=principal.id, inputs=inputs, cache_key=key
+            solver_cls,
+            geometry,
+            parsed,
+            owner=principal.id,
+            inputs=inputs,
+            cache_key=key,
+            provenance=provenance,
         )
 
     def cache_key_for(
-        self, solver_cls: type[Solver], geometry: Geometry, params: Any
+        self,
+        solver_cls: type[Solver],
+        geometry: Geometry,
+        params: Any,
+        *,
+        environment: dict[str, str] | None = None,
     ) -> str | None:
         """This solve's content-addressed identity, or None if it must not be cached.
 
@@ -251,15 +269,21 @@ class FenixSpoonCore:
         The *validated* geometry and params go into the hash, never what the caller sent.
         That is what makes the cache hit at all: an omitted default and an explicit one are
         different JSON and the same solve.
+
+        ``environment`` lets a caller that has already fingerprinted the environment pass it
+        in, so the key and the provenance recorded beside it are built from one reading
+        rather than two. Omitted, it is taken now.
         """
         if not self.jobs.cache or not solver_cls.deterministic:
             return None
+        if environment is None:
+            environment = cache.environment_fingerprint(list(solver_cls.requires))
         return cache.cache_key(
             solver=solver_cls.name,
             solver_version=solver_cls.version,
             geometry=geometry.model_dump(mode="json"),
             params=params.model_dump(mode="json"),
-            environment=cache.environment_fingerprint(list(solver_cls.requires)),
+            environment=environment,
         )
 
     def jobs_for_object(
@@ -442,19 +466,28 @@ class FenixSpoonCore:
         to the submission that hit — the first solve reports false, and the moment an
         identical resubmission lands it reports true, which is the loop the acceptance
         criterion describes.
+
+        The solver version and environment come from what the job *recorded*, never from the
+        registry as it stands now. Recomputing was the first implementation and it was
+        wrong: it made an old job report the version of whatever adapter happens to be
+        installed today, and made an uninstalled solver's history report an empty
+        environment as if none had been used. Worse, a job could contradict itself — the
+        `cache_key` it stored was derived from the old version while `solver_version` beside
+        it named the new one. Raised in review of #47.
         """
-        solver_cls = get_solver(job.solver_name)
+        recorded = job.provenance
         return results.Provenance(
             job_id=job.id,
             cached=job.reused > 0,
             solver=job.solver_name,
-            solver_version=solver_cls.version if solver_cls else "unknown",
+            # Only for jobs written before the column existed. Saying `unknown` is the
+            # honest answer — the facts were not captured — and it is exactly what
+            # recomputing would paper over.
+            solver_version=str(recorded.get("solver_version") or "unknown"),
             cache_key=job.cache_key,
             computed_at=job.finished_at.isoformat() if job.finished_at else None,
             seconds=(job.summary.stats.get("seconds") if job.summary else None),
-            environment=(
-                cache.environment_fingerprint(list(solver_cls.requires)) if solver_cls else {}
-            ),
+            environment=dict(recorded.get("environment") or {}),
             inputs=dict(job.inputs),
         )
 
