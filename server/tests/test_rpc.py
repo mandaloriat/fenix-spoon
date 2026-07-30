@@ -871,7 +871,25 @@ def test_an_artifact_resolves_to_a_path_rather_than_bytes(core, me):
 
 def test_the_default_result_answer_stays_small(core, me):
     """The same budget the HTTP compact route holds to (#46): a caller that asks for nothing
-    in particular gets something it can read."""
+    in particular gets something it can read.
+
+    Measured on the **encoded frame**, not on `json.dumps` with its default separators. This
+    transport writes compact JSON, so the frame is what a caller is actually charged for —
+    1341 bytes against 1368 for the spaced form on the same payload. Small difference, but a
+    budget should measure the thing it is budgeting.
+
+    The number moved from 1024 to match `test_the_summary_route_is_the_compact_one`, and for
+    the reason recorded in full beside `test_the_default_answer_is_small_and_carries_no_arrays`
+    in `test_results.py`: **the default answer grows linearly with what a capability declares**,
+    and that growth is the feature. #68 took `mock.laplace2d` from two declared metrics to six
+    and added a lift-consistency warning that is ~250 bytes of prose on its own. A converged
+    solve is 1249 bytes now; this fixture runs 150 iterations, so it also carries the
+    iteration-cap warning and reaches 1368.
+
+    So the byte ceiling is a proxy and always was. The invariant it stands in for is the
+    assertion above it — no field arrays in the default answer — which is what actually keeps
+    a compact response compact, and which no number of declared metrics can break.
+    """
     async def run():
         async with Session(core, me) as session:
             job_id = await session.solve()
@@ -879,4 +897,16 @@ def test_the_default_result_answer_stays_small(core, me):
 
     default = asyncio.run(run())
     assert "fields" not in default
-    assert len(json.dumps(default)) < 1024
+    frame = framing.encode({"jsonrpc": "2.0", "id": 1, "result": default})
+    # The per-section breakdown, not just the total. Whoever sees this next has to decide
+    # whether the budget should move again or whether something is genuinely wrong, and that
+    # is a question about *which* section grew — the two times it has moved so far, the
+    # answer was `metrics` once and `diagnostics` once. Measuring that by hand is a
+    # ten-minute detour this message removes.
+    breakdown = {key: len(json.dumps(value)) for key, value in default.items()}
+    assert len(frame) < 1536, (
+        f"the default answer is {len(frame)} bytes on the wire, over budget.\n"
+        f"sections: {breakdown}\n"
+        "If a capability simply declares more metrics, moving the budget is the right fix — "
+        "see the docstring. If a field array got in, it is not."
+    )
