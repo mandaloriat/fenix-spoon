@@ -23,13 +23,14 @@ solvers, typed parameters, jobs, results — is meant to be drivable from a loca
 scripts, CLI, and software agents on a machine that already has FEniCSx, over a structured local
 interface with compact answers instead of a web app. That direction is
 [M2.5](docs/03-roadmap.md#m25-local-automation-and-agent-interface), designed in
-[docs/07-local-agent-interface.md](docs/07-local-agent-interface.md). Five of its ten items have
+[docs/07-local-agent-interface.md](docs/07-local-agent-interface.md). Six of its ten items have
 landed — the transport-neutral core, progressive capability discovery, the local workspace,
-compact results and the result cache — so a script can already ask what this installation can
-simulate, keep its designs under stable ids, patch one control point of a geometry, re-solve by
-reference, read back an answer in a few hundred bytes instead of a few hundred kilobytes, and
-have an unchanged design cost a lookup rather than a solve. The local transports themselves
-(JSON-RPC over stdio, CLI, MCP) are still design.
+compact results, the result cache, and **the local transport itself**. `fenix-spoon rpc --stdio`
+speaks [JSON-RPC 2.0 over pipes](docs/08-json-rpc.md) with no port opened and no web framework
+imported, so a script can ask what this installation can simulate, keep its designs under stable
+ids, patch one control point of a geometry, re-solve by reference, read back an answer in a few
+hundred bytes instead of a few hundred kilobytes, and have an unchanged design cost a lookup
+rather than a solve. The remaining transports (CLI, Python, MCP) are still design.
 
 > **Status: M1 and M2 done, M3 mostly.** Two physics examples run end to end on real FEniCSx
 > solves (potential flow, magnetostatics), the three browser packages — SDK, geometry editor,
@@ -185,9 +186,10 @@ files; `make docs-serve` previews it locally.
 5. [Deployment](docs/05-deployment.md) — API keys, quotas, resource limits, CORS, reverse proxy
 6. [Load test](docs/06-load-test.md) — the tested envelope, and how to reproduce it
 7. [Protocol reference](docs/reference-protocol.md) — every model, generated from the code that validates it
-8. [Local agent interface](docs/07-local-agent-interface.md) — design draft for driving the same
-   core from a local process (M2.5; the core and capability discovery have landed, the
-   transports have not)
+8. [JSON-RPC over stdio](docs/08-json-rpc.md) — the local transport: methods, framing, errors
+9. [Local agent interface](docs/07-local-agent-interface.md) — design draft for driving the same
+   core from a local process (M2.5; the core, discovery, workspace, results, cache and the
+   stdio transport have landed — the CLI, Python and MCP adapters have not)
 
 ## Contributing
 

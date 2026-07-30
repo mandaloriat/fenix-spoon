@@ -18,12 +18,15 @@
     field queries, bound to HTTP as protocol 1.3
     ([#46](https://github.com/mandaloriat/fenix-spoon/issues/46)); and the **content-addressed
     cache** §9 — identity, reuse and provenance, protocol 1.4
-    ([#47](https://github.com/mandaloriat/fenix-spoon/issues/47)). Four of §15's open
-    questions are settled as a result, and are marked there.
+    ([#47](https://github.com/mandaloriat/fenix-spoon/issues/47)); and the **JSON-RPC over
+    stdio transport** §11 — twenty-four methods, no port, no FastAPI
+    ([#45](https://github.com/mandaloriat/fenix-spoon/issues/45)), documented at
+    [JSON-RPC over stdio](08-json-rpc.md). Five of §15's open questions are settled as a
+    result, and are marked there.
 
-    Where §6, §8, §9 and §10 below differ from what shipped, the implementation is the
-    accurate one; the differences are noted inline. The transports themselves — JSON-RPC,
-    CLI, MCP — and the study abstraction are still design.
+    Where §6 and §8–§11 below differ from what shipped, the implementation is the accurate
+    one; the differences are noted inline. The remaining transports — CLI, Python, MCP — and
+    the study abstraction are still design.
 
 ## 1. Motivation
 
@@ -342,10 +345,19 @@ caps it. Full arrays are reached exactly one way: fetch the artifact.
 
 ## 11. Transports
 
+!!! success "JSON-RPC over stdio implemented (#45)"
+
+    Twenty-four methods over the same core, no port and no FastAPI. The framing question this
+    section left open is answered — **newline-delimited JSON written, either framing
+    accepted** — with the evidence in [§15](#15-open-questions). Two things went differently
+    from the sketch below: **batches are refused** rather than supported, and **progress is
+    both pollable and streamable** rather than one or the other. The reference page is
+    [JSON-RPC over stdio](08-json-rpc.md).
+
 | Transport | Status | Role |
 |---|---|---|
 | HTTP + WebSocket (`/api/v1`) | shipped | browsers, remote clients, the multi-user deployment |
-| JSON-RPC 2.0 over stdio | planned, M2.5 | **the base local transport** |
+| JSON-RPC 2.0 over stdio | **shipped (#45)** | **the base local transport** |
 | CLI (`fenix-spoon …`, JSON output) | planned, M2.5 | shells, CI, reproducible scripting, debugging |
 | Python API | planned, M2.5 | notebooks and in-process embedding |
 | MCP | planned, M2.5, thin | MCP hosts; an adapter over the same operations |
@@ -355,7 +367,7 @@ expected entrypoint), writes requests to its stdin and reads responses from its 
 opened, no origin policy applies, and the process dies with its parent. Requirements: documented
 framing, typed compact errors (a code, a message, and structured `data` — not a stack trace and not
 an HTML error page), asynchronous jobs for anything long-running so the channel is never blocked by
-a solve, and identical behavior against mock and FEniCSx solvers. Framing choice is open (below).
+a solve, and identical behavior against mock and FEniCSx solvers.
 
 **MCP is layered on this, not underneath it.** The MCP adapter maps a small stable tool set —
 inspect environment, list capabilities, describe capability, create or patch object, submit job,
@@ -451,14 +463,14 @@ end to end, and the same operations are reachable from CLI, Python and MCP.
 Deliberately unresolved. Each needs a decision recorded with its reasoning, and none should be
 settled by picking whatever is fashionable.
 
-**Four are now settled** by #44, and are struck through below with what decided them. The
+**Five are now settled** — four by #44 and the framing question by #45 — and are struck through below with what decided them. The
 reasoning is preserved rather than replaced: a decision whose grounds are deleted is
 indistinguishable from a preference, and the grounds are what a future reader needs in order to
 know whether the decision still holds.
 
 | Question | Options | How to decide |
 |---|---|---|
-| **JSON-RPC framing** | newline-delimited JSON vs `Content-Length` headers (LSP/MCP style) | NDJSON is trivial to implement and debug by hand; `Content-Length` is what MCP hosts already speak and is robust to embedded newlines. Decide by what the MCP adapter needs and by whether any payload can contain a raw newline. Supporting both is cheap and may be the answer. |
+| ~~**JSON-RPC framing**~~ **→ NDJSON written, both accepted** | newline-delimited JSON vs `Content-Length` headers (LSP/MCP style) | decided on the two tests the question named. **Can a payload contain a raw newline?** No, and not by luck: `json.dumps` escapes U+000A inside strings, and ASCII escaping also escapes U+2028 and U+2029 — the characters Python's `readline` does not treat as terminators but several other languages' line splitters do. So one frame is one line under *any* reader's definition of a line, which is what a newline delimiter needs and what `test_no_encodable_value_can_break_the_frame` asserts. **What does the MCP adapter need?** MCP's stdio transport is itself newline-delimited, so header framing here would make #49 a re-framing layer rather than the thin one it is supposed to be. Supporting both on input was indeed cheap — about fifteen lines, detected per message — so a caller built against an LSP-style client does not have to care. The cost paid is ASCII escaping inflating non-ASCII text; this vocabulary is numbers, identifiers and English, and compactness that could corrupt a frame in someone else's line reader is not a trade worth making. |
 | ~~**Where workspace objects live**~~ **→ JSON files under the data directory** | extend the SQLite `JobStore` schema vs a second store vs manifest files on disk | the store already exists, has WAL, retention and an interface with two implementations — extending it keeps one retention story and one thing to back up. Against that: designs and studies are a different lifetime from jobs, and files are diffable and git-friendly in a way a database is not. Decide by whether a workspace is meant to be committed to a repository. **It is** — §2's own use cases include "a repository of designs is re-solved on every solver change", and §8 asks for something a human can diff. `git diff` on a SQLite file says `Binary files differ`; on `objects/geometry/g-1/00002.json` it shows the two coordinates that moved. One directory to back up survives, because the files live inside `FENIXSPOON_DATA_DIR` beside `jobs.db`. |
 | ~~**Patch format**~~ **→ JSON Patch (RFC 6902)** | JSON Patch vs JSON Merge Patch vs a domain-specific patch | decided on the named test case, moving one control point: `[{"op":"replace","path":"/obstacle/points/1","value":[0.35,0.14]}]`. Merge patch has no operation for one array element — it replaces arrays whole, so the same edit carries every point, which is the cost this milestone exists to remove. A domain patch would be friendlier to generate but needs a new verb for every edit anyone wants, where RFC 6902 already has them and has implementations in every client language. |
 | ~~**Identifiers**~~ **→ readable, with revisions** | readable short ids (`g-42`) vs UUIDs vs content hashes | `geometry:g-1`, and `geometry:g-1@3` to pin a revision. Readable won on the cost that matters here — an agent carries these strings through every turn — and the type is in the id so a mismatched prefix is caught at parse rather than by a lookup that finds nothing. Ids are allocated by `mkdir` of the next free number, which is atomic, so concurrent creates cannot collide. UUIDs remain the answer if workspaces are ever merged; content hashes are #47's identity and are a different question from *naming*. |

@@ -130,11 +130,30 @@ the seams a second caller needs. The design specification is
       HTTP now would mean designing an object API that JSON-RPC may want differently, so
       `/api/v1` is unchanged apart from `environment.inspect` gaining the workspace path #43
       had specified and could not yet fill in. (#44)
-- [ ] **JSON-RPC 2.0 over stdio.** A local transport with no mandatory network port: the agent
-      spawns `fenix-spoon rpc --stdio` as a child process and speaks structured messages over its
-      pipes — documented framing, typed compact errors, long solves as asynchronous jobs, working
-      identically against mock solvers and real FEniCSx. This is the base local transport; MCP
-      is layered on it, not the other way round. (#45)
+- [x] **JSON-RPC 2.0 over stdio.** `fenix-spoon rpc --stdio`, twenty-four methods over the same
+      core the HTTP API uses, with no port opened and no FastAPI imported. Documented in
+      [JSON-RPC over stdio](08-json-rpc.md).
+      *Framing: **newline-delimited JSON written, either accepted**.* The issue left this open
+      and asked it be decided on whether a payload can contain a raw newline. It cannot, and
+      that is a property of the encoder rather than a hope — ASCII escaping also escapes
+      U+2028/U+2029, so one frame is one line under any reader's definition of a line, not just
+      Python's. MCP's stdio transport is newline-delimited too, and #49 is meant to be a thin
+      layer over this rather than a re-framing of it.
+      *Batches are **refused, by name**.* On a channel that already accepts pipelined requests a
+      batch buys nothing but questions the spec does not settle — ordering, atomicity, partial
+      failure — and inventing those answers would make them ours.
+      *Params are **by name only**.* Positional binding across methods with five optional
+      arguments turns "I omitted `sections`" into "I passed `sections` where `inline_schemas`
+      goes".
+      *Progress is **pollable and streamable**.* `job.events` reads the stored, sequence-numbered
+      log from `since`; `job.subscribe` pushes `job.progress` notifications. An agent that does
+      not want twenty ticks in its context polls.
+      *Errors mirror the HTTP table.* Two errors sharing a status share a code, asserted by a
+      test — so a caller writing one handler for both transports is not relying on a coincidence.
+      *One rule moved out of the routes.* "An unrequested section is absent, not null" lived only
+      in `response_model_exclude_none=True` on two FastAPI routes; a second transport would have
+      had to remember it. It is now `Selective.wire()` on the models, with a conformance test
+      comparing the two renderings byte for byte. (#45)
 - [x] **Compact results: metrics, diagnostics and selective field queries.** Five response
       levels in `core/results.py`, bound to HTTP as protocol 1.3. The default omits `fields`, so
       a finished solve answers in **686 bytes against 529 kB** for the full payload — and the

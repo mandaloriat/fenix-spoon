@@ -28,7 +28,7 @@ from pydantic import ValidationError
 
 from .. import cache, fields
 from ..geometry import Geometry
-from ..jobs import Job, JobManager
+from ..jobs import TERMINAL, Job, JobManager
 from ..objects import ObjectFileStore, parse_ref
 from ..solvers import available_solvers, get_solver, registered_solvers
 from ..solvers.base import Solver, SolverInfo
@@ -69,6 +69,28 @@ class ResultView:
     data: dict[str, Any]
     stats: dict[str, float]
     artifacts: list[ArtifactHandle]
+
+
+@dataclass(frozen=True)
+class EventPage:
+    """A slice of a job's progress log, read by sequence number (roadmap M2.5, #45).
+
+    The polling counterpart of the streaming subscription. Both exist because a caller with
+    a context window and a caller with a socket want different things: an agent submits and
+    then asks "anything since 4?" at whatever cadence suits it, while a browser wants every
+    tick as it happens. The log is sequence-numbered and stored, so the two read the same
+    events and neither can miss one — which is what makes polling a real answer here rather
+    than a degraded one.
+    """
+
+    job_id: str
+    events: list[dict[str, Any]]
+    #: Sequence number to pass as ``since`` next time. Numbering starts at 1, so a first
+    #: call passes 0 and this comes back as the count delivered so far.
+    next: int
+    #: True once a terminal status event has been delivered. The caller's stop condition,
+    #: so it does not have to know which event types are terminal.
+    final: bool
 
 
 class FenixSpoonCore:
@@ -577,6 +599,38 @@ class FenixSpoonCore:
     def events(self, job: Job):
         """Async iterator of this job's events, history first then live."""
         return self.jobs.subscribe(job)
+
+    def job_events(
+        self, job_id: str, principal: Principal, *, since: int = 0, limit: int = 200
+    ) -> EventPage:
+        """Events after sequence ``since`` — the polling read of the progress log (#45).
+
+        Read from the store rather than from the live job, because the store is where events
+        are numbered: :class:`~fenixspoon.execution.EventSink` writes them there and the
+        sequence *is* the position in that log. A live in-process job holds no copy, so
+        reading it would answer "no events" for a solve that is emitting them.
+
+        ``limit`` bounds the page for the same reason every other listing is bounded — a
+        solve reporting every hundred iterations produces a log a caller should page through
+        rather than receive in one answer it did not size.
+        """
+        self.job(job_id, principal)  # ownership check; raises JobNotFound
+        record = self.jobs.store.get(job_id, with_result=False, with_events=True)
+        stored = record.events if record is not None else []
+        page = stored[since : since + limit]
+        delivered = since + len(page)
+        return EventPage(
+            job_id=job_id,
+            events=page,
+            next=delivered,
+            # Terminal *as far as this caller has read*: a page that stops short of the end
+            # is not final even if the log has since finished, or the caller would stop
+            # polling with events it never saw still sitting in the log.
+            final=any(
+                event.get("type") == "status" and event.get("status") in TERMINAL
+                for event in page
+            ),
+        )
 
     @staticmethod
     def _handle(job: Job, entry: dict[str, Any]) -> ArtifactHandle:
