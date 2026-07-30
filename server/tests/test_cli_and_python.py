@@ -156,7 +156,7 @@ def test_the_slice_runs_as_a_python_script(session):
 
 
 def test_the_json_output_is_the_json_rpc_result(workspace, tmp_path):
-    """Stronger than "byte-comparable in meaning": the same bytes.
+    """Stronger than "byte-comparable in meaning": the same value, field for field.
 
     The CLI dispatches through the JSON-RPC method table, so this is a property of the design
     rather than a coincidence to be maintained — and it is what makes the CLI usable as the

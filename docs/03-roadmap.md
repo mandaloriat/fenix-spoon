@@ -70,7 +70,7 @@ Goal: `npm install` two widgets and build the demo page in ten lines.
 - [x] Versioned protocol conformance tests shared between server (pytest) and SDK (vitest) —
       both sides read `protocol/fixtures/` and CI runs both (#11)
 
-## M2.5 — Local automation and agent interface
+## M2.5 — Local automation and agent interface ✅
 
 Goal: *a local agent can inspect the installed engineering capabilities, create or update a design,
 submit a simulation, query compact metrics and diagnostics, and retrieve artifacts without starting
@@ -260,11 +260,33 @@ the seams a second caller needs. The design specification is
       backend completes a solve on the loop that submitted it — so it would work for
       everything except finishing a job. One loop makes submit-now-wait-later, the notebook
       shape, an ordinary blocking call. (#50)
-- [ ] **Cross-transport conformance and the vertical slice.** Shared fixtures asserting that an
-      equivalent request over HTTP and over JSON-RPC yields the same semantic result, that
-      validation errors are represented consistently, that mock and FEniCSx honor the same
-      envelopes, that schemas do not diverge between adapters, and that compact responses never
-      leak full numeric arrays. (#51)
+- [x] **Cross-transport conformance and the vertical slice.** The milestone's exit criterion,
+      and the guard that keeps five adapters from drifting.
+      *The corpus grew a `protocol/fixtures/errors.json`* naming every domain error and how each
+      transport represents it. Until it existed the transports agreed on the strength of
+      *per-pair* tests, which is a shape that decays quietly: add an error, map it on one
+      transport, and the others stay green and wrong. The fixture is the source of truth for the
+      **partition** — which errors are alike — with three tables asserted against it and one test
+      that fails when the corpus and the code disagree about which errors exist.
+      *The two non-pydantic refusals are checked by name*, as the issue asks: a cell-budget and a
+      quota refusal must carry the same structure as one a validator produced, because a caller
+      cannot tell where a refusal was computed and should not have to.
+      *One request, five renderings* — HTTP, JSON-RPC, MCP, the CLI as a subprocess, and the
+      Python API — compared as payloads rather than by inspecting the call, because "it calls the
+      same function" is what the implementation says and the payload is what a caller sees.
+      ***The compact-answer size budgets finally have the assertion they were approximating.***
+      Those ceilings moved twice in one day — once for four more declared metrics, once for a
+      solver warning — and both moves were correct, because a byte count cannot tell "this
+      capability reports more" from "somebody put the nodal data back". `assert_no_numeric_arrays`
+      walks a payload and fails on any run of numbers longer than 32, wherever it hides; it is
+      checked against itself first, since a walker that quietly matched nothing would pass every
+      test while checking nothing.
+      *The vertical slice runs in both environments*, parametrised over `mock.laplace2d` and
+      `dolfinx.potential_flow2d`: discover, design, solve, read progress, query metrics, fetch the
+      VTK by path, patch one control point, re-solve. The assertion that earns its place is the
+      *negative* one — the patched geometry must **not** hit the cache, because a hit there would
+      serve the old airfoil's numbers for the new one. "No HTTP server started" is checked by
+      running the whole loop in a subprocess that fails if FastAPI was imported. (#51)
 
 ### Reported back from the application side
 

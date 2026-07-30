@@ -1,14 +1,20 @@
 # Local agent interface — design draft
 
-!!! warning "Preliminary design specification — mostly not implemented"
+!!! success "Implemented — M2.5 is complete"
 
-    This describes the interface [M2.5](03-roadmap.md) is meant to build, so that the
-    milestone's issues can be written against something concrete. Names, payload shapes and
-    operation sets *will* change during implementation; treat every example as illustrative,
-    not as a stable API. The shipped contract today is the HTTP/WebSocket
+    This was written as a design draft, so that [M2.5](03-roadmap.md)'s issues could be
+    written against something concrete. **The milestone has now shipped**, so where an example
+    below differs from what exists, the implementation is the accurate one — the differences
+    are noted inline, and the transports have reference pages of their own:
+    [JSON-RPC over stdio](08-json-rpc.md), [MCP adapter](09-mcp.md) and
+    [CLI and Python API](10-cli-and-python.md). The HTTP contract remains the
     [wire protocol](04-wire-protocol.md).
 
-    **Landed so far:** the transport-neutral core §11 depends on
+    The draft is kept rather than rewritten because its value now is the *reasoning* — what
+    each open question was weighed against, and what settled it — which a tidied-up
+    specification would delete.
+
+    **What landed:** the transport-neutral core §11 depends on
     ([#42](https://github.com/mandaloriat/fenix-spoon/issues/42)); capability discovery §6 —
     `environment.inspect`, `capability.list`, `capability.describe`, bound to HTTP in protocol
     1.2 ([#43](https://github.com/mandaloriat/fenix-spoon/issues/43)); the workspace §8 —
@@ -28,12 +34,15 @@
     ([#49](https://github.com/mandaloriat/fenix-spoon/issues/49)), documented at
     [MCP adapter](09-mcp.md); and the **CLI and Python API** §11
     ([#50](https://github.com/mandaloriat/fenix-spoon/issues/50)), documented at
-    [CLI and Python API](10-cli-and-python.md). Six of §15's open questions are settled as a
-    result and are marked there; a seventh is partly settled and says which part.
+    [CLI and Python API](10-cli-and-python.md); and the **conformance suite and vertical
+    slice** ([#51](https://github.com/mandaloriat/fenix-spoon/issues/51)), the exit criterion —
+    the loop in §14 runs as a test against both the mock and the FEniCSx solver, from a process
+    with no web framework imported.
 
-    Where §6–§11 below differ from what shipped, the implementation is the accurate one; the
-    differences are noted inline. What remains is #51 — cross-transport conformance and the
-    vertical slice — and the study kinds beyond the first.
+    Six of §15's open questions are settled as a result and are marked there; a seventh is
+    partly settled and says which part. What is still open is not M2.5 work: the study kinds
+    beyond the first, and the MCP resources-versus-paths question, which wants a real host to
+    watch rather than more argument.
 
 ## 1. Motivation
 
