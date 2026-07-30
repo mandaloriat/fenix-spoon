@@ -1,10 +1,12 @@
 """The `fenix-spoon` command (roadmap M2.5, issue #45).
 
-Two subcommands: `fenix-spoon rpc --stdio`, the entry point the JSON-RPC transport documents,
-and `fenix-spoon mcp --stdio`, the same operations for a Model Context Protocol host (#49).
-The broader CLI, where every *operation* is a subcommand printing JSON, is #50; this is
-deliberately not that. Adding half of it here would mean designing the command vocabulary
-twice, and each transport needs exactly one command to be startable.
+One command, three jobs. `fenix-spoon rpc --stdio` and `fenix-spoon mcp --stdio` start the
+two local transports (#45, #49); everything else is an *operation* — `fenix-spoon capability
+list`, `fenix-spoon job submit` — over the same method table (#50), which lives in
+:mod:`fenixspoon.commands`.
+
+One command rather than several because the package already ships one entry point and a
+second would mean two vocabularies to learn and keep in step.
 
     $ printf '{"jsonrpc":"2.0","id":1,"method":"capability.list"}\\n' | fenix-spoon rpc --stdio
 
@@ -176,6 +178,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="job and workspace directory (default: $FENIXSPOON_DATA_DIR, else ./.fenix-spoon)",
     )
     mcp.set_defaults(handler=_run_mcp)
+
+    # The operation subcommands (#50). Registered from one table in `commands.py`, so a
+    # command cannot drift from the JSON-RPC method it names.
+    from .commands import add_subcommands
+
+    add_subcommands(sub)
     return parser
 
 
@@ -193,6 +201,14 @@ def main(argv: list[str] | None = None) -> int:
         # flag rather than only an environment variable so a caller spawning the process can
         # point two agents at two workspaces without mutating its own environment.
         os.environ["FENIXSPOON_DATA_DIR"] = str(args.data_dir)
+
+    if getattr(args, "noun", None) is not None:
+        # An operation subcommand. It takes the core and principal as arguments rather than
+        # building them, so a test can drive it against a temporary workspace without going
+        # through the environment.
+        from .commands import run_command
+
+        return run_command(args, _build_core(), _principal())
     return args.handler(args)
 
 
