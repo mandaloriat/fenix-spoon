@@ -138,7 +138,9 @@ def test_a_running_job_stays_in_memory(data_dir):
 
 def test_listing_is_paginated_and_newest_first(data_dir):
     with TestClient(create_app()) as client:
-        ids = [run_job(client) for _ in range(3)]
+        # Three *different* solves: the result cache (#47) collapses identical submissions
+        # onto the job that already ran, so repeating one would list a single entry.
+        ids = [run_job(client, params={**FAST_PARAMS, "u_inf": u}) for u in (1.0, 2.0, 3.0)]
 
         page = client.get("/api/v1/jobs", params={"limit": 2}).json()
         assert page["total"] == 3

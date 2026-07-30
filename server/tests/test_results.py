@@ -103,6 +103,9 @@ def test_the_default_answer_is_small_and_carries_no_arrays(core, me):
     job = solve(core, me)
     compact = core.result_levels(job.id, me).model_dump(exclude_none=True)
     payload = json.dumps(compact)
+    # Still under the kilobyte after #47 added the `provenance` level to the default. It
+    # very nearly was not: a full SHA-256 hex digest is 64 characters of a ~950-byte answer,
+    # which is what prompted truncating the key to 128 bits rather than moving this budget.
     assert len(payload) < 1024, f"default answer is {len(payload)} bytes:\n{payload}"
 
     longest = max((len(a) for a in numeric_arrays(compact)), default=0)
@@ -506,7 +509,7 @@ def test_the_full_result_route_keeps_its_shape_and_gains_the_new_keys(client):
     payload = client.get(f"/api/v1/jobs/{run_http(client)}/result").json()
     assert {"job_id", "kind", "data", "stats", "artifacts"} <= set(payload)
     assert set(payload) == {
-        "job_id", "kind", "data", "stats", "metrics", "diagnostics", "artifacts"
+        "job_id", "kind", "data", "stats", "metrics", "diagnostics", "provenance", "artifacts"
     }
     assert payload["data"]["fields"]["speed"]
     assert payload["metrics"]["speed_max"] > 0
@@ -516,7 +519,9 @@ def test_the_full_result_route_keeps_its_shape_and_gains_the_new_keys(client):
 def test_the_summary_route_is_the_compact_one(client):
     job_id = run_http(client)
     compact = client.get(f"/api/v1/jobs/{job_id}/summary").json()
-    assert set(compact) == {"job_id", "solver", "status", "metrics", "diagnostics", "artifacts"}
+    assert set(compact) == {
+        "job_id", "solver", "status", "metrics", "diagnostics", "provenance", "artifacts"
+    }
     assert len(json.dumps(compact)) < 1024
 
     one = client.get(f"/api/v1/jobs/{job_id}/summary", params={"levels": ["metrics"]}).json()

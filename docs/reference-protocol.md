@@ -72,12 +72,13 @@ What `POST /api/v1/jobs` accepts.
 
 ## `JobCreated`
 
-The 202 from `POST /api/v1/jobs`. The job has been accepted, not finished.
+The 202 from `POST /api/v1/jobs`. The job has been accepted; it may already be done.
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `job_id` | `str` | yes |  | Use it to poll status, stream events and fetch the result. |
-| `status` | `str` | yes |  | Always `queued` at this point. |
+| `status` | `str` | yes |  | `queued` for work that will run. **Since protocol 1.4 it can be `done` or `running` immediately**: an identical solve is answered from the result cache (#47), and what comes back is the job that already has the answer. |
+| `cached` | `bool` | no | `False` | True when this submission was answered from an earlier identical solve rather than starting one. Added in protocol 1.4. Still a `202`: the submission was accepted, and giving it a different status code would be reusing a code to mean something new. |
 
 ## `JobStatus`
 
@@ -143,6 +144,7 @@ What `GET /api/v1/jobs/{id}/result` returns once a job is `done`.
 | `stats` | `dict[str, float]` | no | `{}` | What the solve cost — `cells`, `dofs`, `iterations`, `seconds`. Keys are server-defined and all optional: display them, never branch on one existing. |
 | `metrics` | `dict[str, float]` | no | `{}` | The engineering answer: the scalars this capability declared, keyed by the names `GET /capabilities/{name}?sections=metrics` reports. Added in protocol 1.3. Distinct from `stats`, which is what the solve *cost* — `t_max` and `t_rise` moved here from `stats` in 1.3 for exactly that reason. |
 | `diagnostics` | `dict[str, Any]` | no | `{}` | How the solve went: `converged`, `residual`, `warnings`. Added in protocol 1.3, because `stats` is typed `dict[str, float]` and a flag or a warning string had nowhere to go in it. |
+| `provenance` | `dict[str, Any]` | no | `{}` | Where the answer came from: `cached`, the solver and its declared version, the content-addressed `cache_key`, when it was computed, and the workspace object revisions it resolved. Added in protocol 1.4. `cached` is the one to read — it is the difference between a number that reflects the edit you just made and one answering a question you asked earlier. |
 | `artifacts` | `list[ArtifactRef]` | no | `[]` | Files the solver wrote, downloadable from the artifact endpoint. |
 
 ## `Grid2DData`
@@ -194,6 +196,7 @@ What `result.get` returns. Unrequested levels are absent, not null.
 | `status` | `StatusView \| null` | no | `None` | Level `status`. |
 | `metrics` | `dict[str, float] \| null` | no | `None` | Level `metrics`: the declared engineering scalars, keyed by the names `capability.describe` reports. Empty if the capability declares none. |
 | `diagnostics` | `DiagnosticsView \| null` | no | `None` | Level `diagnostics`. |
+| `provenance` | `Provenance \| null` | no | `None` | Level `provenance`. |
 | `fields` | `FieldsView \| null` | no | `None` | Level `fields`. |
 | `artifacts` | `list[ArtifactView] \| null` | no | `None` | Level `artifacts`. |
 
@@ -219,6 +222,22 @@ The `diagnostics` level: what the solve cost and how well it went.
 | `converged` | `bool \| null` | no | `None` | Whether an iterative solve reached tolerance. Null where it does not apply. |
 | `residual` | `float \| null` | no | `None` | Final residual, when iterative. |
 | `warnings` | `list[str]` | no | `[]` | Non-fatal things worth knowing about this solve. |
+
+## `Provenance`
+
+Where a result came from (roadmap M2.5, issue #47).
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `job_id` | `str` | yes |  | The job that produced these numbers. |
+| `cached` | `bool` | yes |  | True when this answer came from an earlier identical solve rather than from one run for this request. The single most useful bit in an iterative loop. |
+| `solver` | `str` | yes |  | Capability that ran it. |
+| `solver_version` | `str` | yes |  | The adapter's declared `version` — what a cache key is invalidated by. |
+| `cache_key` | `str \| null` | no | `None` | Content-addressed identity of the inputs. Null when this solve was not cacheable: the adapter does not declare itself deterministic, or the server has caching switched off. |
+| `computed_at` | `str \| null` | no | `None` | When the underlying solve finished (RFC 3339, UTC). On a cache hit this is older than the request, and how much older is the point. |
+| `seconds` | `float \| null` | no | `None` | What the original solve cost in wall-clock seconds. |
+| `environment` | `dict[str, str]` | no | `{}` | Package versions the answer depends on, as they were when it ran. Part of the cache key, so a dolfinx upgrade produces a different key rather than a stale hit. |
+| `inputs` | `dict[str, Any]` | no | `{}` | Pinned workspace object revisions this job resolved, when it came from a design: `design:d-1@2`, `geometry:g-1@3`. Empty for an inline submission — the design → job → result relation, recorded where it is knowable. |
 
 ## `FieldsView`
 
@@ -307,7 +326,7 @@ What `environment.inspect` returns: this installation, in a few hundred bytes.
 | `principal` | `str` | yes |  | Who the server thinks is asking. |
 | `quotas` | `QuotaInfo` | yes |  | That principal's limits. |
 | `usage` | `UsageInfo` | yes |  | That principal's current usage against them. |
-| `cache` | `dict[str, Any] \| null` | no | `None` | Content-addressed result cache state. Null on this server: the cache is issue #47 and does not exist yet. Reported as null rather than omitted so a caller can tell 'no cache here' from 'this server is too old to say'. |
+| `cache` | `CacheInfo \| null` | no | `None` | Content-addressed result cache state (#47). Null on a server too old to have one, which is why it stays optional — a caller can tell 'no cache here' from 'this server did not say'. |
 
 ## `PackageInfo`
 
@@ -358,6 +377,17 @@ What this principal is using right now, against :class:`QuotaInfo`.
 | `concurrent_jobs` | `int` | yes |  | Jobs currently queued or running. |
 | `jobs_last_hour` | `int` | yes |  | Jobs submitted in the last hour. |
 | `artifact_bytes` | `int` | yes |  | Bytes of stored artifacts. |
+
+## `CacheInfo`
+
+State of the content-addressed result cache (roadmap M2.5, issue #47).
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `enabled` | `bool` | yes |  | Whether identical resubmissions are reused (`FENIXSPOON_CACHE`). |
+| `scheme` | `str` | yes |  | Version of the hashing rule. Keys from a different scheme are never matched against these, because they describe inputs by a rule that no longer applies. |
+| `cacheable_capabilities` | `list[str]` | yes |  | Capabilities that declare themselves deterministic and so may be cached. The rest always recompute — see `Solver.deterministic`. Listed rather than counted because 'why did my resubmission not hit' is the question this answers. |
+| `retention` | `str` | yes |  | What expires a cache entry. The entry *is* the job, so the job TTL is the cache TTL; there is no second lifetime to reason about. |
 
 
 # Capabilities

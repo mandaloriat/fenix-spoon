@@ -145,9 +145,12 @@ def test_environment_reports_what_it_is(core, me):
     assert env.capabilities == len(registered_solvers())
     assert env.limits.max_cells == core.jobs.max_cells
     assert env.principal == "tester"
-    # #47 has not landed, and saying so as an explicit null is the point: a caller can
-    # tell "no cache on this server" from "this server is too old to have an opinion".
-    assert env.cache is None
+    # #47 landed: the cache reports itself, including *which* capabilities may be cached.
+    # That list is the answer to "why did my resubmission not hit", which is otherwise a
+    # property buried in an adapter's source.
+    assert env.cache.enabled is True
+    assert "mock.laplace2d" in env.cache.cacheable_capabilities
+    assert "FENIXSPOON_JOB_TTL" in env.cache.retention
 
 
 def test_environment_carries_no_schemas(core, me):

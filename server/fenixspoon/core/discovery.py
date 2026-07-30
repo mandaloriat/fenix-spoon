@@ -127,6 +127,33 @@ class UsageInfo(BaseModel):
     artifact_bytes: int = Field(description="Bytes of stored artifacts.")
 
 
+class CacheInfo(BaseModel):
+    """State of the content-addressed result cache (roadmap M2.5, issue #47)."""
+
+    enabled: bool = Field(
+        description="Whether identical resubmissions are reused (`FENIXSPOON_CACHE`)."
+    )
+    scheme: str = Field(
+        description=(
+            "Version of the hashing rule. Keys from a different scheme are never matched "
+            "against these, because they describe inputs by a rule that no longer applies."
+        )
+    )
+    cacheable_capabilities: list[str] = Field(
+        description=(
+            "Capabilities that declare themselves deterministic and so may be cached. The "
+            "rest always recompute — see `Solver.deterministic`. Listed rather than counted "
+            "because 'why did my resubmission not hit' is the question this answers."
+        )
+    )
+    retention: str = Field(
+        description=(
+            "What expires a cache entry. The entry *is* the job, so the job TTL is the "
+            "cache TTL; there is no second lifetime to reason about."
+        )
+    )
+
+
 class EnvironmentInfo(BaseModel):
     """What `environment.inspect` returns: this installation, in a few hundred bytes.
 
@@ -168,12 +195,12 @@ class EnvironmentInfo(BaseModel):
     principal: str = Field(description="Who the server thinks is asking.")
     quotas: QuotaInfo = Field(description="That principal's limits.")
     usage: UsageInfo = Field(description="That principal's current usage against them.")
-    cache: dict[str, Any] | None = Field(
+    cache: CacheInfo | None = Field(
         default=None,
         description=(
-            "Content-addressed result cache state. Null on this server: the cache is issue "
-            "#47 and does not exist yet. Reported as null rather than omitted so a caller "
-            "can tell 'no cache here' from 'this server is too old to say'."
+            "Content-addressed result cache state (#47). Null on a server too old to have "
+            "one, which is why it stays optional — a caller can tell 'no cache here' from "
+            "'this server did not say'."
         ),
     )
 
@@ -380,6 +407,7 @@ def environment_info(
     store: str,
     data_dir: str,
     workspace: str,
+    cache: "CacheInfo",
     capabilities: int,
     limits: LimitsInfo,
 ) -> EnvironmentInfo:
@@ -396,6 +424,7 @@ def environment_info(
         store=store,
         data_dir=data_dir,
         workspace=workspace,
+        cache=cache,
         capabilities=capabilities,
         limits=limits,
         principal=principal.id,
@@ -536,6 +565,7 @@ def describe_capability(
 
 __all__ = [
     "SECTIONS",
+    "CacheInfo",
     "CapabilityDescription",
     "CapabilitySummary",
     "CostSection",

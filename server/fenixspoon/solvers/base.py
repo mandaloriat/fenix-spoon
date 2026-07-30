@@ -285,8 +285,30 @@ class Solver(ABC):
 
     #: Importable modules this adapter needs. Informational: a solver only reaches the
     #: registry if its imports succeeded, so a listed capability's requirements are
-    #: satisfied by construction. Worth reporting anyway, because *versions* differ.
+    #: satisfied by construction. Worth reporting anyway, because *versions* differ —
+    #: and the versions go into the cache key (#47), so this list is load-bearing there.
     requires: ClassVar[list[str]] = []
+
+    #: **Bump this whenever the numbers change** (roadmap M2.5, issue #47).
+    #:
+    #: It is the only statement that a cached answer from an older build is no longer the
+    #: answer this adapter would give. Nothing can infer it: an adapter can be rewritten from
+    #: Jacobi to multigrid, or have a boundary condition corrected, without a single
+    #: signature changing — and the cache would go on serving the old field forever.
+    #:
+    #: A free-form string rather than a number, so a date or a git tag works. It is opaque to
+    #: the cache: any change to it is a new key.
+    version: ClassVar[str] = "1"
+
+    #: Whether this adapter returns the same answer for the same inputs. **Default False**,
+    #: so caching is opt-in (#47).
+    #:
+    #: Serving a cached result for a solver that does not reproduce is a wrong answer
+    #: delivered quickly, which is the worst outcome on offer; a missed hit is merely a
+    #: solve. Thread counts, MPI rank decomposition and anything seeded from wall-clock
+    #: state all break reproducibility, and none of them is visible from outside the
+    #: adapter — so the adapter has to say.
+    deterministic: ClassVar[bool] = False
 
     #: Scalar engineering quantities this capability reports. See :class:`MetricSpec`.
     metrics: ClassVar[list[MetricSpec]] = []

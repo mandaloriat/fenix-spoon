@@ -60,10 +60,25 @@ class JobRequest(BaseModel):
 
 
 class JobCreated(BaseModel):
-    """The 202 from `POST /api/v1/jobs`. The job has been accepted, not finished."""
+    """The 202 from `POST /api/v1/jobs`. The job has been accepted; it may already be done."""
 
     job_id: str = Field(description="Use it to poll status, stream events and fetch the result.")
-    status: str = Field(description="Always `queued` at this point.")
+    status: str = Field(
+        description=(
+            "`queued` for work that will run. **Since protocol 1.4 it can be `done` or "
+            "`running` immediately**: an identical solve is answered from the result cache "
+            "(#47), and what comes back is the job that already has the answer."
+        )
+    )
+    cached: bool = Field(
+        default=False,
+        description=(
+            "True when this submission was answered from an earlier identical solve rather "
+            "than starting one. Added in protocol 1.4. Still a `202`: the submission was "
+            "accepted, and giving it a different status code would be reusing a code to mean "
+            "something new."
+        ),
+    )
 
 
 class JobList(BaseModel):
@@ -180,7 +195,7 @@ async def create_job(
     principal: CurrentPrincipal,
 ) -> JobCreated:
     job = await _core(request).submit(req.solver, req.geometry, req.params, principal)
-    return JobCreated(job_id=job.id, status=job.status)
+    return JobCreated(job_id=job.id, status=job.status, cached=job.reused > 0)
 
 
 @router.get("/jobs", response_model=JobList)
@@ -295,6 +310,7 @@ def job_result(
             if summary
             else {}
         ),
+        "provenance": core.provenance(job_id, principal).model_dump(),
         # The one place a URL is built. The core hands back a path; only this transport
         # knows that the file is reachable at a route it serves.
         "artifacts": [

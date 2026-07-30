@@ -26,10 +26,10 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from .. import fields
+from .. import cache, fields
 from ..geometry import Geometry
 from ..jobs import Job, JobManager
-from ..objects import ObjectFileStore
+from ..objects import ObjectFileStore, parse_ref
 from ..solvers import available_solvers, get_solver, registered_solvers
 from ..solvers.base import Solver, SolverInfo
 from . import discovery, errors, results
@@ -124,6 +124,19 @@ class FenixSpoonCore:
             store=self.jobs.store.kind,
             data_dir=str(self.jobs.data_dir),
             workspace=str(self.workspace.store.root),
+            cache=discovery.CacheInfo(
+                enabled=self.jobs.cache,
+                scheme=cache.SCHEME,
+                cacheable_capabilities=[
+                    cls.name for cls in registered_solvers() if cls.deterministic
+                ],
+                retention=(
+                    "a cache entry is the job it points at, so it expires with the job "
+                    f"(FENIXSPOON_JOB_TTL, currently {self.jobs.job_ttl:g}s; 0 keeps "
+                    "them forever). Sweeping a job makes the next identical submission a "
+                    "miss, which recomputes — there is no dangling entry to clean up."
+                ),
+            ),
             capabilities=len(registered_solvers()),
             limits=LimitsInfo(
                 job_timeout_seconds=self.jobs.job_timeout,
@@ -204,12 +217,66 @@ class FenixSpoonCore:
         if estimate is not None and limit and estimate > limit:
             raise errors.CellBudgetExceeded(estimate, limit)
 
+        key = self.cache_key_for(solver_cls, geometry, parsed)
+        if key is not None:
+            reusable = self.jobs.store.find_cached(key, principal.id)
+            if reusable is not None:
+                # A hit is a lookup, not a copy: the job *is* the cache entry, and what comes
+                # back is the one that already ran. Two consequences worth knowing. It costs
+                # no quota, because it costs no compute — the checks below are deliberately
+                # after this. And a `running` or `queued` match is a hit too, which is how
+                # two identical submissions attach to one solve instead of racing; the second
+                # caller polls the job the first one started.
+                self.jobs.store.mark_reused(reusable.id)
+                reusable.reused += 1
+                return Job.from_record(reusable, self.jobs.data_dir / reusable.id)
+
         active, recent, artifact_bytes = self.jobs.store.usage(principal.id, hour_ago())
         check_quotas(principal, QuotaUsage(active, recent, artifact_bytes))
 
         return await self.jobs.submit(
-            solver_cls, geometry, parsed, owner=principal.id, inputs=inputs
+            solver_cls, geometry, parsed, owner=principal.id, inputs=inputs, cache_key=key
         )
+
+    def cache_key_for(
+        self, solver_cls: type[Solver], geometry: Geometry, params: Any
+    ) -> str | None:
+        """This solve's content-addressed identity, or None if it must not be cached.
+
+        None means one of two things, and both are refusals rather than failures: the server
+        has caching switched off, or the adapter has not declared itself deterministic. The
+        second is the default — see :attr:`Solver.deterministic` for why serving a cached
+        answer from a solver that does not reproduce is the worst outcome available.
+
+        The *validated* geometry and params go into the hash, never what the caller sent.
+        That is what makes the cache hit at all: an omitted default and an explicit one are
+        different JSON and the same solve.
+        """
+        if not self.jobs.cache or not solver_cls.deterministic:
+            return None
+        return cache.cache_key(
+            solver=solver_cls.name,
+            solver_version=solver_cls.version,
+            geometry=geometry.model_dump(mode="json"),
+            params=params.model_dump(mode="json"),
+            environment=cache.environment_fingerprint(list(solver_cls.requires)),
+        )
+
+    def jobs_for_object(
+        self, reference: str, principal: Principal, limit: int = 50
+    ) -> list[Job]:
+        """Every solve that used this workspace object — the design → job relation, backwards.
+
+        Unpinned finds all revisions, pinned finds one. Study is not in the chain yet: #48
+        introduces the object, and this reads whatever `inputs` records, so it will pick up
+        `study:s-1` the day a study writes one without this method changing.
+        """
+        try:
+            parse_ref(reference)
+        except ValueError as exc:
+            raise errors.MalformedReference(reference, str(exc)) from exc
+        records = self.jobs.store.find_by_input(reference, principal.id, limit=limit)
+        return [Job.from_record(record, self.jobs.data_dir / record.id) for record in records]
 
     async def submit_design(self, design: str, principal: Principal) -> Job:
         """Solve a design by reference — the iteration loop this milestone is for.
@@ -359,7 +426,36 @@ class FenixSpoonCore:
                 for handle in (self._handle(job, entry) for entry in job.artifacts)
             ],
             data=job.result.data if job.result is not None else None,
+            provenance=self._provenance(job),
             levels=wanted,
+        )
+
+    def provenance(self, job_id: str, principal: Principal) -> results.Provenance:
+        """Where a job's answer came from. Cheap — metadata only, never the payload."""
+        return self._provenance(self.job(job_id, principal))
+
+    def _provenance(self, job: Job) -> results.Provenance:
+        """Where this result came from, assembled from what the job recorded.
+
+        `cached` is `reused > 0`: at least one submission was answered with this job instead
+        of solving. That makes the flag answerable at any read rather than only in the reply
+        to the submission that hit — the first solve reports false, and the moment an
+        identical resubmission lands it reports true, which is the loop the acceptance
+        criterion describes.
+        """
+        solver_cls = get_solver(job.solver_name)
+        return results.Provenance(
+            job_id=job.id,
+            cached=job.reused > 0,
+            solver=job.solver_name,
+            solver_version=solver_cls.version if solver_cls else "unknown",
+            cache_key=job.cache_key,
+            computed_at=job.finished_at.isoformat() if job.finished_at else None,
+            seconds=(job.summary.stats.get("seconds") if job.summary else None),
+            environment=(
+                cache.environment_fingerprint(list(solver_cls.requires)) if solver_cls else {}
+            ),
+            inputs=dict(job.inputs),
         )
 
     def query_result(

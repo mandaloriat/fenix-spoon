@@ -25,6 +25,9 @@ Configuration (environment):
   job is refused with a clear message instead of being killed mid-solve by the timeout.
 - ``FENIXSPOON_JOB_TTL`` — seconds a finished job's record and artifacts are kept
   (default 604800 = 7 days; 0 keeps them forever).
+- ``FENIXSPOON_CACHE`` — ``1`` (default) to reuse an identical earlier solve, ``0`` to
+  always recompute. See :mod:`fenixspoon.cache`; only adapters that declare themselves
+  deterministic are ever cached, whatever this is set to.
 """
 
 import os
@@ -67,6 +70,11 @@ def _default_timeout() -> float:
 def _default_max_cells() -> int:
     """Cell budget a single job may ask for. 0 disables the check."""
     return int(os.environ.get("FENIXSPOON_MAX_CELLS", "2000000"))
+
+
+def _default_cache() -> bool:
+    """Whether to reuse an identical earlier solve. On by default (roadmap M2.5, #47)."""
+    return os.environ.get("FENIXSPOON_CACHE", "1").lower() not in ("0", "false", "no")
 
 
 def _default_ttl() -> float:
@@ -127,6 +135,8 @@ class Job:
     artifact_dir: Path | None = None
     events: list[dict[str, Any]] = field(default_factory=list)
     inputs: dict[str, Any] = field(default_factory=dict)
+    cache_key: str | None = None
+    reused: int = 0
     summary: ResultSummary | None = None
     cancel_event: threading.Event = field(default_factory=threading.Event)
 
@@ -142,6 +152,8 @@ class Job:
             result=self.result,
             artifacts=self.artifacts,
             inputs=self.inputs,
+            cache_key=self.cache_key,
+            reused=self.reused,
         )
 
     def absorb(self, record: JobRecord) -> None:
@@ -171,6 +183,8 @@ class Job:
             artifact_dir=artifact_dir,
             events=record.events,
             inputs=record.inputs,
+            cache_key=record.cache_key,
+            reused=record.reused,
             summary=record.summarize(),
         )
 
@@ -209,6 +223,7 @@ class JobManager:
         max_cells: int | None = None,
         store: JobStore | None = None,
         job_ttl: float | None = None,
+        cache: bool | None = None,
         max_workers: int | None = None,
         bus: EventBus | None = None,
         backend: ExecutionBackend | None = None,
@@ -218,6 +233,7 @@ class JobManager:
         self._timeout = job_timeout if job_timeout is not None else _default_timeout()
         self.max_cells = max_cells if max_cells is not None else _default_max_cells()
         self.job_ttl = job_ttl if job_ttl is not None else _default_ttl()
+        self.cache = cache if cache is not None else _default_cache()
         self.store = store if store is not None else _default_store(self._data_dir)
         self.bus = bus if bus is not None else _default_bus()
         self.max_workers = max_workers if max_workers is not None else _default_workers()
@@ -279,12 +295,14 @@ class JobManager:
         params: BaseModel,
         owner: str = "anonymous",
         inputs: dict[str, Any] | None = None,
+        cache_key: str | None = None,
     ) -> Job:
         job = Job(
             id=f"j-{uuid.uuid4().hex[:12]}",
             solver_name=solver_cls.name,
             owner=owner,
             inputs=inputs or {},
+            cache_key=cache_key,
         )
         job.artifact_dir = self._data_dir / job.id
         record = job.to_record()
