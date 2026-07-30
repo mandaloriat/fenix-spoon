@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>fs-viewer gesture fixture</title>
+<style>
+  html, body { margin: 0; height: 100%; }
+  /* A fixed, known box: the whole point of driving a real browser is that layout is real,
+     so the test has to be able to say where 200 px from the left actually is. */
+  fs-viewer { display: block; width: 800px; height: 400px; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "@fenix-spoon/client": "/client/dist/index.js"
+  }
+}
+</script>
+</head>
+<body>
+<fs-viewer id="viewer" colorbar="off" interactive mode="pan" vectors="velocity"
+           streamlines="velocity" toolbar="pan,probe,fit-domain,reset"></fs-viewer>
+<script type="module">
+import '/viewer/dist/index.js';
+
+const n = 65;
+const fields = [];
+const vectors = [];
+for (let iy = 0; iy < n; iy += 1) {
+  for (let ix = 0; ix < n; ix += 1) {
+    const x = (8 * ix) / (n - 1);
+    const y = (8 * iy) / (n - 1);
+    fields.push(x + y);
+    // Rigid rotation about the domain centre: the integral curves are circles, which is
+    // something a human can check in a screenshot and a test can check by arc length.
+    vectors.push([-(y - 4), x - 4]);
+  }
+}
+
+const viewer = document.getElementById('viewer');
+viewer.result = {
+  job_id: 'j-browser',
+  kind: 'grid2d',
+  data: {
+    bounds: [0, 0, 8, 8],
+    shape: [n, n],
+    fields: { psi: fields },
+    vector_fields: { velocity: vectors },
+    mask: Array(n * n).fill(0),
+  },
+  stats: {},
+  artifacts: [],
+};
+viewer.geometry = {
+  type: 'domain2d',
+  bounds: [0, 0, 8, 8],
+  obstacle: { type: 'polygon2d', points: [[3, 3], [5, 3], [4, 5]] },
+};
+
+// The harness reads these instead of reaching into private state.
+globalThis.viewer = viewer;
+globalThis.events = [];
+for (const type of ['fs-viewport-change', 'fs-probe', 'fs-mode-change', 'fs-section', 'fs-seed']) {
+  viewer.addEventListener(type, (event) => globalThis.events.push({ type, detail: event.detail }));
+}
+globalThis.ready = true;
+</script>
+</body>
+</html>

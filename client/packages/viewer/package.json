@@ -22,6 +22,14 @@
     "./field": {
       "types": "./dist/field.d.ts",
       "default": "./dist/field.js"
+    },
+    "./viewport": {
+      "types": "./dist/viewport.d.ts",
+      "default": "./dist/viewport.js"
+    },
+    "./streamlines": {
+      "types": "./dist/streamlines.d.ts",
+      "default": "./dist/streamlines.js"
     }
   },
   "files": [
@@ -31,7 +39,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:browser": "node tests/browser/gestures.test.mjs"
   },
   "dependencies": {
     "@fenix-spoon/client": "^0.1.0"
