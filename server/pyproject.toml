@@ -23,6 +23,12 @@ dependencies = [
     "jsonpatch>=1.33",
 ]
 
+[project.scripts]
+# The entry point the JSON-RPC transport documents (roadmap M2.5, #45). `python -m
+# fenixspoon` runs the same thing, for a caller that would rather name its interpreter than
+# trust PATH.
+fenix-spoon = "fenixspoon.cli:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8",

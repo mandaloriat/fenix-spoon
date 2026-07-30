@@ -44,6 +44,7 @@ from ..solvers.base import (
 )
 from . import errors
 from .identity import Principal
+from .wire import Selective
 
 #: Sections :func:`describe_capability` knows, in the order they appear in a full answer.
 #: A tuple rather than an enum so the error message can list them, and so adding one is a
@@ -328,7 +329,7 @@ class RequirementsSection(BaseModel):
     )
 
 
-class CapabilityDescription(BaseModel):
+class CapabilityDescription(Selective):
     """What `capability.describe` returns. Every section is optional and omitted unless asked.
 
     `name` is always present, so an answer is self-identifying no matter how narrow the

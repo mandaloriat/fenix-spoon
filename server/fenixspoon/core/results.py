@@ -53,6 +53,7 @@ from .. import fields as fieldlib
 from ..series import Series1DData
 from ..store import ResultSummary
 from . import errors
+from .wire import Selective
 
 #: Response levels, in the order a full answer presents them.
 LEVELS: tuple[str, ...] = (
@@ -190,7 +191,7 @@ class FieldsView(BaseModel):
     data: dict[str, Any] = Field(description="The full field payload.")
 
 
-class LeveledResult(BaseModel):
+class LeveledResult(Selective):
     """What `result.get` returns. Unrequested levels are absent, not null.
 
     `job_id` and `solver` are always present for the same reason `capability.describe` always

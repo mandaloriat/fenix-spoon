@@ -6,6 +6,11 @@ The contract between clients and a Fenix Spoon server. JSON everywhere; all endp
 human-readable view, and the [protocol models](reference-protocol.md) page is generated from
 them. Breaking changes bump the path version.
 
+**This is the HTTP contract.** The same operations are reachable over a pipe with no server
+and no port — see [JSON-RPC over stdio](08-json-rpc.md), which is an adapter over the same
+core and the same models, so the two answer the same questions with the same shapes. The
+protocol version below is shared: `rpc.describe` reports it too.
+
 ## Versioning
 
 The protocol is versioned `MAJOR.MINOR`, currently **1.5**, and a server reports what it
@@ -84,11 +89,12 @@ channel, the `Authorization` header and the `url` fields that make artifacts fet
 transport's binding of that contract. A caller that is not speaking HTTP will encode "job not
 finished" and "unknown solver" differently, but must mean the same thing.
 
-The distinction matters because [M2.5](03-roadmap.md)
-plans a second transport (JSON-RPC 2.0 over stdio) over the same domain models; its design draft
-is [docs/07-local-agent-interface.md](07-local-agent-interface.md). **This document stays the
-specification of the HTTP/WebSocket protocol** — the two are not merged here. What they share is
-the models above, plus the conformance corpus both are required to satisfy.
+The distinction stopped being theoretical with [#45](https://github.com/mandaloriat/fenix-spoon/issues/45):
+[JSON-RPC 2.0 over stdio](08-json-rpc.md) now carries the same domain models with the same
+semantics and encodes the envelope differently — "job not finished" is a `409` here and a
+`-32002` there. **This document stays the specification of the HTTP/WebSocket protocol** — the
+two are not merged. What they share is the models above, plus the conformance corpus both are
+required to satisfy.
 
 Three pieces of that draft have landed, and how much of each reaches this document differs. The
 transport-neutral core ([#42](https://github.com/mandaloriat/fenix-spoon/issues/42)) is invisible
@@ -105,7 +111,10 @@ at until now. Finally, **compact results**
 declared metric *values*, formalised diagnostics and bounded field queries, all bound below. And
 the **result cache** ([#47](https://github.com/mandaloriat/fenix-spoon/issues/47)) is protocol
 1.4: `provenance` on every result, and an identical resubmission answered from the solve that
-already ran. The rest of the draft — JSON-RPC, CLI, MCP and studies — is still design.
+already ran. The **JSON-RPC transport** ([#45](https://github.com/mandaloriat/fenix-spoon/issues/45))
+adds nothing to this document by design — it is a second binding of these models, not a change to
+them, and it is where the workspace finally became reachable. The rest of the draft — the CLI,
+Python and MCP adapters, and studies — is still design.
 
 **Protocol 1.5** adds two things to the domain contract and both are additive: a
 [`series1d` result kind](#one-dimensional-results) with a `series` key beside `data`
