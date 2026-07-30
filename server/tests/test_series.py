@@ -30,7 +30,7 @@ from fenixspoon.series import (
     curves_of,
 )
 from fenixspoon.solvers.base import SolverResult
-from fenixspoon.store import JobRecord
+from fenixspoon.store import JobRecord, SqliteJobStore
 
 
 def axis(n: int, name: str = "x/c") -> SeriesAxis:
@@ -233,8 +233,40 @@ def test_the_series_level_finds_curves_in_either_home():
     assert curve_result[0].traces[0].values == SWEEP.traces[0].values
 
 
+def test_a_series1d_result_survives_a_real_sqlite_round_trip(tmp_path):
+    """The curves of a `series1d` result have to reach the **column**, not just the summary.
+
+    This is the gap the review found, and it is worth keeping the shape of the miss on record:
+    the sibling test below asserts through `JobRecord.summarize()`, which reads
+    `curves_of(...)` — so it passed while `SqliteJobStore.put()` was still writing
+    `record.result.series`, which is empty for this kind. The curves were there until the
+    process restarted and the store read them back from a column that had `[]` in it.
+
+    A test that stops at the summary cannot see that. This one writes, closes, reopens and
+    reads, which is the only way the two halves of the persistence path get compared.
+    """
+    store = SqliteJobStore(tmp_path / "jobs.db", result_dir=tmp_path)
+    store.put(
+        JobRecord(
+            id="j-1",
+            solver="future.sweep",
+            status="done",
+            result=SolverResult(kind="series1d", data=SWEEP.model_dump()),
+        )
+    )
+    store.close()
+
+    reopened = SqliteJobStore(tmp_path / "jobs.db", result_dir=tmp_path)
+    record = reopened.get("j-1", with_result=False)
+    assert record is not None and record.summary is not None
+    assert [entry.name for entry in record.summary.series] == ["lift_curve"], (
+        "a series1d result's curves did not reach the series column"
+    )
+    assert record.summary.series[0].traces[0].values == SWEEP.traces[0].values
+
+
 def test_a_series1d_result_reaches_the_compact_level_through_the_store(tmp_path):
-    """End to end, through the summary a store builds — the path a real `series1d` adapter takes.
+    """The level itself, from a summary — the other half of the path above.
 
     Asserted through `JobRecord.summarize()` rather than a live solve because no shipped adapter
     emits `series1d`; this is the seam that would have been wrong for the first one that did.
