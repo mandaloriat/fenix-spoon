@@ -1,0 +1,193 @@
+{
+  "description": "How one refusal is represented on each transport (roadmap M2.5, #51).",
+  "why": [
+    "Four adapters now claim to agree with each other. Until this file they agreed on the",
+    "strength of per-pair tests, which is a shape that decays quietly: adding an error and",
+    "mapping it on one transport leaves the others fine, green, and wrong.",
+    "",
+    "This is the source of truth for the *partition* — which errors are alike — rather than",
+    "for the codes themselves. Two errors that share an HTTP status must share a JSON-RPC",
+    "code and a CLI exit code, and the other way round. The values are per-transport and",
+    "cannot match; the grouping is the contract."
+  ],
+  "consumers": [
+    "server/tests/test_conformance.py asserts every table against this file.",
+    "The JS SDK does not read it yet: it has one FenixSpoonError and no status table to",
+    "assert. When it grows one, this is what it should be built from — which is why the file",
+    "lives in the shared corpus rather than beside the server tests."
+  ],
+  "classes": [
+    {
+      "type": "UnknownCapability",
+      "group": "not_found",
+      "http": 404,
+      "jsonrpc": -32001,
+      "exit": 4,
+      "note": "No solver by that name is installed."
+    },
+    {
+      "type": "JobNotFound",
+      "group": "not_found",
+      "http": 404,
+      "jsonrpc": -32001,
+      "exit": 4,
+      "note": "Missing and somebody else's are deliberately the same answer."
+    },
+    {
+      "type": "ObjectNotFound",
+      "group": "not_found",
+      "http": 404,
+      "jsonrpc": -32001,
+      "exit": 4
+    },
+    {
+      "type": "ArtifactNotFound",
+      "group": "not_found",
+      "http": 404,
+      "jsonrpc": -32001,
+      "exit": 4
+    },
+    {
+      "type": "InvalidParams",
+      "group": "invalid_request",
+      "http": 422,
+      "jsonrpc": -32602,
+      "exit": 3,
+      "structured": "errors",
+      "note": "Carries pydantic's structured list on every transport."
+    },
+    {
+      "type": "GeometryKindMismatch",
+      "group": "invalid_request",
+      "http": 422,
+      "jsonrpc": -32602,
+      "exit": 3
+    },
+    {
+      "type": "CellBudgetExceeded",
+      "group": "invalid_request",
+      "http": 422,
+      "jsonrpc": -32602,
+      "exit": 3,
+      "structured": "estimate",
+      "note": "Not a pydantic error, and the issue names it for that reason: a refusal computed by the server must carry the same structure as one computed by a validator."
+    },
+    {
+      "type": "UnknownSection",
+      "group": "invalid_request",
+      "http": 422,
+      "jsonrpc": -32602,
+      "exit": 3
+    },
+    {
+      "type": "UnknownLevel",
+      "group": "invalid_request",
+      "http": 422,
+      "jsonrpc": -32602,
+      "exit": 3
+    },
+    {
+      "type": "UnknownObjectType",
+      "group": "invalid_request",
+      "http": 422,
+      "jsonrpc": -32602,
+      "exit": 3
+    },
+    {
+      "type": "MalformedReference",
+      "group": "invalid_request",
+      "http": 422,
+      "jsonrpc": -32602,
+      "exit": 3
+    },
+    {
+      "type": "WrongObjectType",
+      "group": "invalid_request",
+      "http": 422,
+      "jsonrpc": -32602,
+      "exit": 3
+    },
+    {
+      "type": "InvalidObject",
+      "group": "invalid_request",
+      "http": 422,
+      "jsonrpc": -32602,
+      "exit": 3,
+      "structured": "errors"
+    },
+    {
+      "type": "InvalidPatch",
+      "group": "invalid_request",
+      "http": 422,
+      "jsonrpc": -32602,
+      "exit": 3
+    },
+    {
+      "type": "FieldQueryFailed",
+      "group": "invalid_request",
+      "http": 422,
+      "jsonrpc": -32602,
+      "exit": 3
+    },
+    {
+      "type": "RegionUnavailable",
+      "group": "invalid_request",
+      "http": 422,
+      "jsonrpc": -32602,
+      "exit": 3
+    },
+    {
+      "type": "JobNotFinished",
+      "group": "conflict",
+      "http": 409,
+      "jsonrpc": -32002,
+      "exit": 5,
+      "structured": "status"
+    },
+    {
+      "type": "JobAlreadyFinished",
+      "group": "conflict",
+      "http": 409,
+      "jsonrpc": -32002,
+      "exit": 5
+    },
+    {
+      "type": "JobDidNotSucceed",
+      "group": "conflict",
+      "http": 409,
+      "jsonrpc": -32002,
+      "exit": 5
+    },
+    {
+      "type": "PatchChangedNothing",
+      "group": "conflict",
+      "http": 409,
+      "jsonrpc": -32002,
+      "exit": 5
+    },
+    {
+      "type": "CannotPatchRevision",
+      "group": "conflict",
+      "http": 409,
+      "jsonrpc": -32002,
+      "exit": 5
+    },
+    {
+      "type": "QuotaExceeded",
+      "group": "quota",
+      "http": 429,
+      "jsonrpc": -32003,
+      "exit": 6,
+      "structured": "retry_after",
+      "note": "The one refusal where waiting is the remedy — and `retry_after` is null when it is not, rather than guessed."
+    },
+    {
+      "type": "ResultPayloadMissing",
+      "group": "gone",
+      "http": 410,
+      "jsonrpc": -32004,
+      "exit": 7,
+      "note": "The job is there and its arrays are not. Distinct from not_found on purpose."
+    }
+  ]
+}
