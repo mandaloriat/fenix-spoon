@@ -288,20 +288,34 @@ function requireVectorFields(
  * the JSON says which until this says it.
  */
 
-/** Per trace and per axis. Above this a "curve" is a field wearing a different key. */
-const MAX_SERIES_POINTS = 4096;
-
-/** Per collection, and per result. */
-const MAX_SERIES_TRACES = 32;
-
 /**
- * Across every trace of every series on one result.
+ * The series ceilings, mirrored from `fenixspoon/series.py`.
  *
- * The other two limits multiply out to far more than either intends — thirty-two legal traces of
- * four thousand legal points is a quarter of a million numbers — so this is the one that
- * actually keeps a series from becoming the field arrays.
+ * Exported so the conformance suite can pin them against `series_limits` in
+ * `protocol/fixtures/results.json`, which the Python suite asserts too. Mirroring a limit
+ * without that check is how the two sides drift: lowering one server-side would leave this
+ * validator accepting payloads the server refuses, which is the one failure mode the shared
+ * corpus exists to prevent.
  */
-const MAX_SERIES_TOTAL_POINTS = 8192;
+export const SERIES_LIMITS = {
+  /** Per trace and per axis. Above this a "curve" is a field wearing a different key. */
+  max_points_per_trace: 4096,
+  /** Traces in one curve set. */
+  max_traces_per_series: 32,
+  /** Curve sets on one result. */
+  max_series_per_result: 32,
+  /**
+   * Across every trace of every series on one result. The others multiply out to far more than
+   * any of them intends — thirty-two legal traces of four thousand legal points is a quarter of
+   * a million numbers — so this is the one that actually keeps a series from becoming a field.
+   */
+  max_total_points: 8192,
+} as const;
+
+const MAX_SERIES_POINTS = SERIES_LIMITS.max_points_per_trace;
+const MAX_SERIES_TRACES = SERIES_LIMITS.max_traces_per_series;
+const MAX_SERIES_PER_RESULT = SERIES_LIMITS.max_series_per_result;
+const MAX_SERIES_TOTAL_POINTS = SERIES_LIMITS.max_total_points;
 
 function validateSeriesAxis(value: unknown, what: string): SeriesAxis {
   if (!isRecord(value)) fail(`${what} must be an object`);
@@ -385,8 +399,8 @@ export function validateSeries1D(value: unknown, what = 'series'): Series1DData 
 function validateSeriesList(value: unknown): Series1DData[] {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) fail('series must be an array');
-  if (value.length > MAX_SERIES_TRACES) {
-    fail(`a result carries ${value.length} series, over the ${MAX_SERIES_TRACES} allowed`);
+  if (value.length > MAX_SERIES_PER_RESULT) {
+    fail(`a result carries ${value.length} series, over the ${MAX_SERIES_PER_RESULT} allowed`);
   }
   const parsed = value.map((entry, i) => validateSeries1D(entry, `series ${i}`));
   const names = new Set(parsed.map((entry) => entry.name));
