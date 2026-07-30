@@ -52,7 +52,16 @@
           "jobs_last_hour": 0,
           "artifact_bytes": 0
         },
-        "cache": null,
+        "cache": {
+          "enabled": true,
+          "scheme": "fs-cache-1",
+          "cacheable_capabilities": [
+            "mock.laplace2d",
+            "mock.magnetostatics2d",
+            "mock.heat2d"
+          ],
+          "retention": "a cache entry is the job it points at, so it expires with the job."
+        },
         "workspace": "/var/lib/fenixspoon/objects"
       }
     },
@@ -112,13 +121,22 @@
           "jobs_last_hour": 7,
           "artifact_bytes": 4194304
         },
-        "cache": null,
+        "cache": {
+          "enabled": true,
+          "scheme": "fs-cache-1",
+          "cacheable_capabilities": [
+            "mock.laplace2d",
+            "mock.magnetostatics2d",
+            "mock.heat2d"
+          ],
+          "retention": "a cache entry is the job it points at, so it expires with the job."
+        },
         "workspace": "/data/objects"
       }
     },
     {
       "name": "cache omitted entirely",
-      "$comment": "`cache` defaults to null, so a server too old to know about it still parses. The field is reported as an explicit null rather than omitted (see #47), but the model must not require it.",
+      "$comment": "`cache` stays optional so a server predating #47 still parses. A 1.4 server always reports it; the field is not required, because the model has to accept what an older one sent.",
       "payload": {
         "implementation": "0.1.0",
         "protocol": "1.2",
@@ -313,8 +331,66 @@
           "concurrent_jobs": 0,
           "jobs_last_hour": 0,
           "artifact_bytes": 0
+        }
+      }
+    },
+    {
+      "name": "a cache that does not say what may be cached",
+      "reason": "`cacheable_capabilities` is the answer to 'why did my resubmission not hit'. Without it, a caller seeing enabled:true and a miss has no way to tell whether the adapter opted out or its inputs changed.",
+      "payload": {
+        "implementation": "0.1.0",
+        "protocol": "1.2",
+        "python": "3.11.15",
+        "platform": "Linux-6.8.0-x86_64-with-glibc2.39",
+        "packages": [
+          {
+            "name": "numpy",
+            "imported": true,
+            "version": "2.4.6"
+          },
+          {
+            "name": "dolfinx",
+            "imported": false,
+            "version": null
+          },
+          {
+            "name": "gmsh",
+            "imported": false,
+            "version": null
+          }
+        ],
+        "mpi": {
+          "available": false,
+          "size": null
         },
-        "cache": null
+        "execution_backend": "in-process",
+        "event_bus": "in-process",
+        "store": "sqlite",
+        "data_dir": "/var/lib/fenixspoon",
+        "capabilities": 3,
+        "limits": {
+          "job_timeout_seconds": 600.0,
+          "max_cells": 2000000,
+          "job_ttl_seconds": 604800.0,
+          "max_workers": 8
+        },
+        "principal": "anonymous",
+        "quotas": {
+          "concurrent_jobs": 0,
+          "jobs_per_hour": 0,
+          "artifact_bytes": 0
+        },
+        "usage": {
+          "concurrent_jobs": 0,
+          "jobs_last_hour": 0,
+          "artifact_bytes": 0
+        },
+        "cache": {
+          "enabled": true,
+          "scheme": "fs-cache-1",
+          "retention": "with the job"
+        },
+        "workspace": "/var/lib/fenixspoon/objects"
       }
     }
   ]

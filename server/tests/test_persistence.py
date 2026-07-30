@@ -139,7 +139,9 @@ def test_a_running_job_stays_in_memory(data_dir):
 
 def test_listing_is_paginated_and_newest_first(data_dir):
     with TestClient(create_app()) as client:
-        ids = [run_job(client) for _ in range(3)]
+        # Three *different* solves: the result cache (#47) collapses identical submissions
+        # onto the job that already ran, so repeating one would list a single entry.
+        ids = [run_job(client, params={**FAST_PARAMS, "u_inf": u}) for u in (1.0, 2.0, 3.0)]
 
         page = client.get("/api/v1/jobs", params={"limit": 2}).json()
         assert page["total"] == 3
@@ -345,6 +347,49 @@ def test_stores_agree_on_partial_loads(tmp_path, store_factory):
     partial.events.append({"type": "bogus"})
     assert store.get("j-1").status == "done", "mutating a partial record rewrote the store"
     assert len(store.get("j-1").events) == 1
+
+
+@pytest.mark.parametrize("store_factory", ["memory", "sqlite"])
+def test_stores_agree_that_put_never_walks_back_the_submission_columns(tmp_path, store_factory):
+    """`cache_key`, `reused` and `provenance` are facts about the submission, not state.
+
+    The failure this pins is specific and was real (review of #47). `submit()` hands the
+    execution backend the *same* record object it inserted, and the backend puts it back as
+    the job runs and again when it finishes — carrying `reused = 0` the whole time, because
+    that object was built before any hit could land. A cache hit in between increments the
+    *stored* row via `mark_reused`. If `put` wrote the in-flight object's counter back, the
+    increment would vanish and `cached` would flip false again on a job that really was
+    reused.
+
+    The SQLite store never had the bug — the columns are absent from its `ON CONFLICT DO
+    UPDATE` list — and the memory store did, which is exactly the kind of divergence a
+    parity test exists to catch: code that works against one backend quietly doing the
+    wrong thing against the other.
+    """
+    store = (
+        MemoryJobStore()
+        if store_factory == "memory"
+        else SqliteJobStore(tmp_path / "jobs.db", result_dir=tmp_path)
+    )
+    in_flight = JobRecord(
+        id="j-1",
+        solver="s",
+        status="running",
+        cache_key="fs-cache-1:deadbeef",
+        provenance={"solver_version": "1", "environment": {"numpy": "2.0.0"}},
+    )
+    store.put(in_flight)
+    store.mark_reused("j-1")  # an identical submission lands mid-solve
+
+    in_flight.status = "done"  # …and then the solve finishes, holding a stale copy
+    store.put(in_flight)
+
+    stored = store.get("j-1")
+    assert stored.status == "done", "the status update itself must still land"
+    assert stored.reused == 1, "the solve's put() dropped a cache hit"
+    assert stored.cache_key == "fs-cache-1:deadbeef"
+    assert stored.provenance == {"solver_version": "1", "environment": {"numpy": "2.0.0"}}
+    store.close()
 
 
 def test_shutdown_releases_the_backend_and_the_bus(tmp_path):

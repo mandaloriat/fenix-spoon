@@ -8,13 +8,13 @@ them. Breaking changes bump the path version.
 
 ## Versioning
 
-The protocol is versioned `MAJOR.MINOR`, currently **1.4**, and a server reports what it
+The protocol is versioned `MAJOR.MINOR`, currently **1.5**, and a server reports what it
 speaks:
 
 ### `GET /api/v1/version`
 
 ```json
-{ "protocol": "1.4", "implementation": "0.1.0", "api_path": "/api/v1" }
+{ "protocol": "1.5", "implementation": "0.1.0", "api_path": "/api/v1" }
 ```
 
 **The one route that never requires an API key.** A client needs to know whether it can talk
@@ -102,10 +102,12 @@ only trace it leaves on this contract is the `workspace` path in `environment.in
 [#43](https://github.com/mandaloriat/fenix-spoon/issues/43) had specified and had nothing to point
 at until now. Finally, **compact results**
 ([#46](https://github.com/mandaloriat/fenix-spoon/issues/46)) are protocol 1.3: response levels,
-declared metric *values*, formalised diagnostics and bounded field queries, all bound below. The
-rest of the draft — JSON-RPC, the content-addressed cache, studies — is still design.
+declared metric *values*, formalised diagnostics and bounded field queries, all bound below. And
+the **result cache** ([#47](https://github.com/mandaloriat/fenix-spoon/issues/47)) is protocol
+1.4: `provenance` on every result, and an identical resubmission answered from the solve that
+already ran. The rest of the draft — JSON-RPC, CLI, MCP and studies — is still design.
 
-**Protocol 1.4** adds two things to the domain contract and both are additive: a
+**Protocol 1.5** adds two things to the domain contract and both are additive: a
 [`series1d` result kind](#one-dimensional-results) with a `series` key beside `data`
 ([#69](https://github.com/mandaloriat/fenix-spoon/issues/69)), and an
 [`assumptions` section](#assumptions) on `capability.describe`
@@ -234,7 +236,7 @@ would be a declaration nothing can evaluate.
 Where a metric is neither a field reduction nor a plain derived ratio it names a `boundary`
 instead: `c_l` and `c_m_c4` are integrals over the **body surface**, not over the domain, and
 saying so is what lets a caller tell "the solver integrates this over the body" from "the solver
-works this out somehow" — added in 1.4 with
+works this out somehow" — added in 1.5 with
 [#68](https://github.com/mandaloriat/fenix-spoon/issues/68).
 
 The `params` section carries a flat parameter list — name, type, default, bounds, enum choices —
@@ -244,7 +246,7 @@ adapters shipped today the summary is in fact marginally *larger* than the schem
 
 #### Assumptions
 
-*Added in protocol 1.4 ([#70](https://github.com/mandaloriat/fenix-spoon/issues/70)).*
+*Added in protocol 1.5 ([#70](https://github.com/mandaloriat/fenix-spoon/issues/70)).*
 
 Every other section says what a capability **does**. This one says what its model **assumes**,
 and where it stops applying — which is the thing a caller most needs before trusting a number,
@@ -444,6 +446,8 @@ is precisely what `Gone` means. Result envelope:
   "stats": { "cells": 8192, "iterations": 3000, "seconds": 1.8421 },
   "metrics": { "speed_max": 1.379, "cp_min": -0.903, "c_l": 0.596, "circulation": -0.298 },
   "diagnostics": { "converged": true, "residual": 8.4e-10, "warnings": [] },
+  "provenance": { "cached": false, "solver": "mock.laplace2d", "solver_version": "1",
+                  "cache_key": "c96e071c516e59b1cc1352e650bf6210", "seconds": 1.84 },
   "series": [ { "name": "surface_cp", "traces": [ { "...": "see one-dimensional results" } ] } ],
   "artifacts": [
     { "name": "solution.vtk", "content_type": "model/vnd.vtk", "size": 191234,
@@ -473,10 +477,54 @@ the [heat-sink demo](gallery.md) shows.
 iterate toward a tolerance), `residual`, and `warnings`, which previously could only be said
 in a progress event and therefore only to a client that happened to be watching.
 
-`series` is protocol 1.4's addition and is described under
+`series` is protocol 1.5's addition and is described under
 [one-dimensional results](#one-dimensional-results). It is always present on this route —
 empty for a capability that produces no curves — because this is the exhaustive envelope, which
 already carries the field arrays, so withholding a bounded curve from it would save nothing.
+
+`provenance` (protocol 1.4) says where the answer came from. **`cached` is the field to read:**
+false means these numbers were computed for this request, true means they came from an earlier
+identical solve. It is the difference between a metric that reflects the edit you just made and
+one answering a question you asked ten minutes ago.
+
+`solver_version` and `environment` are **recorded when the job is accepted**, not read off the
+server as it stands when you ask. So they keep answering "what produced this payload" after the
+deployment has moved on — an adapter that bumps its version, or a package upgrade, does not
+rewrite the history of jobs that ran before it. A job stored before this was recorded reports
+`solver_version: "unknown"` and an empty `environment` rather than today's values.
+
+## The result cache
+
+Added in protocol 1.4 ([#47](https://github.com/mandaloriat/fenix-spoon/issues/47)). In an
+iterative loop most resubmissions are identical to something already computed — patch a control
+point, solve, patch it back, solve — and a solve with an identity derived from its inputs makes
+the second of those a database lookup.
+
+**A hit returns the job that already ran.** `POST /jobs` still answers `202`, but the `job_id`
+may be one you have seen before, `status` may already be `done`, and `cached` is `true`. A client
+that assumes a fresh submission is always `queued` will wait for a transition that already
+happened — that is the one behavioural change in 1.4 and the reason `cached` is on the submit
+response rather than only on the result.
+
+The identity covers **everything that determines the answer**: the solver name, its declared
+`version`, the *validated* geometry and params, and the versions of the packages the capability
+depends on. Validated rather than as-submitted is what makes it hit at all — a caller that omits
+a defaulted parameter and one that states it have sent different JSON and want the same answer.
+
+Three consequences worth knowing:
+
+- **Caching is opt-in per adapter.** A capability is cached only if it declares itself
+  deterministic; `GET /environment` lists which ones do. Serving a cached answer for a solver
+  that does not reproduce is a wrong answer delivered quickly, and a missed hit is merely a
+  solve, so the default is the safe one.
+- **A hit costs no quota**, because it costs no compute. Quotas limit work, and a lookup is not
+  work.
+- **The cache expires with the job.** An entry *is* its job, so `FENIXSPOON_JOB_TTL` is the only
+  lifetime involved; sweeping a job makes the next identical submission a miss that recomputes.
+  There is no second retention policy and no dangling entry.
+
+The cache is per-principal. A cross-principal hit would save more and would tell one caller that
+another has run this exact geometry, which a job id is already treated as disclosing.
 
 ### Compact results
 
@@ -487,8 +535,9 @@ caller that has to reason about the answer: a `grid2d` result is tens of thousan
 #### `GET /api/v1/jobs/{job_id}/summary`
 
 The same relationship `/capabilities` has to `/solvers` — the exhaustive route keeps its
-payload, and this one answers the question a caller usually has. Five levels, selected with a
-repeatable `?levels=`: `status`, `metrics`, `diagnostics`, `series`, `fields`, `artifacts`.
+payload, and this one answers the question a caller usually has. Seven levels, selected with a
+repeatable `?levels=`: `status`, `metrics`, `diagnostics`, `provenance`, `series`, `fields`,
+`artifacts`.
 
 **The default is every level except `series` and `fields`**, which is the entire behavioural
 change: a caller that says nothing gets an answer it can read. Measured on a 96-point
@@ -496,7 +545,7 @@ potential-flow solve, the default answer is 686 bytes against 529 kB for the ful
 unrequested level is *absent* rather than null, and an unknown level name is a `422` for the same
 reason a misspelled capability section is.
 
-`series` (1.4) sits outside the default for a narrower reason than `fields` does. A curve is
+`series` (1.5) sits outside the default for a narrower reason than `fields` does. A curve is
 *bounded* and is genuinely part of the answer rather than part of the cost, so leaving it out is
 not free — but the acceptance criterion for the default is that it carries **no numeric array
 longer than a handful of entries**, and a two-hundred-point surface distribution is a numeric
@@ -535,7 +584,7 @@ saying so rather than an empty region.
 
 Result kinds:
 
-- `series1d` (implemented, added in 1.4): curves rather than a field — see
+- `series1d` (implemented, added in 1.5): curves rather than a field — see
   [one-dimensional results](#one-dimensional-results).
 - `grid2d` (implemented): fields sampled on a regular grid —
   `{ "bounds": [xmin, ymin, xmax, ymax], "shape": [ny, nx], "fields": { "<name>": [...] },
@@ -606,10 +655,10 @@ physical situation at two mesh sizes.
 
 ## One-dimensional results
 
-*Added in protocol 1.4 ([#69](https://github.com/mandaloriat/fenix-spoon/issues/69)) — additive,
-so it shares `/api/v1` and a 1.3 client is unaffected.*
+*Added in protocol 1.5 ([#69](https://github.com/mandaloriat/fenix-spoon/issues/69)) — additive,
+so it shares `/api/v1` and a 1.4 client is unaffected.*
 
-Until 1.4 there were two result kinds and both were *fields over a 2-D domain*. A great many
+Until 1.5 there were two result kinds and both were *fields over a 2-D domain*. A great many
 engineering answers are not that shape. They are an ordered list of (x, y) pairs with a name and
 a unit:
 
@@ -706,9 +755,9 @@ second protocol. Each is driven by
 - ~~**Result levels.**~~ Landed in 1.3, as a separate route rather than a query parameter on the
   existing one: `/result` keeps its shape and its arrays, and `/summary` is the compact form. Two
   shapes on one path, chosen by a query parameter, is not something a typed client can describe.
-- ~~**One-dimensional results.**~~ Landed in 1.4 — see
+- ~~**One-dimensional results.**~~ Landed in 1.5 — see
   [one-dimensional results](#one-dimensional-results).
-- ~~**Declared assumptions.**~~ Landed in 1.4 — see [assumptions](#assumptions).
+- ~~**Declared assumptions.**~~ Landed in 1.5 — see [assumptions](#assumptions).
 - **A curve widget.** `series1d` has no browser renderer yet; the protocol carries the shape and
   every consumer still writes its own plot. Axes, a legend, a hover readout and an inverted `y`
   for `C_p`.

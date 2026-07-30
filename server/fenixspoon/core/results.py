@@ -6,13 +6,14 @@ draws every one of them, and wrong for every other caller: an agent reasoning ab
 answer, a CI check comparing against a baseline, a convergence script reading one number per
 run. This module separates *what happened* from *the arrays*.
 
-Six levels, requested independently:
+Seven levels, requested independently:
 
 | Level | What it carries | Cost |
 |---|---|---|
 | `status` | terminal status, timing, error | tens of bytes |
 | `metrics` | the declared engineering scalars | hundreds of bytes |
 | `diagnostics` | `stats`, convergence, residual, warnings | hundreds of bytes |
+| `provenance` | where the answer came from, and whether it was cached | hundreds of bytes |
 | `series` | the curves this solve produced | bounded, up to ~100 kB — not a default |
 | `fields` | the full arrays | megabytes — never a default |
 | `artifacts` | files by reference | reference only |
@@ -21,7 +22,7 @@ Six levels, requested independently:
 that says nothing gets an answer it can read, and the arrays are reached deliberately — by
 asking for the level, by fetching the artifact, or by querying.
 
-`series` (protocol 1.4, #69) is outside the default for a narrower reason than `fields` is. A
+`series` (protocol 1.5, #69) is outside the default for a narrower reason than `fields` is. A
 curve is *bounded* — :mod:`fenixspoon.series` caps it three ways — and it is genuinely part of
 the answer rather than part of the cost, so leaving it out is not free. But the acceptance
 criterion for the default answer is that it "carries no numeric array longer than a handful of
@@ -58,6 +59,7 @@ LEVELS: tuple[str, ...] = (
     "status",
     "metrics",
     "diagnostics",
+    "provenance",
     "series",
     "fields",
     "artifacts",
@@ -66,7 +68,13 @@ LEVELS: tuple[str, ...] = (
 #: What a caller gets for asking nothing. Everything except the two levels that carry numeric
 #: arrays: `fields`, which is megabytes, and `series`, which is kilobytes but is still an
 #: array. Both are one level name away on the same request.
-DEFAULT_LEVELS: tuple[str, ...] = ("status", "metrics", "diagnostics", "artifacts")
+DEFAULT_LEVELS: tuple[str, ...] = (
+    "status",
+    "metrics",
+    "diagnostics",
+    "provenance",
+    "artifacts",
+)
 
 
 class StatusView(BaseModel):
@@ -103,6 +111,61 @@ class DiagnosticsView(BaseModel):
     residual: float | None = Field(default=None, description="Final residual, when iterative.")
     warnings: list[str] = Field(
         default=[], description="Non-fatal things worth knowing about this solve."
+    )
+
+
+class Provenance(BaseModel):
+    """Where a result came from (roadmap M2.5, issue #47).
+
+    In the default answer rather than behind a flag, because `cached` changes how a caller
+    should read everything else in the payload. A metric that took 40 ms and a metric that
+    took 40 seconds are the same number; whether the run happened *now* is the difference
+    between "this reflects my edit" and "this is the answer to a question I asked before".
+    """
+
+    job_id: str = Field(description="The job that produced these numbers.")
+    cached: bool = Field(
+        description=(
+            "True when this answer came from an earlier identical solve rather than from "
+            "one run for this request. The single most useful bit in an iterative loop."
+        )
+    )
+    solver: str = Field(description="Capability that ran it.")
+    solver_version: str = Field(
+        description="The adapter's declared `version` — what a cache key is invalidated by."
+    )
+    cache_key: str | None = Field(
+        default=None,
+        description=(
+            "Content-addressed identity of the inputs. Null when this solve was not "
+            "cacheable: the adapter does not declare itself deterministic, or the server "
+            "has caching switched off."
+        ),
+    )
+    computed_at: str | None = Field(
+        default=None,
+        description=(
+            "When the underlying solve finished (RFC 3339, UTC). On a cache hit this is "
+            "older than the request, and how much older is the point."
+        ),
+    )
+    seconds: float | None = Field(
+        default=None, description="What the original solve cost in wall-clock seconds."
+    )
+    environment: dict[str, str] = Field(
+        default={},
+        description=(
+            "Package versions the answer depends on, as they were when it ran. Part of the "
+            "cache key, so a dolfinx upgrade produces a different key rather than a stale hit."
+        ),
+    )
+    inputs: dict[str, Any] = Field(
+        default={},
+        description=(
+            "Pinned workspace object revisions this job resolved, when it came from a "
+            "design: `design:d-1@2`, `geometry:g-1@3`. Empty for an inline submission — "
+            "the design → job → result relation, recorded where it is knowable."
+        ),
     )
 
 
@@ -146,6 +209,7 @@ class LeveledResult(BaseModel):
         ),
     )
     diagnostics: DiagnosticsView | None = Field(default=None, description="Level `diagnostics`.")
+    provenance: Provenance | None = Field(default=None, description="Level `provenance`.")
     series: list[Series1DData] | None = Field(
         default=None,
         description=(
@@ -236,6 +300,7 @@ def build(
     summary: ResultSummary | None,
     artifacts: list[ArtifactView],
     data: dict[str, Any] | None,
+    provenance: Provenance | None,
     levels: tuple[str, ...],
 ) -> LeveledResult:
     """Assemble the requested levels. The caller has already decided what to load."""
@@ -257,6 +322,8 @@ def build(
             residual=summary.residual,
             warnings=list(summary.warnings),
         )
+    if "provenance" in levels:
+        out.provenance = provenance
     if "series" in levels:
         # From the summary, which the store builds from a column — so a curve costs a row read
         # like the metrics do, and not the multi-megabyte payload it sits beside on disk. That

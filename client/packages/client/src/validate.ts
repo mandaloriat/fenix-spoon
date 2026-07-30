@@ -280,7 +280,7 @@ function requireVectorFields(
 }
 
 /**
- * Curves (protocol 1.4, #69). Mirrors `fenixspoon/series.py` rule for rule.
+ * Curves (protocol 1.5, #69). Mirrors `fenixspoon/series.py` rule for rule.
  *
  * The rules matter more here than for a field, because a curve is the one payload whose array
  * lengths do not follow from something else in it: a `grid2d` has a `shape` and a `mesh2d` has a

@@ -154,10 +154,26 @@ the seams a second caller needs. The design specification is
       10% bias — summing grid points and multiplying by the cell area over-counts by
       `(n/(n-1))²`, because a lattice has one more point per axis than it has intervals. It is
       trapezoidal now, and exact for linear fields.* (#46)
-- [ ] **Content-addressed cache and provenance.** Deterministic hashing of geometry, solver,
-      parameters and environment; local result cache; deduplication of equivalent jobs; full
-      provenance on every result and an explicit design → study → job → result relation. The cache
-      cuts both compute cost and the amount an agent has to re-exchange. (#47)
+- [x] **Content-addressed cache and provenance.** A solve's identity is a 128-bit digest over
+      its solver, that adapter's declared `version`, the *validated* geometry and params, and the
+      versions of the packages it depends on. Validated rather than as-submitted is what makes it
+      hit at all: an omitted default and an explicit one are different JSON and the same solve.
+      An identical resubmission returns the job that already ran — a lookup, not a copy — and
+      `provenance.cached` says so. A `queued` or `running` match is a hit too, so two identical
+      submissions attach to one solve instead of racing.
+      *Caching is **opt-in per adapter**: `Solver.deterministic` defaults to false, because
+      serving a cached answer for a solver that does not reproduce is a wrong answer delivered
+      fast, while a missed hit is merely a solve. `environment.inspect` lists which capabilities
+      qualify, since "why did my resubmission not hit" is otherwise buried in an adapter's source.*
+      *Retention answered by construction rather than by policy: **a cache entry is its job**, so
+      the job TTL is the only lifetime and sweeping a job simply makes the next identical
+      submission recompute. Nothing dangles.*
+      *A hit costs no quota, because it costs no compute — which is why the quota and history
+      tests had to start submitting genuinely different work; nine of them were counting one job
+      several times.*
+      *The `design → job → result` relation is queryable from either end: provenance names the
+      pinned object revisions, and `jobs_for_object` reads it backwards. Study joins the chain
+      when #48 writes one; nothing here needs to change for it to.* (#47)
 - [ ] **Study abstraction.** One vocabulary under which parameter sweeps, mesh-convergence studies,
       material comparisons, load-case comparisons, parametric optimization and model calibration
       can be expressed. The first slice implements a single small, controlled study kind —

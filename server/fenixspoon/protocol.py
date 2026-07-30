@@ -35,7 +35,7 @@ from .solvers.base import ProgressEvent  # noqa: F401  (re-export for consumers)
 #: repeating it on each event and result would be per-message overhead for something one
 #: call answers — see `GET /api/v1/version`, and `docs/04-wire-protocol.md` for the
 #: reasoning and the bump procedure.
-PROTOCOL_VERSION = "1.4"
+PROTOCOL_VERSION = "1.5"
 
 
 class ProtocolVersion(BaseModel):
@@ -162,7 +162,7 @@ class ResultEnvelope(BaseModel):
     kind: Literal["grid2d", "mesh2d", "series1d"] = Field(
         description=(
             "Selects the schema of `data`: `Grid2DData`, `Mesh2DData` or `Series1DData`. "
-            "`series1d` was added in protocol 1.4 for answers that are curves rather than "
+            "`series1d` was added in protocol 1.5 for answers that are curves rather than "
             "fields — a sweep, a convergence history."
         )
     )
@@ -191,11 +191,21 @@ class ResultEnvelope(BaseModel):
             "string had nowhere to go in it."
         ),
     )
+    provenance: dict[str, Any] = Field(
+        default={},
+        description=(
+            "Where the answer came from: `cached`, the solver and its declared version, the "
+            "content-addressed `cache_key`, when it was computed, and the workspace object "
+            "revisions it resolved. Added in protocol 1.4. `cached` is the one to read — it "
+            "is the difference between a number that reflects the edit you just made and "
+            "one answering a question you asked earlier."
+        ),
+    )
     series: list[Series1DData] = Field(
         default=[],
         description=(
             "Curves this solve produced *alongside* its field — the airfoil adapters return "
-            "the flow field and the surface `C_p` from one solve. Added in protocol 1.4. "
+            "the flow field and the surface `C_p` from one solve. Added in protocol 1.5. "
             "Empty on a result that carries none, and empty on a `series1d` result, whose "
             "curves are in `data` because that is what `kind` selects."
         ),

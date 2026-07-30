@@ -411,9 +411,12 @@ def test_a_design_submitted_by_a_capped_principal_still_meets_the_quota(tmp_path
     _, design_ref = make_design(core, capped)
 
     async def run():
+        # Two different designs. Resubmitting *one* design is a cache hit, which costs no
+        # compute and so no quota (#47) — asserted deliberately in `test_cache.py`.
         await core.submit_design(design_ref, capped)
+        _, other = make_design(core, capped, params={**FAST, "u_inf": 2.0})
         with pytest.raises(errors.QuotaExceeded):
-            await core.submit_design(design_ref, capped)
+            await core.submit_design(other, capped)
 
     asyncio.run(run())
 

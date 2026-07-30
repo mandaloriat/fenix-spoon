@@ -103,6 +103,9 @@ def test_the_default_answer_is_small_and_carries_no_arrays(core, me):
     job = solve(core, me)
     compact = core.result_levels(job.id, me).model_dump(exclude_none=True)
     payload = json.dumps(compact)
+    # Still under the kilobyte after #47 added the `provenance` level to the default. It
+    # very nearly was not: a full SHA-256 hex digest is 64 characters of a ~950-byte answer,
+    # which is what prompted truncating the key to 128 bits rather than moving this budget.
     assert len(payload) < 1024, f"default answer is {len(payload)} bytes:\n{payload}"
 
     longest = max((len(a) for a in numeric_arrays(compact)), default=0)
@@ -567,12 +570,13 @@ def run_http(client, solver="mock.laplace2d", geometry=None, **params):
 
 
 def test_the_full_result_route_keeps_its_shape_and_gains_the_new_keys(client):
-    """1.3 and 1.4 are additive here: `data` and `stats` are untouched, three keys appear
-    beside them — `metrics` and `diagnostics` in 1.3, `series` in 1.4."""
+    """1.3, 1.4 and 1.5 are additive here: `data` and `stats` are untouched, four keys appear
+    beside them — `metrics` and `diagnostics` in 1.3, `provenance` in 1.4, `series` in 1.5."""
     payload = client.get(f"/api/v1/jobs/{run_http(client)}/result").json()
     assert {"job_id", "kind", "data", "stats", "artifacts"} <= set(payload)
     assert set(payload) == {
-        "job_id", "kind", "data", "stats", "metrics", "diagnostics", "series", "artifacts"
+        "job_id", "kind", "data", "stats", "metrics", "diagnostics", "provenance", "series",
+        "artifacts",
     }
     assert payload["data"]["fields"]["speed"]
     assert payload["metrics"]["speed_max"] > 0
@@ -582,7 +586,9 @@ def test_the_full_result_route_keeps_its_shape_and_gains_the_new_keys(client):
 def test_the_summary_route_is_the_compact_one(client):
     job_id = run_http(client)
     compact = client.get(f"/api/v1/jobs/{job_id}/summary").json()
-    assert set(compact) == {"job_id", "solver", "status", "metrics", "diagnostics", "artifacts"}
+    assert set(compact) == {
+        "job_id", "solver", "status", "metrics", "diagnostics", "provenance", "artifacts"
+    }
     assert len(json.dumps(compact)) < 1024
 
     one = client.get(f"/api/v1/jobs/{job_id}/summary", params={"levels": ["metrics"]}).json()

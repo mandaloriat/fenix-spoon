@@ -6,6 +6,7 @@ cannot carry an Authorization header. And **principals must not see each other's
 a job id from someone else's server session is a 404, not a 403 or a peek.
 """
 
+import itertools
 import time
 
 import pytest
@@ -49,7 +50,21 @@ def auth(key: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {key}"}
 
 
-def submit(client, key: str | None = None, params=FAST_PARAMS):
+#: Bumped on every `submit()` so each call is a genuinely different solve.
+#:
+#: The result cache (#47) collapses identical submissions onto the job that already ran, so
+#: without this every test below would be counting *one* job however many times it submitted,
+#: and a quota would never be reached. These tests are about identity and quotas, not about
+#: caching — a submission that costs no compute consuming no quota is correct, and
+#: `test_cache.py` is where that is asserted on purpose.
+_distinct = itertools.count(1)
+
+
+def submit(client, key: str | None = None, params=FAST_PARAMS, distinct: bool = True):
+    if distinct:
+        # `u_inf` rather than `iterations`: it is unbounded, and it genuinely changes the
+        # answer, so these are different solves rather than the same one relabelled.
+        params = {**params, "u_inf": 1.0 + next(_distinct)}
     return client.post(
         "/api/v1/jobs",
         json={"solver": "mock.laplace2d", "geometry": GEOMETRY, "params": params},

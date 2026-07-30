@@ -60,10 +60,25 @@ class JobRequest(BaseModel):
 
 
 class JobCreated(BaseModel):
-    """The 202 from `POST /api/v1/jobs`. The job has been accepted, not finished."""
+    """The 202 from `POST /api/v1/jobs`. The job has been accepted; it may already be done."""
 
     job_id: str = Field(description="Use it to poll status, stream events and fetch the result.")
-    status: str = Field(description="Always `queued` at this point.")
+    status: str = Field(
+        description=(
+            "`queued` for work that will run. **Since protocol 1.4 it can be `done` or "
+            "`running` immediately**: an identical solve is answered from the result cache "
+            "(#47), and what comes back is the job that already has the answer."
+        )
+    )
+    cached: bool = Field(
+        default=False,
+        description=(
+            "True when this submission was answered from an earlier identical solve rather "
+            "than starting one. Added in protocol 1.4. Still a `202`: the submission was "
+            "accepted, and giving it a different status code would be reusing a code to mean "
+            "something new."
+        ),
+    )
 
 
 class JobList(BaseModel):
@@ -180,7 +195,7 @@ async def create_job(
     principal: CurrentPrincipal,
 ) -> JobCreated:
     job = await _core(request).submit(req.solver, req.geometry, req.params, principal)
-    return JobCreated(job_id=job.id, status=job.status)
+    return JobCreated(job_id=job.id, status=job.status, cached=job.reused > 0)
 
 
 @router.get("/jobs", response_model=JobList)
@@ -269,7 +284,7 @@ def job_result(
     request: Request,
     principal: CurrentPrincipal,
 ) -> dict[str, Any]:
-    """The full envelope, arrays included. Unchanged shape, plus what 1.3 and 1.4 added.
+    """The full envelope, arrays included. Unchanged shape, plus what 1.3, 1.4 and 1.5 added.
 
     `metrics` and `diagnostics` are new keys here, which is additive; a client reading
     `data` and `stats` is untouched. What did change inside `stats` is that the heat
@@ -277,7 +292,7 @@ def job_result(
     appear under `metrics`. Permitted because `stats` keys have always been documented as
     server-defined and all optional.
 
-    `series` is 1.4's addition (#69): the curves a solve produced beside its field, empty for
+    `series` is 1.5's addition (#69): the curves a solve produced beside its field, empty for
     a capability that produces none. A `series1d` result carries its curves in `data` instead,
     because that is what `kind` selects — so a consumer reads one place or the other, never
     both.
@@ -300,6 +315,7 @@ def job_result(
             if summary
             else {}
         ),
+        "provenance": core.provenance(job_id, principal).model_dump(),
         # Always present on this route, unlike on `/summary`, where it is a level. This is the
         # exhaustive envelope: it already carries the field arrays, so withholding a bounded
         # curve from it would be a saving of nothing.

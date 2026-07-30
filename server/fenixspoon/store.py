@@ -84,6 +84,21 @@ class JobRecord:
     Set by the store on read, from columns; derived from `result` on write. `None` until a
     job finishes."""
 
+    reused: int = 0
+    """How many later submissions were served from this job instead of solving (#47).
+
+    Persisted rather than transient, so `cached` is answerable at *any* read rather than
+    only in the reply to the submission that hit. A caller that submits, gets this job id
+    back and then reads its provenance sees `cached: true` — which is the acceptance
+    criterion — and so does anyone looking at the job tomorrow."""
+
+    cache_key: str | None = None
+    """Content-addressed identity of this solve's inputs (roadmap M2.5, #47).
+
+    `None` for a job whose adapter does not declare itself deterministic, or when caching is
+    switched off. A job with a key is reusable by any later submission that hashes to the
+    same one; a job without one is invisible to the cache in both directions."""
+
     inputs: dict[str, Any] = field(default_factory=dict)
     """Which workspace object revisions this job came from, pinned (roadmap M2.5, #44).
 
@@ -91,6 +106,20 @@ class JobRecord:
     perfectly valid. When a design was resolved it holds the design, geometry and material
     revisions — the `design -> job -> result` relation, recorded at the one moment it is
     knowable. #47 adds the environment and the content hash beside it."""
+
+    provenance: dict[str, Any] = field(default_factory=dict)
+    """Solver version and environment fingerprint, captured when the job was accepted (#47).
+
+    Recorded rather than recomputed at read time, because provenance answers "what produced
+    this payload" and the live registry answers "what would produce it now". Those differ
+    exactly when the answer matters: after an adapter bumps `Solver.version`, after a
+    package upgrade, or when the solver is no longer installed at all. Recomputing would
+    also let a job contradict itself — its stored `cache_key` was built from the old version
+    while its provenance reported the new one. Raised in review of #47.
+
+    Empty for a job written before this column existed. That stays `unknown` on read: the
+    facts were never captured, and inventing them from today's registry is the misreport
+    this field exists to prevent."""
 
     @property
     def artifact_bytes(self) -> int:
@@ -123,6 +152,27 @@ class JobRecord:
 def _without_series(summary: "ResultSummary | None") -> "ResultSummary | None":
     """A summary with its curves removed, for a listing that will not report them."""
     return None if summary is None else replace(summary, series=[])
+
+
+def _references(inputs: dict[str, Any], reference: str) -> bool:
+    """Whether a job's recorded inputs name this object (roadmap M2.5, #47).
+
+    An unpinned ``reference`` matches every revision, because "which solves used this
+    geometry" is almost always the question — a pinned one is how you ask about a single
+    revision. Comparing against ``ref + "@"`` rather than a bare prefix is what stops
+    `geometry:g-1` from also matching `geometry:g-12`.
+    """
+    pinned = "@" in reference
+    candidates: list[str] = []
+    for value in inputs.values():
+        if isinstance(value, str):
+            candidates.append(value)
+        elif isinstance(value, list):
+            candidates += [item for item in value if isinstance(item, str)]
+    return any(
+        candidate == reference or (not pinned and candidate.startswith(f"{reference}@"))
+        for candidate in candidates
+    )
 
 
 class JobStore(ABC):
@@ -189,6 +239,39 @@ class JobStore(ABC):
         trip rather than three.
         """
 
+    @abstractmethod
+    def find_cached(self, cache_key: str, owner: str) -> JobRecord | None:
+        """The newest reusable job with this key, or None (roadmap M2.5, #47).
+
+        Reusable means `done`, `running` or `queued`. The last two are what makes two
+        identical submissions attach to one solve instead of racing: the second caller is
+        handed the job the first one started. `failed` and `cancelled` are deliberately not
+        reusable — a failure is not an answer, and re-running is the whole point of
+        submitting again.
+
+        Scoped to one principal. A cross-principal hit would be a bigger saving and a
+        disclosure: it would tell bob that alice has run this exact geometry.
+        """
+
+    @abstractmethod
+    def mark_reused(self, job_id: str) -> None:
+        """Record that a submission was served from this job rather than solving (#47).
+
+        Its own method rather than a `put()` of a mutated record: `put` rewrites the whole
+        row, and a cache hit can land while the job it hit is still running and being
+        written by the solve. An increment in SQL touches one column and cannot lose the
+        solve's concurrent write.
+        """
+
+    @abstractmethod
+    def find_by_input(self, reference: str, owner: str, limit: int = 50) -> list[JobRecord]:
+        """Jobs whose recorded inputs name this object reference (roadmap M2.5, #47).
+
+        The `design -> job -> result` relation, read backwards. ``reference`` matches with or
+        without a revision pin: `geometry:g-1` finds every solve of any revision, and
+        `geometry:g-1@2` finds the solves of that one.
+        """
+
     def unfinished_ids(self) -> list[str]:
         """Jobs left ``queued``/``running`` — after a restart, nothing is solving them."""
         return [r.id for r in self.list_jobs(limit=10_000) if r.status in ("queued", "running")]
@@ -210,6 +293,15 @@ class MemoryJobStore(JobStore):
         existing = self._records.get(record.id)
         # Keep the event log across metadata updates; put() is not about events.
         events = existing.events if existing is not None else record.events
+        # Nor about the cache columns. `mark_reused` is their only writer, and it lands on
+        # the *stored* record while the solve still holds the object it was handed at
+        # submission — where `reused` is forever 0. Writing that back would drop the
+        # increment and flip `cached` false again. The SQLite store never had the bug: its
+        # `ON CONFLICT DO UPDATE` list omits both columns. This is the same rule, spelled
+        # out, so the two stores answer identically. Raised in review of #47.
+        cache_key = existing.cache_key if existing is not None else record.cache_key
+        reused = existing.reused if existing is not None else record.reused
+        provenance = existing.provenance if existing is not None else record.provenance
         self._records[record.id] = JobRecord(
             id=record.id,
             solver=record.solver,
@@ -223,6 +315,9 @@ class MemoryJobStore(JobStore):
             events=events,
             inputs=dict(record.inputs),
             summary=record.summarize(),
+            cache_key=cache_key,
+            reused=reused,
+            provenance=dict(provenance),
         )
 
     def add_event(self, job_id: str, event: dict[str, Any]) -> int:
@@ -295,6 +390,36 @@ class MemoryJobStore(JobStore):
         recent = sum(1 for r in mine if r.created_at >= since)
         return active, recent, sum(r.artifact_bytes for r in mine)
 
+    def find_cached(self, cache_key: str, owner: str) -> JobRecord | None:
+        candidates = [
+            r
+            for r in self._records.values()
+            if r.owner == owner
+            and r.cache_key == cache_key
+            and r.status in ("done", "running", "queued")
+        ]
+        if not candidates:
+            return None
+        newest = max(candidates, key=lambda r: r.created_at)
+        return self.get(newest.id, with_result=False, with_events=False)
+
+    def mark_reused(self, job_id: str) -> None:
+        record = self._records.get(job_id)
+        if record is not None:
+            record.reused += 1
+
+    def find_by_input(self, reference: str, owner: str, limit: int = 50) -> list[JobRecord]:
+        matched = [
+            r
+            for r in self._records.values()
+            if r.owner == owner and _references(r.inputs, reference)
+        ]
+        matched.sort(key=lambda r: r.created_at, reverse=True)
+        return [
+            replace(r, result=None, events=[], artifacts=list(r.artifacts), summary=r.summarize())
+            for r in matched[:limit]
+        ]
+
 
 # Opening a database runs these three in order: tables, then column migrations, then
 # indexes. The order is load-bearing — an index over a column that a migration is about
@@ -315,6 +440,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     inputs         TEXT NOT NULL DEFAULT '{}',
     metrics        TEXT NOT NULL DEFAULT '{}',
     diagnostics    TEXT NOT NULL DEFAULT '{}',
+    cache_key      TEXT,
+    reused         INTEGER NOT NULL DEFAULT 0,
+    provenance     TEXT NOT NULL DEFAULT '{}',
     series         TEXT NOT NULL DEFAULT '[]'
 );
 CREATE TABLE IF NOT EXISTS events (
@@ -337,6 +465,11 @@ _MIGRATIONS = {
     # their own. They are read together, always, and a migration per field is a cost paid
     # by every deployment for a shape that is still settling.
     "diagnostics": "ALTER TABLE jobs ADD COLUMN diagnostics TEXT NOT NULL DEFAULT '{}'",
+    "cache_key": "ALTER TABLE jobs ADD COLUMN cache_key TEXT",
+    "reused": "ALTER TABLE jobs ADD COLUMN reused INTEGER NOT NULL DEFAULT 0",
+    # Solver version and environment fingerprint together, for the reason `diagnostics`
+    # shares a column: they are read together, always, and neither is a thing to index on.
+    "provenance": "ALTER TABLE jobs ADD COLUMN provenance TEXT NOT NULL DEFAULT '{}'",
     # A column of its own rather than a key inside `diagnostics`: curves are the answer, and
     # the separation between what a solve answered and how it went is the distinction #46
     # spent a protocol version establishing.
@@ -346,6 +479,10 @@ _MIGRATIONS = {
 _INDEXES = """
 CREATE INDEX IF NOT EXISTS jobs_created_at ON jobs (created_at DESC);
 CREATE INDEX IF NOT EXISTS jobs_owner ON jobs (owner, created_at DESC);
+-- The cache lookup runs on every submit, so it gets an index rather than a scan. Keyed by
+-- owner first because a lookup is always scoped to one principal: serving alice's job id to
+-- bob would leak that she ran something, which is the same disclosure a job id is.
+CREATE INDEX IF NOT EXISTS jobs_cache ON jobs (owner, cache_key, created_at DESC);
 """
 
 
@@ -427,8 +564,13 @@ class SqliteJobStore(JobStore):
             self._db.execute(
                 """INSERT INTO jobs (id, solver, status, error, created_at, finished_at,
                                      result_kind, stats, artifacts, owner, artifact_bytes,
-                                     inputs, metrics, diagnostics, series)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                     inputs, metrics, diagnostics, cache_key, provenance,
+                                     series)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   -- `cache_key`, `reused` and `provenance` are absent from the UPDATE list
+                   -- on purpose: they are facts about the submission, written once, and a
+                   -- later status update must not be able to walk them back. `series` is
+                   -- not — it arrives with the result, like `metrics`.
                    ON CONFLICT(id) DO UPDATE SET
                        status=excluded.status, error=excluded.error,
                        finished_at=excluded.finished_at, result_kind=excluded.result_kind,
@@ -459,8 +601,15 @@ class SqliteJobStore(JobStore):
                         if record.result
                         else {}
                     ),
+                    record.cache_key,
+                    json.dumps(record.provenance),
                     json.dumps(
-                        [entry.model_dump() for entry in record.result.series]
+                        [
+                            entry.model_dump()
+                            for entry in curves_of(
+                                record.result.kind, record.result.data, record.result.series
+                            )
+                        ]
                         if record.result
                         else []
                     ),
@@ -549,6 +698,9 @@ class SqliteJobStore(JobStore):
             # because a job's provenance is fixed the moment it is accepted.
             inputs=json.loads(row["inputs"] or "{}"),
             summary=summary,
+            cache_key=row["cache_key"],
+            reused=int(row["reused"] or 0),
+            provenance=json.loads(row["provenance"] or "{}"),
         )
 
     def get(
@@ -621,3 +773,35 @@ class SqliteJobStore(JobStore):
                 "SELECT id FROM jobs WHERE status IN ('queued', 'running')"
             ).fetchall()
         return [row["id"] for row in rows]
+
+    def mark_reused(self, job_id: str) -> None:
+        with self._lock:
+            self._db.execute("UPDATE jobs SET reused = reused + 1 WHERE id = ?", (job_id,))
+            self._db.commit()
+
+    def find_cached(self, cache_key: str, owner: str) -> JobRecord | None:
+        with self._lock:
+            row = self._db.execute(
+                """SELECT * FROM jobs
+                   WHERE owner = ? AND cache_key = ?
+                     AND status IN ('done', 'running', 'queued')
+                   ORDER BY created_at DESC, id DESC LIMIT 1""",
+                (owner, cache_key),
+            ).fetchone()
+        return self._record(row, [], with_result=False) if row is not None else None
+
+    def find_by_input(self, reference: str, owner: str, limit: int = 50) -> list[JobRecord]:
+        base = reference.split("@")[0]
+        with self._lock:
+            # `LIKE` narrows the scan cheaply and is deliberately a *superset* — it would
+            # also match `geometry:g-12` for `geometry:g-1`. `_references` then decides
+            # exactly, so the loose pattern costs a few extra rows rather than a wrong
+            # answer. A store with a real query planner would index the reference instead.
+            rows = self._db.execute(
+                """SELECT * FROM jobs
+                   WHERE owner = ? AND inputs LIKE ?
+                   ORDER BY created_at DESC, id DESC""",
+                (owner, f"%{base}%"),
+            ).fetchall()
+        records = [self._record(row, [], with_result=False) for row in rows]
+        return [r for r in records if _references(r.inputs, reference)][:limit]

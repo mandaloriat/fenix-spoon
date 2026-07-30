@@ -23,13 +23,19 @@
  * a metric is the number a page shows, and the heat-sink demo reads its temperature rise
  * from there now that `stats` no longer carries it.
  *
- * 1.4 added the `series1d` result kind and the `series` key beside `data`, both typed here.
+ * 1.4 added `provenance` and the result cache. Two things a browser client should know:
+ * `POST /jobs` can now come back `done` immediately with `cached: true`, so a page that
+ * assumes a fresh submission is always `queued` will wait for a transition that already
+ * happened; and `provenance.cached` says whether the numbers on screen were computed for
+ * this request.
+ *
+ * 1.5 added the `series1d` result kind and the `series` key beside `data`, both typed here.
  * A curve *does* have a browser consumer — `<fs-viewer>` draws fields, and `C_p(x/c)` needs a
- * plot — which is why this half of 1.4 is mirrored where the 1.2 discovery operations are only
+ * plot — which is why this half of 1.5 is mirrored where the 1.2 discovery operations are only
  * tracked. It also added the `assumptions` section to `capability.describe`, which is a local
  * caller's concern and is not typed here for the same reason the rest of discovery is not.
  */
-export const PROTOCOL_VERSION = '1.4';
+export const PROTOCOL_VERSION = '1.5';
 
 /** What `GET /api/v1/version` returns. The one endpoint that never requires a key. */
 export interface ProtocolVersion {
@@ -176,6 +182,28 @@ export interface JobRequest {
 export interface JobCreated {
   job_id: string;
   status: JobState;
+  /**
+   * True when an identical solve had already been run and this submission was answered
+   * from it (protocol 1.4). `status` is then already terminal — do not wait for a
+   * `queued` → `running` transition that will not come.
+   */
+  cached?: boolean;
+}
+
+/** Where a result came from, and whether anything ran for it. Protocol 1.4. */
+export interface JobProvenance {
+  job_id: string;
+  /** The bit worth reading: false means these numbers were computed for this request. */
+  cached: boolean;
+  solver: string;
+  solver_version: string;
+  /** Content-addressed identity of the inputs; null when the solve was not cacheable. */
+  cache_key?: string | null;
+  computed_at?: string | null;
+  seconds?: number | null;
+  environment?: Record<string, string>;
+  /** Pinned workspace object revisions, when the job came from a design. */
+  inputs?: Record<string, unknown>;
 }
 
 export interface JobStatus {
@@ -252,7 +280,7 @@ export interface Mesh2DData {
  * Units travel on the wire for curves and not for fields, which looks inconsistent and is not:
  * a field is coloured and `<fs-viewer>` takes its colourbar caption from an attribute the page
  * sets, while a curve is drawn with axis labels the client has no other way to know. Added in
- * protocol 1.4.
+ * protocol 1.5.
  */
 export interface SeriesAxis {
   /** Axis label, e.g. `x/c`, `alpha`, `cells`. */
@@ -281,7 +309,7 @@ export interface SeriesTrace {
 
 /**
  * A named set of curves sharing an abscissa. The `series1d` payload, and what rides in a field
- * result's `series` list. Added in protocol 1.4.
+ * result's `series` list. Added in protocol 1.5.
  *
  * Complex values are two real traces rather than a complex type: a harmonic result is plotted
  * as a magnitude and a phase, with different units on different axes, and JSON has no complex
@@ -342,6 +370,7 @@ export interface Grid2DResult {
   stats: JobStats;
   metrics?: JobMetrics;
   diagnostics?: JobDiagnostics;
+  provenance?: JobProvenance;
   /** Curves produced beside the field — the airfoil adapters send the surface `C_p` here. */
   series?: Series1DData[];
   artifacts: ArtifactRef[];
@@ -354,6 +383,7 @@ export interface Mesh2DResult {
   stats: JobStats;
   metrics?: JobMetrics;
   diagnostics?: JobDiagnostics;
+  provenance?: JobProvenance;
   series?: Series1DData[];
   artifacts: ArtifactRef[];
 }

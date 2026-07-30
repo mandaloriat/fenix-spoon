@@ -131,6 +131,7 @@ def build() -> str:
     # Imported here so `--help` works without the package installed.
     from fenixspoon.api import JobCreated, JobList, JobRequest
     from fenixspoon.core.discovery import (
+        CacheInfo,
         CapabilityDescription,
         CapabilitySummary,
         CostSection,
@@ -152,6 +153,7 @@ def build() -> str:
         FieldQueryResult,
         FieldsView,
         LeveledResult,
+        Provenance,
         StatusView,
     )
     from fenixspoon.geometry import Domain2D, Geometry, Polygon2D, Region2D, Regions2D
@@ -201,6 +203,7 @@ def build() -> str:
                 LeveledResult,
                 StatusView,
                 DiagnosticsView,
+                Provenance,
                 FieldsView,
                 ArtifactView,
                 FieldQuery,
@@ -213,7 +216,7 @@ def build() -> str:
         ("Discovery", [SolverInfo]),
         (
             "Environment",
-            [EnvironmentInfo, PackageInfo, MpiInfo, LimitsInfo, QuotaInfo, UsageInfo],
+            [EnvironmentInfo, PackageInfo, MpiInfo, LimitsInfo, QuotaInfo, UsageInfo, CacheInfo],
         ),
         (
             "Capabilities",
