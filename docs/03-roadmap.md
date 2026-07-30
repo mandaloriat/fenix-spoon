@@ -216,11 +216,30 @@ the seams a second caller needs. The design specification is
       study varying `resolutoin` would submit every rung identically, the cache would collapse
       them onto one job, and the table would show a perfectly converged answer that is entirely
       fabricated. A parameter the capability does not have is refused. (#48)
-- [ ] **MCP adapter.** A thin Model Context Protocol server over the same core and the same
-      operations as JSON-RPC: a small stable tool vocabulary (inspect environment, list
-      capabilities, describe capability, create or patch object, submit job, inspect job, query
-      result, run study), progressive discovery, artifacts exposed as resources. No tool per
-      solver, no application logic in the adapter, no MCP dependency in the core. (#49)
+- [x] **MCP adapter.** Thirteen tools over the same core, as one file (`mcp_adapter.py`) with
+      no application logic in it — the issue's own test being that if MCP is replaced in two
+      years, one file is deleted. Documented in [MCP adapter](09-mcp.md).
+      *It binds to the **JSON-RPC method table**, not to the core.* Two adapters calling the
+      core independently is two places for one operation to be spelled slightly differently,
+      which is the divergence #51 exists to find. Here a tool *is* an RPC method plus a
+      schema, so "the same request over MCP and over JSON-RPC produces the same result" holds
+      by construction, and MCP inherits the parameter typing, error mapping and compact-answer
+      rules for free.
+      *Thirteen tools, not twenty-six.* A host's tool list is read every turn, so this is the
+      one surface where exposing everything is actively wrong. `job.list`, `job.for_object`,
+      `object.revisions` and `design.resolve` stay JSON-RPC-only; `job.cancel` is absent
+      because a host has no stable handle on a job from a previous turn; `job.subscribe` has
+      no meaning without a connection to push into.
+      *No tool per solver or per physics*, asserted against the **installed** capabilities
+      rather than a hard-coded list — so writing `solve_magnetostatics` fails the build.
+      *An optional extra, and the suite proves it both ways*: 527 tests pass with `mcp`
+      installed, 509 pass with it uninstalled, and a subprocess test fails if importing the
+      server ever pulls MCP in.
+      *Artifacts ship as resources **and** paths, and the open question stays open.* The
+      design draft asks for it to be settled against real host behaviour, which a test suite
+      cannot produce. One sub-case is settled on grounds that need no host: a large artifact
+      is described, not base64-encoded — base64 makes a file a third larger and lands it in a
+      context window that cannot use it. (#49)
 - [ ] **CLI and Python adapters.** `fenix-spoon <command> --json` for shells and reproducible
       scripting, plus a direct in-process Python API — the same models and semantics as HTTP,
       JSON-RPC and MCP, and the debugging surface for everything an agent can do. (#50)

@@ -90,6 +90,23 @@ jobs:
   # The distributed job backend. These tests skip themselves without a reachable Redis,
   # so without this job the entire worker path — pub/sub, the queue, the worker entry
   # point — would be covered by tests that never run.
+  mcp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install -e "./server[dev,mcp]"
+      - name: Guard against silently skipped tests
+        # Same reasoning as the fenics and redis jobs: a skip here would look like a pass,
+        # and the whole point of this job is that it is the only one where the MCP tests
+        # actually execute.
+        run: python3 -c "import mcp"
+      - name: Test (MCP adapter)
+        run: pytest server/tests -m mcp -v
+
   redis:
     runs-on: ubuntu-latest
     services:

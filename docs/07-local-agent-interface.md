@@ -23,12 +23,15 @@
     ([#45](https://github.com/mandaloriat/fenix-spoon/issues/45)), documented at
     [JSON-RPC over stdio](08-json-rpc.md); and the **study abstraction** §7 — one kind,
     `mesh_convergence`, orchestrated through object references and compact results
-    ([#48](https://github.com/mandaloriat/fenix-spoon/issues/48)). Six of §15's open questions
-    are settled as a result, and are marked there.
+    ([#48](https://github.com/mandaloriat/fenix-spoon/issues/48)); and the **MCP adapter**
+    §11 — thirteen tools over the JSON-RPC method table, an optional extra
+    ([#49](https://github.com/mandaloriat/fenix-spoon/issues/49)), documented at
+    [MCP adapter](09-mcp.md). Six of §15's open questions are settled as a result and are
+    marked there; a seventh is partly settled and says which part.
 
     Where §6–§11 below differ from what shipped, the implementation is the accurate one; the
-    differences are noted inline. What remains design is the CLI, Python and MCP adapters, and
-    the study kinds beyond the first.
+    differences are noted inline. What remains design is the CLI and Python adapters, and the
+    study kinds beyond the first.
 
 ## 1. Motivation
 
@@ -362,7 +365,7 @@ caps it. Full arrays are reached exactly one way: fetch the artifact.
 | JSON-RPC 2.0 over stdio | **shipped (#45)** | **the base local transport** |
 | CLI (`fenix-spoon …`, JSON output) | planned, M2.5 | shells, CI, reproducible scripting, debugging |
 | Python API | planned, M2.5 | notebooks and in-process embedding |
-| MCP | planned, M2.5, thin | MCP hosts; an adapter over the same operations |
+| MCP | **shipped (#49)**, thin | MCP hosts; an adapter over the same operations |
 
 **JSON-RPC 2.0 over stdio.** The agent spawns the process (`fenix-spoon rpc --stdio` is the
 expected entrypoint), writes requests to its stdin and reads responses from its stdout. No port is
@@ -478,7 +481,7 @@ know whether the decision still holds.
 | ~~**Identifiers**~~ **→ readable, with revisions** | readable short ids (`g-42`) vs UUIDs vs content hashes | `geometry:g-1`, and `geometry:g-1@3` to pin a revision. Readable won on the cost that matters here — an agent carries these strings through every turn — and the type is in the id so a mismatched prefix is caught at parse rather than by a lookup that finds nothing. Ids are allocated by `mkdir` of the next free number, which is atomic, so concurrent creates cannot collide. UUIDs remain the answer if workspaces are ever merged; content hashes are #47's identity and are a different question from *naming*. |
 | ~~**Object lifetime and GC**~~ **→ objects are never swept** | inherit `FENIXSPOON_JOB_TTL` vs a separate policy vs explicit deletion | no object TTL, and the job TTL does not reach them. The asymmetry is the answer rather than a longer number: a job is a computation and losing it costs a re-run, an object is something a person authored and losing it is data loss. That inverts the dangling-reference worry — inputs outlive results, not the other way round — so "what does a result mean when its objects are gone" does not arise, and what survives is enough to recompute. Explicit deletion is still unimplemented; nothing yet needs it. |
 | **Artifact binary format** | keep VTK legacy vs VTU/VTKHDF vs a compact internal format for queries | `result.query` implies something the server can index efficiently; ParaView compatibility implies VTK-family output. These may be two different files with different jobs. |
-| **MCP resource exposure** | artifacts as MCP resources vs tool-returned paths vs both | resources are the idiomatic MCP answer and let a host fetch lazily; paths are simpler and work for hosts with filesystem access. Decide against real MCP host behavior, not against the specification alone. |
+| **MCP resource exposure** *(both shipped, question still open)* | artifacts as MCP resources vs tool-returned paths vs both | #49 ships **both** and deliberately does not close this. The deciding evidence this row asks for — real host behaviour — is precisely what a test suite cannot produce, so closing it on the specification alone would be answering a different question. What is settled is one sub-case, on grounds that do not need a host: **a large artifact is described, not base64-encoded**. Base64 makes a file a third larger and delivers it into a context window that cannot use it, so a resource read returns path, size and content type; small text artifacts (<64 kB) arrive inline. What remains open is whether hosts in practice reach for the resource or the path, and that wants a host to watch. |
 | ~~**Study vs optimization boundary**~~ **→ a study's job list is a pure function of its object revision** | how much belongs in the M2.5 study service | settled by the first study kind, as this row asked. The test is not "does it enumerate" — that is a description, and descriptions blur — but a property you can check: given `study:s-1@2` you can say which solves it implies **without running any of them**. An optimizer cannot promise that, because its second point depends on the first one's answer. The line lands where this row wanted it: everything an external driver would otherwise reimplement (fan-out, cache reuse, per-job budget and quota, collecting compact results) is inside, and choosing the next point is outside. It also does real work — it is why a study stays reproducible under §8's rules while overriding a design's parameters, which `job.submit` may not do: the override is `values[i]` applied to `parameter`, both frozen in the study revision, so a rung's parameters are a pure function of *(study revision, rung index)*. |
 
 Two further questions are worth naming even though they are not blocking: how a capability declares
