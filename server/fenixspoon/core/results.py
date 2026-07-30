@@ -13,12 +13,22 @@ Five levels, requested independently:
 | `status` | terminal status, timing, error | tens of bytes |
 | `metrics` | the declared engineering scalars | hundreds of bytes |
 | `diagnostics` | `stats`, convergence, residual, warnings | hundreds of bytes |
+| `series` | the curves this solve produced | kilobytes — bounded, not a default |
 | `fields` | the full arrays | megabytes — never a default |
 | `artifacts` | files by reference | reference only |
 
-**The default omits `fields`.** That is the entire behavioural change: a caller that says
-nothing gets an answer it can read, and the arrays are reached deliberately — by asking for
-the level, by fetching the artifact, or by querying.
+**The default omits `fields` and `series`.** That is the entire behavioural change: a caller
+that says nothing gets an answer it can read, and the arrays are reached deliberately — by
+asking for the level, by fetching the artifact, or by querying.
+
+`series` (protocol 1.4, #69) is outside the default for a narrower reason than `fields` is. A
+curve is *bounded* — :mod:`fenixspoon.series` caps it three ways — and it is genuinely part of
+the answer rather than part of the cost, so leaving it out is not free. But the acceptance
+criterion for the default answer is that it "carries no numeric array longer than a handful of
+entries", and a two-hundred-point surface distribution is a numeric array whatever else it is.
+The thing that would have justified including it — sparing a round trip — is not at stake:
+levels are a *list* on one request, so `status, metrics, series` is a single call. What #69
+was objecting to was an artifact, which is a second fetch against a second route.
 
 **The compact levels never touch the payload file.** Metrics, stats and diagnostics live in
 database columns, so answering them is a row read rather than a multi-megabyte file read and
@@ -39,14 +49,23 @@ import numpy as np
 from pydantic import BaseModel, Field
 
 from .. import fields as fieldlib
+from ..series import Series1DData
 from ..store import ResultSummary
 from . import errors
 
 #: Response levels, in the order a full answer presents them.
-LEVELS: tuple[str, ...] = ("status", "metrics", "diagnostics", "fields", "artifacts")
+LEVELS: tuple[str, ...] = (
+    "status",
+    "metrics",
+    "diagnostics",
+    "series",
+    "fields",
+    "artifacts",
+)
 
-#: What a caller gets for asking nothing. Everything except the arrays — the one level that
-#: is measured in megabytes is the one level you have to ask for by name.
+#: What a caller gets for asking nothing. Everything except the two levels that carry numeric
+#: arrays: `fields`, which is megabytes, and `series`, which is kilobytes but is still an
+#: array. Both are one level name away on the same request.
 DEFAULT_LEVELS: tuple[str, ...] = ("status", "metrics", "diagnostics", "artifacts")
 
 
@@ -127,6 +146,14 @@ class LeveledResult(BaseModel):
         ),
     )
     diagnostics: DiagnosticsView | None = Field(default=None, description="Level `diagnostics`.")
+    series: list[Series1DData] | None = Field(
+        default=None,
+        description=(
+            "Level `series`: the curves this solve produced. An empty list means the "
+            "capability produced none, which is a different answer from the level being "
+            "absent because nobody asked for it."
+        ),
+    )
     fields: FieldsView | None = Field(default=None, description="Level `fields`.")
     artifacts: list[ArtifactView] | None = Field(default=None, description="Level `artifacts`.")
 
@@ -230,6 +257,11 @@ def build(
             residual=summary.residual,
             warnings=list(summary.warnings),
         )
+    if "series" in levels:
+        # From the summary, which the store builds from a column — so a curve costs a row read
+        # like the metrics do, and not the multi-megabyte payload it sits beside on disk. That
+        # is the whole reason `series` is not inside `result.json`.
+        out.series = list(summary.series) if summary else []
     if "fields" in levels and summary is not None and data is not None:
         out.fields = FieldsView(kind=summary.kind, data=data)
     if "artifacts" in levels:

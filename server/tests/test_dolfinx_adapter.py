@@ -195,3 +195,90 @@ def test_cell_estimate_stays_above_the_real_mesh(tmp_path, mesh_size):
     assert estimate >= result.stats["cells"]
     # ...but not so high that the cap becomes theatre.
     assert estimate <= 5 * result.stats["cells"]
+
+
+# ---------------------------------------------------- circulation and lift (#68)
+
+
+def test_the_kutta_condition_produces_lift_and_the_pair_agrees_on_it(tmp_path):
+    """The FEniCSx half of #68, and the cross-validation the pair exists for.
+
+    `mock.laplace2d` and this adapter solve the same equations two ways and go through the same
+    :mod:`fenixspoon.solvers.aerodynamics` post-processing, so their lift coefficients have to
+    agree — not to the last digit, since one relaxes on a raster and the other factorises a P1
+    system on a body-conforming mesh, but well inside the band that separates "the same physics"
+    from "one of these is wrong".
+    """
+    params = DolfinxPotentialFlow2D.Params(mesh_size=0.04, resolution=160, alpha=5.0)
+    fem = DolfinxPotentialFlow2D().solve(GEOMETRY, params, make_ctx(tmp_path))
+    mock = MockLaplace2D().solve(
+        GEOMETRY,
+        MockLaplace2D.Params(resolution=160, iterations=8000, alpha=5.0, write_vtk=False),
+        make_ctx(tmp_path),
+    )
+
+    for metric in ("circulation", "c_l", "c_m_c4", "x_cp"):
+        assert metric in fem.metrics, f"{metric} missing from the FEniCSx result"
+    assert fem.metrics["c_l"] > 0.3, "five degrees on this section must lift"
+    assert fem.metrics["circulation"] < 0, "lift is clockwise circulation"
+    assert fem.metrics["c_l"] == pytest.approx(mock.metrics["c_l"], rel=0.25)
+
+
+def test_lift_is_antisymmetric_in_incidence(tmp_path):
+    """A property of the problem rather than of the discretisation, so it holds exactly for a
+    symmetric section however coarse the mesh — the airfoil fixture is not symmetric, so this
+    checks the weaker statement that reversing incidence reverses the sign."""
+    up = DolfinxPotentialFlow2D().solve(
+        GEOMETRY,
+        DolfinxPotentialFlow2D.Params(mesh_size=0.05, resolution=120, alpha=6.0),
+        make_ctx(tmp_path),
+    )
+    down = DolfinxPotentialFlow2D().solve(
+        GEOMETRY,
+        DolfinxPotentialFlow2D.Params(mesh_size=0.05, resolution=120, alpha=-6.0),
+        make_ctx(tmp_path),
+    )
+    assert up.metrics["c_l"] > 0 > down.metrics["c_l"]
+
+
+def test_the_surface_pressure_comes_back_as_a_series(tmp_path):
+    """Protocol 1.4's `series`, from this adapter as well as the mock — the pair has to agree
+    about the *shape* of an answer, not only about its numbers."""
+    result = DolfinxPotentialFlow2D().solve(
+        GEOMETRY,
+        DolfinxPotentialFlow2D.Params(mesh_size=0.05, resolution=128, alpha=4.0),
+        make_ctx(tmp_path),
+    )
+    assert [entry.name for entry in result.series] == ["surface_cp"]
+    names = {trace.name for trace in result.series[0].traces}
+    assert names == {"cp_upper", "cp_lower"}
+    for trace in result.series[0].traces:
+        assert trace.x is not None and len(trace.values) == len(trace.x.values)
+
+
+def test_a_mesh2d_result_still_carries_the_aerodynamic_metrics(tmp_path):
+    """The post-processing samples a grid regardless of `output`, which is why `resolution`
+    affects `c_l` even when the payload is the triangulation. Worth a test because the obvious
+    reading of `resolution` — "only for a grid2d result" — is no longer true."""
+    result = DolfinxPotentialFlow2D().solve(
+        GEOMETRY,
+        DolfinxPotentialFlow2D.Params(
+            mesh_size=0.05, resolution=128, alpha=4.0, output="mesh2d", write_vtk=False
+        ),
+        make_ctx(tmp_path),
+    )
+    assert result.kind == "mesh2d"
+    assert result.metrics["c_l"] > 0
+    assert result.series, "and the curve comes with it"
+
+
+def test_without_the_kutta_condition_the_lift_metrics_are_absent(tmp_path):
+    result = DolfinxPotentialFlow2D().solve(
+        GEOMETRY,
+        DolfinxPotentialFlow2D.Params(mesh_size=0.06, resolution=96, kutta=False),
+        make_ctx(tmp_path),
+    )
+    for absent in ("circulation", "c_l", "c_m_c4", "x_cp"):
+        assert absent not in result.metrics
+    assert result.metrics["cp_min"] < 0, "the flow field is still usable"
+    assert any("no Kutta condition" in warning for warning in result.warnings)

@@ -17,7 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 from geometries import SOLENOID
 
-from fenixspoon.core import FenixSpoonCore, errors
+from fenixspoon.core import FenixSpoonCore, discovery, errors
 from fenixspoon.core.discovery import SECTIONS, schema_ref
 from fenixspoon.core.identity import Principal, Quotas
 from fenixspoon.geometry import Domain2D, Polygon2D
@@ -327,6 +327,60 @@ def test_declared_artifacts_are_the_files_a_solve_writes(core, me, solver):
     assert written, "the smoke params ask for the VTK, so something should have been written"
 
 
+@pytest.mark.parametrize(
+    "solver",
+    sorted(SMOKE)
+    + [pytest.param(name, marks=pytest.mark.fenics) for name in sorted(FENICS_SMOKE)],
+)
+def test_every_declared_metric_comes_back_from_a_real_solve(core, me, solver):
+    """The guard #68 needed and `field` could not give.
+
+    A metric that is a stated reduction of a field is checked by the test above. Lift, moment
+    and centre of pressure are integrals over the **body boundary**, so they name no field, and
+    before `MetricSpec.boundary` there was nothing to check them against — a declaration could
+    promise `c_l` and no solve would ever have to produce one. This runs a solve and insists
+    every declared metric is in the payload.
+
+    The one legitimate exemption is a metric an **in-force assumption excludes**: running
+    without the Kutta condition genuinely has no circulation to report, and the
+    `no_circulation` assumption says exactly which metrics that removes. So the two
+    declarations check each other — an adapter cannot quietly drop a metric without an
+    assumption that accounts for it.
+    """
+    _requires(solver)
+    geometry, params = {**SMOKE, **FENICS_SMOKE}[solver]
+    solver_cls = core.capability(solver)
+    parsed = solver_cls.Params.model_validate({**params, "write_vtk": True})
+    excluded = {
+        name
+        for assumption in solver_cls.assumptions
+        if assumption.applies(parsed.model_dump())
+        for name in assumption.excludes
+    }
+
+    job = solve(core, me, solver, geometry, params)
+    assert job.status == "done", job.error
+    reported = set(core.result_levels(job.id, me, ["metrics"]).metrics or {})
+    for metric in solver_cls.metrics:
+        if metric.name in excluded:
+            continue
+        assert metric.name in reported, (
+            f"{solver} declares metric {metric.name!r}, no assumption in force excludes it, "
+            f"and a solve reported {sorted(reported)}"
+        )
+
+
+def test_a_boundary_metric_names_no_field_and_a_field_metric_names_no_boundary():
+    """The two are alternatives, not a pair. A metric is a reduction of a field *or* an integral
+    over a boundary; declaring both would leave `fill_declared_metrics` with two recipes and no
+    rule for choosing, and declaring neither is the honest "the adapter works this out"."""
+    for cls in registered_solvers():
+        for metric in cls.metrics:
+            assert not (metric.field and metric.boundary), (
+                f"{cls.name} metric {metric.name!r} declares both a field and a boundary"
+            )
+
+
 def test_a_metric_declares_a_reduction_exactly_when_it_declares_a_field():
     """The two travel together: a field with no reduction cannot be evaluated, and a
     reduction with no field has nothing to reduce. Either alone is a half-declaration
@@ -358,6 +412,149 @@ def test_paired_adapters_declare_the_same_metrics():
             f"adapters for {physics} declare different metrics: "
             + ", ".join(f"{cls.name}={[m.name for m in cls.metrics]}" for cls in adapters)
         )
+
+
+# ---------------------------------------------------------------------- assumptions (#70)
+
+
+def test_the_assumptions_section_returns_that_section_and_nothing_else(core):
+    payload = core.capability_describe("mock.laplace2d", ["assumptions"]).model_dump(
+        exclude_none=True
+    )
+    assert set(payload) == {"name", "assumptions"}
+    names = [entry["name"] for entry in payload["assumptions"]]
+    assert "inviscid" in names and "two_dimensional" in names
+
+
+def test_an_adapter_that_declares_no_assumptions_says_so_with_an_empty_list(core):
+    """Absent means unrequested; empty means "none declared". Collapsing the two would let a
+    caller that asked read "this model assumes nothing", which is never true of a model.
+
+    The section is built from an empty class attribute here, so this is the behaviour a
+    third-party adapter written against 1.3 gets — it keeps working and reports nothing rather
+    than looking like it was never asked.
+    """
+
+    class Bare(Solver):
+        name = "test.bare-assumptions"
+        title = "Declares no assumptions"
+
+        def solve(self, geometry, params, ctx):  # pragma: no cover - never run
+            raise NotImplementedError
+
+    described = discovery.describe_capability(
+        Bare, sections=["assumptions"], max_cells=0, job_timeout=0.0
+    )
+    assert described.assumptions == []
+    assert "assumptions" in described.model_dump(exclude_none=True)
+
+
+def test_every_shipped_adapter_declares_its_assumptions():
+    """Unlike the other declarations, an empty list here is worth refusing.
+
+    Every physical model assumes something — these are all 2-D, for a start — so "no
+    assumptions declared" means *undeclared*, not unconditionally valid. The default exists for
+    a third-party adapter written against protocol 1.3; it is not for the adapters in this
+    repository, which are exactly the ones #70 was filed about.
+    """
+    for cls in registered_solvers():
+        assert cls.assumptions, f"{cls.name} declares no assumptions"
+        assert any(a.name == "two_dimensional" for a in cls.assumptions), (
+            f"{cls.name} is a 2-D solver and does not say so"
+        )
+
+
+def test_assumption_names_are_unique_within_a_capability():
+    for cls in registered_solvers():
+        names = [assumption.name for assumption in cls.assumptions]
+        assert len(names) == len(set(names)), f"{cls.name} declares an assumption name twice"
+
+
+def test_paired_adapters_declare_the_same_assumptions():
+    """Same argument as the metrics: a mock and its FEniCSx counterpart solve the same equations,
+    so they are valid over the same domain. A pair whose declared validity differed would mean
+    switching one for the other silently changed what the answer was good for."""
+    by_physics: dict[str, list[type[Solver]]] = {}
+    for cls in registered_solvers():
+        by_physics.setdefault(cls.physics, []).append(cls)
+    for physics, adapters in by_physics.items():
+        vocabularies = {tuple(a.name for a in cls.assumptions) for cls in adapters}
+        assert len(vocabularies) == 1, (
+            f"adapters for {physics} declare different assumptions: "
+            + ", ".join(f"{cls.name}={[a.name for a in cls.assumptions]}" for cls in adapters)
+        )
+
+
+def test_a_comparator_is_declared_exactly_when_a_limit_is():
+    """A limit with no comparator does not say which side is valid, and a comparator with no
+    limit has nothing to compare against. Either alone is a half-declaration that the per-run
+    warning in #46 would have to guess at — the same rule `field`/`reduction` already follow."""
+    for cls in registered_solvers():
+        for assumption in cls.assumptions:
+            assert (assumption.limit is None) == (assumption.comparator is None), (
+                f"{cls.name} assumption {assumption.name!r}: limit={assumption.limit!r} "
+                f"comparator={assumption.comparator!r}"
+            )
+            if assumption.limit is not None:
+                assert assumption.quantity, (
+                    f"{cls.name} assumption {assumption.name!r} has a limit on nothing"
+                )
+
+
+def test_a_conditional_assumption_names_a_boolean_parameter_that_exists():
+    """`when` is a parameter name, so it has to be one. A typo would make the assumption look
+    unconditional in one direction and never apply in the other, which is worse than either."""
+    for cls in registered_solvers():
+        schema = cls.Params.model_json_schema().get("properties", {})
+        for assumption in cls.assumptions:
+            if assumption.when is None:
+                continue
+            name = assumption.when.removeprefix("!")
+            assert name in schema, (
+                f"{cls.name} assumption {assumption.name!r} is conditional on {name!r}, "
+                f"which is not a parameter: {sorted(schema)}"
+            )
+            assert schema[name].get("type") == "boolean", (
+                f"{cls.name} assumption {assumption.name!r} is conditional on {name!r}, "
+                f"which is not a boolean"
+            )
+
+
+def test_an_unconditional_assumption_never_excludes_a_metric_the_capability_reports():
+    """A capability cannot both promise a number and declare it out of reach.
+
+    The conditional ones legitimately do — `no_circulation` excludes `c_l`, which *is* a metric,
+    and that is the whole content of the declaration: with `kutta` off the metric is gone. But an
+    assumption in force on every run that excluded a declared metric would be a contradiction,
+    and it is exactly the contradiction #68 found in the old declaration, where the capability
+    advertised aerodynamic output an inviscid irrotational model cannot produce.
+    """
+    for cls in registered_solvers():
+        reported = {metric.name for metric in cls.metrics}
+        for assumption in cls.assumptions:
+            if assumption.when is not None:
+                continue
+            overlap = reported & set(assumption.excludes)
+            assert not overlap, (
+                f"{cls.name} reports {sorted(overlap)} and its always-in-force assumption "
+                f"{assumption.name!r} says they are out of reach"
+            )
+
+
+def test_the_assumptions_section_is_bound_over_http(client):
+    described = client.get(
+        "/api/v1/capabilities/mock.laplace2d", params={"sections": ["assumptions"]}
+    ).json()
+    assert set(described) == {"name", "assumptions"}
+    inviscid = next(a for a in described["assumptions"] if a["name"] == "inviscid")
+    # The field that pays for itself: a definite no, not a plausible zero.
+    assert "drag" in inviscid["excludes"]
+    saturation = client.get(
+        "/api/v1/capabilities/mock.magnetostatics2d", params={"sections": ["assumptions"]}
+    ).json()
+    linear = next(a for a in saturation["assumptions"] if a["name"] == "linear_material")
+    # The prose that used to live inside a metric description, now machine-readable.
+    assert (linear["quantity"], linear["limit"], linear["comparator"]) == ("b_max", 1.5, "<")
 
 
 def test_every_shipped_adapter_declares_its_physics_and_availability():

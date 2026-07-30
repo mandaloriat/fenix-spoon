@@ -29,7 +29,7 @@ const result = await job.wait((event) => {
   if (event.type === 'progress') console.log(event.iteration, event.residual);
 });
 
-console.log(result.kind); // 'grid2d' | 'mesh2d'
+console.log(result.kind); // 'grid2d' | 'mesh2d' | 'series1d'
 ```
 
 Prefer to drive the loop yourself? `job.events()` is an async iterator:

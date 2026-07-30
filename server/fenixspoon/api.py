@@ -269,13 +269,18 @@ def job_result(
     request: Request,
     principal: CurrentPrincipal,
 ) -> dict[str, Any]:
-    """The full envelope, arrays included. Unchanged shape, plus what 1.3 added.
+    """The full envelope, arrays included. Unchanged shape, plus what 1.3 and 1.4 added.
 
     `metrics` and `diagnostics` are new keys here, which is additive; a client reading
     `data` and `stats` is untouched. What did change inside `stats` is that the heat
     adapters no longer put `t_max` and `t_rise` there — those were never costs, and they now
     appear under `metrics`. Permitted because `stats` keys have always been documented as
     server-defined and all optional.
+
+    `series` is 1.4's addition (#69): the curves a solve produced beside its field, empty for
+    a capability that produces none. A `series1d` result carries its curves in `data` instead,
+    because that is what `kind` selects — so a consumer reads one place or the other, never
+    both.
     """
     core = _core(request)
     result = core.result(job_id, principal)
@@ -295,6 +300,10 @@ def job_result(
             if summary
             else {}
         ),
+        # Always present on this route, unlike on `/summary`, where it is a level. This is the
+        # exhaustive envelope: it already carries the field arrays, so withholding a bounded
+        # curve from it would be a saving of nothing.
+        "series": [entry.model_dump() for entry in summary.series] if summary else [],
         # The one place a URL is built. The core hands back a path; only this transport
         # knows that the file is reachable at a route it serves.
         "artifacts": [

@@ -17,6 +17,9 @@ import type {
   JobResult,
   Polygon2D,
   Regions2D,
+  Series1DData,
+  SeriesAxis,
+  SeriesTrace,
 } from './types.js';
 
 export class ProtocolValidationError extends Error {
@@ -276,12 +279,153 @@ function requireVectorFields(
   return out;
 }
 
+/**
+ * Curves (protocol 1.4, #69). Mirrors `fenixspoon/series.py` rule for rule.
+ *
+ * The rules matter more here than for a field, because a curve is the one payload whose array
+ * lengths do not follow from something else in it: a `grid2d` has a `shape` and a `mesh2d` has a
+ * `points` list, while a trace lines up with a shared abscissa or with its own and nothing in
+ * the JSON says which until this says it.
+ */
+
+/** Per trace and per axis. Above this a "curve" is a field wearing a different key. */
+const MAX_SERIES_POINTS = 4096;
+
+/** Per collection, and per result. */
+const MAX_SERIES_TRACES = 32;
+
+/**
+ * Across every trace of every series on one result.
+ *
+ * The other two limits multiply out to far more than either intends — thirty-two legal traces of
+ * four thousand legal points is a quarter of a million numbers — so this is the one that
+ * actually keeps a series from becoming the field arrays.
+ */
+const MAX_SERIES_TOTAL_POINTS = 8192;
+
+function validateSeriesAxis(value: unknown, what: string): SeriesAxis {
+  if (!isRecord(value)) fail(`${what} must be an object`);
+  if (typeof value.name !== 'string' || value.name.length === 0) {
+    fail(`${what} needs a non-empty name`);
+  }
+  // Units are required on a curve and absent from a field: a plot needs axis labels and the
+  // client has no other way to learn what the axis is.
+  if (typeof value.unit !== 'string') fail(`${what} needs a unit ("1" if dimensionless)`);
+  const values = requireNumberArray(value.values, `${what} values`);
+  if (values.length === 0) fail(`${what} has no values`);
+  if (values.length > MAX_SERIES_POINTS) {
+    fail(`${what} has ${values.length} points, over the ${MAX_SERIES_POINTS} a series may carry`);
+  }
+  return { name: value.name, unit: value.unit, values };
+}
+
+function validateSeriesTrace(value: unknown, what: string): SeriesTrace {
+  if (!isRecord(value)) fail(`${what} must be an object`);
+  if (typeof value.name !== 'string' || value.name.length === 0) {
+    fail(`${what} needs a non-empty name`);
+  }
+  if (typeof value.unit !== 'string') fail(`${what} needs a unit ("1" if dimensionless)`);
+  const values = requireNumberArray(value.values, `${what} values`);
+  if (values.length > MAX_SERIES_POINTS) {
+    fail(`${what} has ${values.length} points, over the ${MAX_SERIES_POINTS} a series may carry`);
+  }
+  const trace: SeriesTrace = { name: value.name, unit: value.unit, values };
+  if (value.x !== undefined && value.x !== null) {
+    const axis = validateSeriesAxis(value.x, `${what} abscissa`);
+    if (axis.values.length !== values.length) {
+      fail(`${what} has ${values.length} values for ${axis.values.length} abscissa samples`);
+    }
+    trace.x = axis;
+  }
+  return trace;
+}
+
+export function validateSeries1D(value: unknown, what = 'series'): Series1DData {
+  if (!isRecord(value)) fail(`${what} must be an object`);
+  if (typeof value.name !== 'string' || value.name.length === 0) {
+    fail(`${what} needs a non-empty name`);
+  }
+  const shared =
+    value.x === undefined || value.x === null
+      ? undefined
+      : validateSeriesAxis(value.x, `${what} abscissa`);
+  if (!Array.isArray(value.traces) || value.traces.length === 0) {
+    fail(`${what} carries no traces`);
+  }
+  if (value.traces.length > MAX_SERIES_TRACES) {
+    fail(`${what} has ${value.traces.length} traces, over the ${MAX_SERIES_TRACES} allowed`);
+  }
+  const traces = value.traces.map((trace, i) =>
+    validateSeriesTrace(trace, `${what} trace ${i}`),
+  );
+  const names = new Set(traces.map((trace) => trace.name));
+  if (names.size !== traces.length) fail(`${what} names a trace twice`);
+  for (const trace of traces) {
+    if (trace.x !== undefined) continue;
+    if (shared === undefined) {
+      fail(
+        `${what} trace ${trace.name} has no abscissa: the series declares no shared x ` +
+          'and the trace declares none of its own',
+      );
+    }
+    if (trace.values.length !== shared.values.length) {
+      fail(
+        `${what} trace ${trace.name} has ${trace.values.length} values for ` +
+          `${shared.values.length} shared abscissa samples`,
+      );
+    }
+  }
+  const out: Series1DData = { name: value.name, traces };
+  if (typeof value.description === 'string') out.description = value.description;
+  if (shared !== undefined) out.x = shared;
+  return out;
+}
+
+/** The `series` list on a field result: unique names, and a total-size ceiling. */
+function validateSeriesList(value: unknown): Series1DData[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) fail('series must be an array');
+  if (value.length > MAX_SERIES_TRACES) {
+    fail(`a result carries ${value.length} series, over the ${MAX_SERIES_TRACES} allowed`);
+  }
+  const parsed = value.map((entry, i) => validateSeries1D(entry, `series ${i}`));
+  const names = new Set(parsed.map((entry) => entry.name));
+  if (names.size !== parsed.length) fail('a result names a series twice');
+  const points = parsed.reduce(
+    (total, entry) => total + entry.traces.reduce((n, trace) => n + trace.values.length, 0),
+    0,
+  );
+  if (points > MAX_SERIES_TOTAL_POINTS) {
+    fail(
+      `the series on this result total ${points} points, over the ` +
+        `${MAX_SERIES_TOTAL_POINTS} allowed; a curve that large is a field`,
+    );
+  }
+  return parsed;
+}
+
 export function validateJobResult(value: unknown): JobResult {
   if (!isRecord(value)) fail('result must be an object');
   if (typeof value.job_id !== 'string') fail('result needs a job_id');
   if (!isRecord(value.data)) fail('result needs a data object');
   const artifacts = validateArtifacts(value.artifacts);
   const stats = validateStats(value.stats);
+  const series = validateSeriesList(value.series);
+
+  if (value.kind === 'series1d') {
+    // One home per result. Curves in both places could disagree, and a consumer would need a
+    // rule for which wins — a rule the protocol declines to have.
+    if (series.length) {
+      fail('a series1d result carries its curves in data; series is for a field result');
+    }
+    return {
+      job_id: value.job_id,
+      kind: 'series1d',
+      data: validateSeries1D(value.data, 'series1d data'),
+      stats,
+      artifacts,
+    };
+  }
 
   if (value.kind === 'grid2d') {
     const data = value.data;
@@ -309,6 +453,7 @@ export function validateJobResult(value: unknown): JobResult {
       kind: 'grid2d',
       data: { bounds, shape: [ny, nx], fields, vector_fields: vectorFields, mask },
       stats,
+      series,
       artifacts,
     };
   }
@@ -362,6 +507,7 @@ export function validateJobResult(value: unknown): JobResult {
         point_vector_fields: pointVectorFields,
       },
       stats,
+      series,
       artifacts,
     };
   }

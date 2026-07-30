@@ -138,11 +138,12 @@ What `GET /api/v1/jobs/{id}/result` returns once a job is `done`.
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `job_id` | `str` | yes |  | The job this result belongs to. |
-| `kind` | `'grid2d' \| 'mesh2d'` | yes |  | Selects the schema of `data`: `Grid2DData` or `Mesh2DData`. |
+| `kind` | `'grid2d' \| 'mesh2d' \| 'series1d'` | yes |  | Selects the schema of `data`: `Grid2DData`, `Mesh2DData` or `Series1DData`. `series1d` was added in protocol 1.4 for answers that are curves rather than fields — a sweep, a convergence history. |
 | `data` | `dict[str, Any]` | yes |  | The field data, shaped according to `kind`. |
 | `stats` | `dict[str, float]` | no | `{}` | What the solve cost — `cells`, `dofs`, `iterations`, `seconds`. Keys are server-defined and all optional: display them, never branch on one existing. |
 | `metrics` | `dict[str, float]` | no | `{}` | The engineering answer: the scalars this capability declared, keyed by the names `GET /capabilities/{name}?sections=metrics` reports. Added in protocol 1.3. Distinct from `stats`, which is what the solve *cost* — `t_max` and `t_rise` moved here from `stats` in 1.3 for exactly that reason. |
 | `diagnostics` | `dict[str, Any]` | no | `{}` | How the solve went: `converged`, `residual`, `warnings`. Added in protocol 1.3, because `stats` is typed `dict[str, float]` and a flag or a warning string had nowhere to go in it. |
+| `series` | `list[Series1DData]` | no | `[]` | Curves this solve produced *alongside* its field — the airfoil adapters return the flow field and the surface `C_p` from one solve. Added in protocol 1.4. Empty on a result that carries none, and empty on a `series1d` result, whose curves are in `data` because that is what `kind` selects. |
 | `artifacts` | `list[ArtifactRef]` | no | `[]` | Files the solver wrote, downloadable from the artifact endpoint. |
 
 ## `Grid2DData`
@@ -169,6 +170,38 @@ An unstructured triangle mesh with one value per node per field.
 | `point_fields` | `dict[str, list[float]]` | yes |  | Field name to one value per node, in `points` order. |
 | `point_vector_fields` | `dict[str, list[tuple[float, float]]]` | no | `{}` | Field name to one `[x, y]` pair per node, in `points` order. |
 
+## `Series1DData`
+
+A named set of curves sharing an abscissa: the `series1d` payload, or one entry of a field result's `series` list.
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `name` | `str` | yes |  | Identifier for this curve set, e.g. `surface_cp`. |
+| `description` | `str` | no | `''` | One line on what the curves are, for a legend or a caption. |
+| `x` | `SeriesAxis \| null` | no | `None` | Abscissa shared by every trace that does not carry its own. May be null only when all of them do. |
+| `traces` | `list[SeriesTrace]` | yes |  | The curves, at least one. |
+
+## `SeriesAxis`
+
+The abscissa of a curve: what is on the x axis, in what unit, at which samples.
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `name` | `str` | yes |  | Axis label, e.g. `x/c`, `alpha`, `cells`. |
+| `unit` | `str` | yes |  | Unit as a display string — `"deg"`, `"m"`, `"Hz"`; `"1"` if dimensionless. |
+| `values` | `list[float]` | yes |  | Sample positions, in the order they should be drawn. Monotonic for a sweep or a convergence history; **not** for a surface distribution, which traverses a closed contour and revisits x. |
+
+## `SeriesTrace`
+
+One curve. `values` line up with the shared abscissa unless it brings its own `x`.
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `name` | `str` | yes |  | Identifier for this curve, e.g. `cp_upper`. |
+| `unit` | `str` | yes |  | Unit as a display string; `"1"` if dimensionless. |
+| `values` | `list[float]` | yes |  | One ordinate per abscissa sample, in that order. |
+| `x` | `SeriesAxis \| null` | no | `None` | This trace's own abscissa, when it is not sampled like its siblings. Null means it uses the series-level `x`, which is the common case. |
+
 ## `ArtifactRef`
 
 A downloadable file the solver produced alongside the inline result.
@@ -194,6 +227,7 @@ What `result.get` returns. Unrequested levels are absent, not null.
 | `status` | `StatusView \| null` | no | `None` | Level `status`. |
 | `metrics` | `dict[str, float] \| null` | no | `None` | Level `metrics`: the declared engineering scalars, keyed by the names `capability.describe` reports. Empty if the capability declares none. |
 | `diagnostics` | `DiagnosticsView \| null` | no | `None` | Level `diagnostics`. |
+| `series` | `list[Series1DData] \| null` | no | `None` | Level `series`: the curves this solve produced. An empty list means the capability produced none, which is a different answer from the level being absent because nobody asked for it. |
 | `fields` | `FieldsView \| null` | no | `None` | Level `fields`. |
 | `artifacts` | `list[ArtifactView] \| null` | no | `None` | Level `artifacts`. |
 
@@ -388,6 +422,7 @@ What `capability.describe` returns. Every section is optional and omitted unless
 | `geometries` | `GeometriesSection \| null` | no | `None` | Section `geometries`: which geometry kinds it accepts. |
 | `params` | `ParamsSection \| null` | no | `None` | Section `params`: the parameters, and a schema reference. |
 | `metrics` | `list[MetricSpec] \| null` | no | `None` | Section `metrics`: the engineering scalars it reports. |
+| `assumptions` | `list[Assumption] \| null` | no | `None` | Section `assumptions`: the modelling assumptions in force, and the quantities they put out of reach. Next to `metrics` because it is what qualifies them. |
 | `artifacts` | `list[ArtifactSpec] \| null` | no | `None` | Section `artifacts`: files a solve may write. |
 | `cost` | `CostSection \| null` | no | `None` | Section `cost`: whether a request can be sized in advance. |
 | `features` | `CapabilityFeatures \| null` | no | `None` | Section `features`: sweep, gradient and MPI support. |
@@ -439,6 +474,21 @@ A scalar engineering quantity this capability reports (roadmap M2.5, issue #43).
 | `description` | `str` | yes |  | What the number means, in one line. |
 | `field` | `str \| null` | no | `None` | Result field this metric reduces, when it is a reduction of one. Null when the solver computes it some other way (an integral over a region, a ratio). |
 | `reduction` | `'max' \| 'min' \| 'mean' \| 'integral' \| null` | no | `None` | How `field` becomes a scalar. Null exactly when `field` is null. |
+| `boundary` | `str \| null` | no | `None` | Boundary this metric integrates over, when it is a boundary integral rather than a reduction of a field — `body` for the surface of a `domain2d` obstacle. Mutually exclusive with `field`: a quantity is one or the other. |
+
+## `Assumption`
+
+A modelling assumption in force, and where it stops applying (issue #70).
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `name` | `str` | yes |  | Short identifier a caller can filter on, e.g. `inviscid`. |
+| `statement` | `str` | yes |  | What is assumed, and where it stops holding, in one or two sentences. |
+| `quantity` | `str \| null` | no | `None` | Physical quantity the limit applies to, when the assumption has a numeric edge — `mach`, `reynolds`, `b_max`. Null for a structural assumption like `2-D`. |
+| `limit` | `float \| null` | no | `None` | Value of `quantity` at which the assumption fails. Null when there is no single number, which is most of them. |
+| `comparator` | `'<' \| '<=' \| '>' \| '>=' \| null` | no | `None` | Which side of `limit` is valid: `<` means the assumption holds while `quantity` is below it. Null exactly when `limit` is null. |
+| `excludes` | `list[str]` | no | `[]` | Quantities this assumption puts out of reach entirely — `drag` for an inviscid model. A caller asking for one of these should be told no, not given a zero. |
+| `when` | `str \| null` | no | `None` | Boolean param that puts this assumption in force, `!name` for one that puts it in force by being false. Null — the usual case — means it always applies. |
 
 ## `ArtifactSpec`
 

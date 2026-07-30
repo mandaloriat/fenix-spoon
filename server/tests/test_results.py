@@ -24,7 +24,7 @@ from fenixspoon import fields
 from fenixspoon.core import FenixSpoonCore, FieldQuery, errors
 from fenixspoon.core.identity import Principal, Quotas
 from fenixspoon.core.results import DEFAULT_LEVELS, LEVELS
-from fenixspoon.geometry import Domain2D, Polygon2D
+from fenixspoon.geometry import Domain2D, Polygon2D, Regions2D
 from fenixspoon.jobs import JobManager
 from fenixspoon.main import create_app
 
@@ -144,11 +144,63 @@ def test_each_level_can_be_requested_alone(core, me):
         assert set(payload) == {"job_id", "solver", level}, level
 
 
-def test_the_default_is_everything_except_fields(core, me):
+def test_the_default_is_everything_except_fields_and_series(core, me):
     job = solve(core, me)
     payload = core.result_levels(job.id, me).model_dump(exclude_none=True)
     assert set(payload) == {"job_id", "solver", *DEFAULT_LEVELS}
     assert "fields" not in payload
+    assert "series" not in payload
+
+
+# ---------------------------------------------------------------- the series level (#69)
+
+
+def test_curves_are_reachable_by_name_in_the_same_request(core, me):
+    """Protocol 1.4's level. Out of the default because a curve is a numeric array and the
+    default answer's whole promise is that it carries none — but a *level*, not a second route,
+    so a caller wanting the answer and the curve asks once."""
+    job = solve(core, me)
+    assert core.result_levels(job.id, me).series is None
+    asked = core.result_levels(job.id, me, ["status", "metrics", "series"])
+    assert [entry.name for entry in asked.series] == ["surface_cp"]
+    assert asked.metrics["c_l"] is not None
+    trace = asked.series[0].traces[0]
+    assert trace.x is not None and len(trace.values) == len(trace.x.values)
+
+
+def test_a_capability_that_produces_no_curves_says_so_with_an_empty_list(core, me):
+    """Empty means "none produced"; absent means "not asked for". The heat adapter produces no
+    curves, and a caller that asked must be able to tell that from a level it forgot."""
+    job = solve(
+        core, me, solver="mock.heat2d", geometry=Regions2D.model_validate(HEATED_BLOCK)
+    )
+    asked = core.result_levels(job.id, me, ["series"])
+    assert asked.series == []
+    assert "series" in asked.model_dump(exclude_none=True)
+
+
+def test_the_series_level_costs_a_row_read_not_the_field_payload(core, me):
+    """Curves live in a database column, like the metrics, rather than inside `result.json`.
+
+    That is the whole reason they are compact in practice as well as in principle: the level
+    can answer without the multi-megabyte read and JSON parse the arrays would cost. Asserted
+    by asking for the curves with the payload deliberately not loaded.
+    """
+    job = solve(core, me)
+    unloaded = core.job(job.id, me, with_result=False)
+    assert unloaded.result is None, "the payload was not read off disk"
+    assert unloaded.summary is not None and unloaded.summary.series, (
+        "yet the curves are there, because they came from a column"
+    )
+
+
+def test_curves_survive_a_round_trip_through_the_store(core, me):
+    job = solve(core, me)
+    original = core.result_levels(job.id, me, ["series"]).series
+    reread = core.result_levels(job.id, me, ["series"]).series
+    assert original == reread
+    trace = original[0].traces[0]
+    assert trace.unit == "1" and trace.x.name == "x/c"
 
 
 def test_an_unknown_level_is_refused_not_ignored(core, me):
@@ -502,11 +554,12 @@ def run_http(client, solver="mock.laplace2d", geometry=None, **params):
 
 
 def test_the_full_result_route_keeps_its_shape_and_gains_the_new_keys(client):
-    """1.3 is additive here: `data` and `stats` are untouched, two keys appear beside them."""
+    """1.3 and 1.4 are additive here: `data` and `stats` are untouched, three keys appear
+    beside them — `metrics` and `diagnostics` in 1.3, `series` in 1.4."""
     payload = client.get(f"/api/v1/jobs/{run_http(client)}/result").json()
     assert {"job_id", "kind", "data", "stats", "artifacts"} <= set(payload)
     assert set(payload) == {
-        "job_id", "kind", "data", "stats", "metrics", "diagnostics", "artifacts"
+        "job_id", "kind", "data", "stats", "metrics", "diagnostics", "series", "artifacts"
     }
     assert payload["data"]["fields"]["speed"]
     assert payload["metrics"]["speed_max"] > 0

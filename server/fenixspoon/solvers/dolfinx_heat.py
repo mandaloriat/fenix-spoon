@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field
 from ..geometry import Regions2D
 from ._gmsh import gmsh_session
 from .base import CapabilityExample, ProgressEvent, Solver, SolverContext, SolverResult
-from .declarations import HEAT_METRICS, VTK_ARTIFACT
+from .declarations import HEAT_ASSUMPTIONS, HEAT_METRICS, VTK_ARTIFACT
 from .dolfinx_poisson import (
     _MESH_SAFETY_FACTOR,
     _nodal_speed,
@@ -147,6 +147,7 @@ class DolfinxHeat2D(Solver):
     availability = "fenicsx"
     requires = ["dolfinx", "gmsh"]
     metrics = HEAT_METRICS
+    assumptions = HEAT_ASSUMPTIONS
     artifacts = [VTK_ARTIFACT]
     examples = [
         CapabilityExample(

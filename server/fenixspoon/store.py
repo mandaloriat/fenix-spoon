@@ -32,6 +32,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .series import Series1DData
 from .solvers.base import SolverResult
 
 
@@ -53,6 +54,14 @@ class ResultSummary:
     converged: bool | None = None
     residual: float | None = None
     warnings: list[str] = field(default_factory=list)
+    series: list[Series1DData] = field(default_factory=list)
+    """The result's curves (protocol 1.4, issue #69).
+
+    Here rather than in `result.json` for the same reason the metrics are: a curve is the
+    *compact* half of an answer — a few hundred numbers with axis labels — and the whole point
+    of #69 was that reaching it should not cost a multi-megabyte read of the field arrays it
+    happens to sit beside. :data:`~fenixspoon.series.MAX_SERIES_POINTS` is what keeps that
+    trade sound; without a ceiling this column would eventually be the arrays again."""
 
 
 @dataclass
@@ -102,6 +111,7 @@ class JobRecord:
                 converged=self.result.converged,
                 residual=self.result.residual,
                 warnings=list(self.result.warnings),
+                series=list(self.result.series),
             )
         return self.summary
 
@@ -290,7 +300,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     artifact_bytes INTEGER NOT NULL DEFAULT 0,
     inputs         TEXT NOT NULL DEFAULT '{}',
     metrics        TEXT NOT NULL DEFAULT '{}',
-    diagnostics    TEXT NOT NULL DEFAULT '{}'
+    diagnostics    TEXT NOT NULL DEFAULT '{}',
+    series         TEXT NOT NULL DEFAULT '[]'
 );
 CREATE TABLE IF NOT EXISTS events (
     job_id  TEXT NOT NULL,
@@ -312,6 +323,10 @@ _MIGRATIONS = {
     # their own. They are read together, always, and a migration per field is a cost paid
     # by every deployment for a shape that is still settling.
     "diagnostics": "ALTER TABLE jobs ADD COLUMN diagnostics TEXT NOT NULL DEFAULT '{}'",
+    # A column of its own rather than a key inside `diagnostics`: curves are the answer, and
+    # the separation between what a solve answered and how it went is the distinction #46
+    # spent a protocol version establishing.
+    "series": "ALTER TABLE jobs ADD COLUMN series TEXT NOT NULL DEFAULT '[]'",
 }
 
 _INDEXES = """
@@ -398,14 +413,15 @@ class SqliteJobStore(JobStore):
             self._db.execute(
                 """INSERT INTO jobs (id, solver, status, error, created_at, finished_at,
                                      result_kind, stats, artifacts, owner, artifact_bytes,
-                                     inputs, metrics, diagnostics)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                     inputs, metrics, diagnostics, series)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(id) DO UPDATE SET
                        status=excluded.status, error=excluded.error,
                        finished_at=excluded.finished_at, result_kind=excluded.result_kind,
                        stats=excluded.stats, artifacts=excluded.artifacts,
                        artifact_bytes=excluded.artifact_bytes,
-                       metrics=excluded.metrics, diagnostics=excluded.diagnostics""",
+                       metrics=excluded.metrics, diagnostics=excluded.diagnostics,
+                       series=excluded.series""",
                 (
                     record.id,
                     record.solver,
@@ -428,6 +444,11 @@ class SqliteJobStore(JobStore):
                         }
                         if record.result
                         else {}
+                    ),
+                    json.dumps(
+                        [entry.model_dump() for entry in record.result.series]
+                        if record.result
+                        else []
                     ),
                 ),
             )
@@ -452,6 +473,9 @@ class SqliteJobStore(JobStore):
         self, row: sqlite3.Row, events: list[dict[str, Any]], *, with_result: bool = True
     ) -> JobRecord:
         stored_diagnostics = json.loads(row["diagnostics"] or "{}")
+        stored_series = [
+            Series1DData.model_validate(entry) for entry in json.loads(row["series"] or "[]")
+        ]
         result = None
         if row["result_kind"] and with_result:
             path = self._result_path(row["id"])
@@ -466,6 +490,7 @@ class SqliteJobStore(JobStore):
                     converged=stored_diagnostics.get("converged"),
                     residual=stored_diagnostics.get("residual"),
                     warnings=stored_diagnostics.get("warnings") or [],
+                    series=stored_series,
                 )
         summary = None
         if row["result_kind"]:
@@ -479,6 +504,7 @@ class SqliteJobStore(JobStore):
                 converged=stored_diagnostics.get("converged"),
                 residual=stored_diagnostics.get("residual"),
                 warnings=stored_diagnostics.get("warnings") or [],
+                series=stored_series,
             )
         return JobRecord(
             id=row["id"],

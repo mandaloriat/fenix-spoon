@@ -8,13 +8,13 @@ them. Breaking changes bump the path version.
 
 ## Versioning
 
-The protocol is versioned `MAJOR.MINOR`, currently **1.3**, and a server reports what it
+The protocol is versioned `MAJOR.MINOR`, currently **1.4**, and a server reports what it
 speaks:
 
 ### `GET /api/v1/version`
 
 ```json
-{ "protocol": "1.3", "implementation": "0.1.0", "api_path": "/api/v1" }
+{ "protocol": "1.4", "implementation": "0.1.0", "api_path": "/api/v1" }
 ```
 
 **The one route that never requires an API key.** A client needs to know whether it can talk
@@ -105,6 +105,16 @@ at until now. Finally, **compact results**
 declared metric *values*, formalised diagnostics and bounded field queries, all bound below. The
 rest of the draft — JSON-RPC, the content-addressed cache, studies — is still design.
 
+**Protocol 1.4** adds two things to the domain contract and both are additive: a
+[`series1d` result kind](#one-dimensional-results) with a `series` key beside `data`
+([#69](https://github.com/mandaloriat/fenix-spoon/issues/69)), and an
+[`assumptions` section](#assumptions) on `capability.describe`
+([#70](https://github.com/mandaloriat/fenix-spoon/issues/70)). The potential-flow adapters also
+started reporting `circulation`, `c_l`, `c_m_c4` and `x_cp`
+([#68](https://github.com/mandaloriat/fenix-spoon/issues/68)), which is *not* a protocol change:
+`metrics` keys have always been whatever a capability declares, and `GET /capabilities/{name}`
+is where a caller learns them.
+
 ## Authentication
 
 Optional and off by default: with no keys configured every caller is the principal
@@ -194,8 +204,9 @@ availability (`mock` or `fenicsx`). No schemas, no prose:
 #### `GET /api/v1/capabilities/{name}`
 
 One capability, in the sections asked for. `?sections=` is repeatable and selects from
-`geometries`, `params`, `metrics`, `artifacts`, `cost`, `features`, `requirements`, `examples`.
-Omit it entirely for all of them plus the title, description, physics tag and availability.
+`geometries`, `params`, `metrics`, `assumptions`, `artifacts`, `cost`, `features`,
+`requirements`, `examples`. Omit it entirely for all of them plus the title, description,
+physics tag and availability.
 
 **An unrequested section is absent from the JSON, not present and null.** `?sections=metrics`
 returns exactly `name` and `metrics` — `name` because an answer should be identifiable without
@@ -220,10 +231,68 @@ Where a metric names a `field` and a `reduction` it is a stated reduction of a d
 field; `t_rise` names neither because it depends on a parameter as well, and claiming otherwise
 would be a declaration nothing can evaluate.
 
+Where a metric is neither a field reduction nor a plain derived ratio it names a `boundary`
+instead: `c_l` and `c_m_c4` are integrals over the **body surface**, not over the domain, and
+saying so is what lets a caller tell "the solver integrates this over the body" from "the solver
+works this out somehow" — added in 1.4 with
+[#68](https://github.com/mandaloriat/fenix-spoon/issues/68).
+
 The `params` section carries a flat parameter list — name, type, default, bounds, enum choices —
 plus `schema_ref`. Being flat is the point rather than being small: a `Literal` parameter reaches
 a caller as `$ref` → `$defs` → `enum`, and resolving that is work the summary does once. On the
 adapters shipped today the summary is in fact marginally *larger* than the schema it summarises.
+
+#### Assumptions
+
+*Added in protocol 1.4 ([#70](https://github.com/mandaloriat/fenix-spoon/issues/70)).*
+
+Every other section says what a capability **does**. This one says what its model **assumes**,
+and where it stops applying — which is the thing a caller most needs before trusting a number,
+and which previously existed only as prose inside `description`, if at all:
+
+```json
+{
+  "name": "mock.laplace2d",
+  "assumptions": [
+    {"name": "incompressible", "statement": "Density is constant. Valid below roughly Mach 0.3.",
+     "quantity": "mach", "limit": 0.3, "comparator": "<"},
+    {"name": "inviscid",
+     "statement": "No boundary layer, so no wall shear, no separation and no stall. Pressure drag integrates to exactly zero (d'Alembert) ...",
+     "excludes": ["drag", "c_d", "skin_friction", "stall", "alpha_stall", "separation"]},
+    {"name": "no_circulation",
+     "statement": "With `kutta` false the streamfunction is set to an arbitrary constant on the body ...",
+     "excludes": ["lift", "c_l", "circulation", "c_m_c4", "x_cp"], "when": "!kutta"},
+    {"name": "two_dimensional", "statement": "A cross-section of a body infinitely long in z ...",
+     "excludes": ["end_effects", "span_efficiency", "three_dimensional_flow"]}
+  ]
+}
+```
+
+**`excludes` is the field that pays for itself.** It lets a caller ask *"can this capability tell
+me about drag?"* and get a definite **no** rather than a plausible zero. That is the same
+argument [#43](https://github.com/mandaloriat/fenix-spoon/issues/43) made for
+`CapabilityFeatures`, where all three flags default to false so "can I sweep this?" has an answer
+a caller can act on — this is the physics equivalent.
+
+**`quantity`, `limit` and `comparator` make an assumption checkable** where it has a numeric edge
+and the quantity is computable: Mach against 0.3, `b_max` against a saturation threshold. That is
+what makes this more than documentation. `mock.magnetostatics2d` is the case that motivated it —
+its `b_max` metric description already said *"past roughly 1.5 T for common steels the
+permeability collapses and a linear solve stops describing the device"*, which is exactly right
+and was unusable, being prose inside a metric. The per-run half — "this run has M = 0.42, above
+the 0.3 limit" — is a *diagnostic* and belongs with `warnings`; declaring the limit here is what
+lets such a warning name the assumption it violated instead of restating it.
+
+**`when` marks a conditional assumption**, as a parameter name, or `!name` for one in force when
+that parameter is false. Almost all assumptions are unconditional and omit it. The one that is
+not is worth the field: run `mock.laplace2d` with `kutta` false and there genuinely is no
+circulation, so `c_l` is genuinely absent — and a caller reading the section before it has chosen
+its parameters sees both `kutta_condition` and `no_circulation`, which is the honest answer to
+"what might this assume".
+
+**An empty list means "none declared", and is not the same as the section being absent.** Since
+every physical model assumes something, an empty list reads as *undeclared* — which is itself
+information, and is why the shipped adapters are tested for declaring one.
 
 #### `GET /api/v1/capabilities/{name}/schema`
 
@@ -370,8 +439,9 @@ is precisely what `Gone` means. Result envelope:
   "kind": "grid2d",
   "data": { "...": "see result kinds below" },
   "stats": { "cells": 8192, "iterations": 3000, "seconds": 1.8421 },
-  "metrics": { "speed_max": 1.379, "cp_min": -0.903 },
+  "metrics": { "speed_max": 1.379, "cp_min": -0.903, "c_l": 0.596, "circulation": -0.298 },
   "diagnostics": { "converged": true, "residual": 8.4e-10, "warnings": [] },
+  "series": [ { "name": "surface_cp", "traces": [ { "...": "see one-dimensional results" } ] } ],
   "artifacts": [
     { "name": "solution.vtk", "content_type": "model/vnd.vtk", "size": 191234,
       "url": "/api/v1/jobs/j-8f3a.../artifacts/solution.vtk" }
@@ -400,6 +470,11 @@ the [heat-sink demo](gallery.md) shows.
 iterate toward a tolerance), `residual`, and `warnings`, which previously could only be said
 in a progress event and therefore only to a client that happened to be watching.
 
+`series` is protocol 1.4's addition and is described under
+[one-dimensional results](#one-dimensional-results). It is always present on this route —
+empty for a capability that produces no curves — because this is the exhaustive envelope, which
+already carries the field arrays, so withholding a bounded curve from it would save nothing.
+
 ### Compact results
 
 Added in protocol 1.3 ([#46](https://github.com/mandaloriat/fenix-spoon/issues/46)). The
@@ -410,13 +485,22 @@ caller that has to reason about the answer: a `grid2d` result is tens of thousan
 
 The same relationship `/capabilities` has to `/solvers` — the exhaustive route keeps its
 payload, and this one answers the question a caller usually has. Five levels, selected with a
-repeatable `?levels=`: `status`, `metrics`, `diagnostics`, `fields`, `artifacts`.
+repeatable `?levels=`: `status`, `metrics`, `diagnostics`, `series`, `fields`, `artifacts`.
 
-**The default is every level except `fields`**, which is the entire behavioural change: a
-caller that says nothing gets an answer it can read. Measured on a 96-point potential-flow
-solve, the default answer is 686 bytes against 529 kB for the full payload. An unrequested
-level is *absent* rather than null, and an unknown level name is a `422` for the same reason a
-misspelled capability section is.
+**The default is every level except `series` and `fields`**, which is the entire behavioural
+change: a caller that says nothing gets an answer it can read. Measured on a 96-point
+potential-flow solve, the default answer is 686 bytes against 529 kB for the full payload. An
+unrequested level is *absent* rather than null, and an unknown level name is a `422` for the same
+reason a misspelled capability section is.
+
+`series` (1.4) sits outside the default for a narrower reason than `fields` does. A curve is
+*bounded* and is genuinely part of the answer rather than part of the cost, so leaving it out is
+not free — but the acceptance criterion for the default is that it carries **no numeric array
+longer than a handful of entries**, and a two-hundred-point surface distribution is a numeric
+array whatever else it is. What would have justified including it is not at stake: levels are a
+*list* on one request, so `?levels=status&levels=metrics&levels=series` is a single call. An
+empty list there means the capability produced no curves, which a caller must be able to tell
+from a level it forgot to ask for.
 
 Artifacts here carry a `path` rather than a `url`: this route reports what the core knows, and
 a caller wanting a download uses the artifact endpoint the full envelope advertises.
@@ -448,6 +532,8 @@ saying so rather than an empty region.
 
 Result kinds:
 
+- `series1d` (implemented, added in 1.4): curves rather than a field — see
+  [one-dimensional results](#one-dimensional-results).
 - `grid2d` (implemented): fields sampled on a regular grid —
   `{ "bounds": [xmin, ymin, xmax, ymax], "shape": [ny, nx], "fields": { "<name>": [...] },
   "mask": [...] }`. Arrays are row-major with index `[iy * nx + ix]`, y increasing upward;
@@ -515,6 +601,93 @@ span the width — and **not** from the data's resolution: one arrow per grid po
 unreadable at 512×341 and sparse at 16×16, and the same field would look like a different
 physical situation at two mesh sizes.
 
+## One-dimensional results
+
+*Added in protocol 1.4 ([#69](https://github.com/mandaloriat/fenix-spoon/issues/69)) — additive,
+so it shares `/api/v1` and a 1.3 client is unaffected.*
+
+Until 1.4 there were two result kinds and both were *fields over a 2-D domain*. A great many
+engineering answers are not that shape. They are an ordered list of (x, y) pairs with a name and
+a unit:
+
+| The question | The curve |
+|---|---|
+| What is this profile doing? | `C_p(x/c)` along the upper and lower surface |
+| How does it respond? | a parameter sweep — `C_L(alpha)`, `T_max(fin count)`, `force(gap)` |
+| Do I believe it? | a convergence history — a metric against mesh size |
+| Where does it resonate? | a frequency sweep, or a modal frequency list |
+
+The homes such a curve had before were each wrong in a different way. `stats` is
+`string → number`, so a 200-point curve became 200 keys — and `stats` is what the solve *cost*,
+which 1.3 had just finished separating from what it answered. A `grid2d` with `ny = 1` lied about
+the topology, dragged a `mask` and `bounds` along, and rendered as a one-pixel-tall picture. An
+artifact worked, and put the *compact* half of the answer behind a second fetch and outside every
+typed model, so each application invented its own JSON for the same thing.
+
+### The shape
+
+```json
+{
+  "name": "surface_cp",
+  "description": "Pressure coefficient along the body.",
+  "traces": [
+    { "name": "cp_upper", "unit": "1", "values": [1.0, -1.62, -0.74],
+      "x": { "name": "x/c", "unit": "1", "values": [0.0, 0.12, 0.45] } },
+    { "name": "cp_lower", "unit": "1", "values": [1.0, 0.21],
+      "x": { "name": "x/c", "unit": "1", "values": [0.0, 0.3] } }
+  ]
+}
+```
+
+A sweep, whose traces share one abscissa, puts it at the top level instead:
+
+```json
+{ "name": "lift_curve",
+  "x": { "name": "alpha", "unit": "deg", "values": [-4, -2, 0, 2, 4] },
+  "traces": [ { "name": "c_l", "unit": "1", "values": [-0.477, -0.239, 0.0, 0.239, 0.477] } ] }
+```
+
+**A shared abscissa, with a per-trace override.** Shared covers a sweep and a distribution
+resampled to common stations; per-trace is needed the moment two traces are genuinely sampled
+differently, which is the upper and lower surface of an airfoil if nobody resampled them. A trace
+with neither is rejected — index order is not an abscissa a protocol should invite a client to
+guess.
+
+**Units travel on the wire, unlike the 2-D kinds.** A curve is drawn with axis labels and the
+client has no other way to learn what the axis is; a field is coloured, and `<fs-viewer>` takes
+its colourbar caption from an attribute the page sets. `"1"` means dimensionless.
+
+**Complex values are two real traces, not a complex type.** A harmonic result is plotted as a
+magnitude and a phase — different units, different axes — so a complex scalar would need every
+consumer to pick one of the two anyway, and JSON has no complex number to be faithful to.
+
+**Length is bounded, at three levels**: 4096 points per trace, 32 traces per collection, and 8192
+points across a whole result. The third is the one that matters, because the first two multiply
+out to far more than either intends. Without them "series" would be a second name for the field
+arrays, and the compact response's promise would have a hole in it.
+
+### Two places, one at a time
+
+A result may be curves, or it may be a field *with* curves:
+
+| | `kind` | curves live in |
+|---|---|---|
+| the answer is a curve — a sweep, a convergence history | `series1d` | `data` |
+| the answer is a field, and a curve came with it | `grid2d` / `mesh2d` | `series` |
+
+One solve legitimately answers both questions — the airfoil adapters return the flow field *and*
+the surface `C_p` — and making a caller submit twice for the second would be inventing a round
+trip. A `series1d` result carrying anything in `series` is **rejected**: `kind` selects the schema
+of `data`, and letting the two disagree would leave a consumer needing a rule for which wins. In
+the SDK, `resultSeries(result)` reads whichever place applies.
+
+### Drawing them
+
+`<fs-viewer>` is a 2-D field widget: a curve has no bounds to fit, no topology to interpolate over
+and nothing to contour, so handing it a `series1d` clears the view and warns rather than drawing a
+one-pixel picture. A plot with axes, a legend and the inverted-y convention aerodynamic `C_p` uses
+is a separate widget, and is not in this release.
+
 ## Planned extensions to the domain contract
 
 Not implemented; recorded here so the models grow compatibly instead of being duplicated in a
@@ -530,6 +703,17 @@ second protocol. Each is driven by
 - ~~**Result levels.**~~ Landed in 1.3, as a separate route rather than a query parameter on the
   existing one: `/result` keeps its shape and its arrays, and `/summary` is the compact form. Two
   shapes on one path, chosen by a query parameter, is not something a typed client can describe.
+- ~~**One-dimensional results.**~~ Landed in 1.4 — see
+  [one-dimensional results](#one-dimensional-results).
+- ~~**Declared assumptions.**~~ Landed in 1.4 — see [assumptions](#assumptions).
+- **A curve widget.** `series1d` has no browser renderer yet; the protocol carries the shape and
+  every consumer still writes its own plot. Axes, a legend, a hover readout and an inverted `y`
+  for `C_p`.
+- **Boundary integrals in general.** `MetricSpec.boundary` names the boundary a metric integrates
+  over, and today `body` is the only name any adapter uses. Gap force in magnetostatics, reaction
+  forces in elasticity and wall heat flux in conduction are the same shape, and whether the
+  boundary needs to be *addressable* — a named region of the geometry rather than a convention —
+  is the question the second one of those will answer.
 
 Until these land, the result envelope is exactly what is documented above: `job_id`, `kind`,
-`data`, `stats`, `metrics`, `diagnostics`, `artifacts`.
+`data`, `stats`, `metrics`, `diagnostics`, `series`, `artifacts`.

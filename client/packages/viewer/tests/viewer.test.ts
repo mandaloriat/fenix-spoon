@@ -261,6 +261,38 @@ describe('<fs-viewer>', () => {
     expect(element.field).toBe('psi');
   });
 
+  it('declines a series1d result rather than drawing a curve badly', () => {
+    // Protocol 1.4 (#69) added a kind whose answer is curves. This widget colours a 2-D domain:
+    // a curve has no bounds to fit, no topology to interpolate over and nothing to contour, and
+    // the axes, legend and inverted-y convention a `C_p` plot needs belong somewhere else.
+    // Clearing the view and saying so beats throwing, and beats a one-pixel picture.
+    const element = mount();
+    element.result = GRID;
+    expect(element.field).toBe('psi');
+
+    const warnings: unknown[] = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => warnings.push(args[0]);
+    try {
+      element.result = {
+        job_id: 'j-curve',
+        kind: 'series1d',
+        data: {
+          name: 'lift_curve',
+          x: { name: 'alpha', unit: 'deg', values: [0, 1] },
+          traces: [{ name: 'c_l', unit: '1', values: [0, 0.1] }],
+        },
+        stats: {},
+        artifacts: [],
+      };
+    } finally {
+      console.warn = original;
+    }
+    expect(element.result).toBeNull();
+    expect(element.fields).toEqual([]);
+    expect(String(warnings[0])).toContain('resultSeries');
+  });
+
   it('exposes the mapped range, honouring the symmetric attribute', () => {
     const element = mount();
     element.result = GRID;

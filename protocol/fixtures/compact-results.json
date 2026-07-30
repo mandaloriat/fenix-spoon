@@ -1,5 +1,5 @@
 {
-  "$comment": "Conformance cases for the compact result payload (`GET /api/v1/jobs/{id}/summary`), added by protocol 1.3 with issue #46. Validated against fenixspoon.core.results.LeveledResult by server/tests/test_protocol_fixtures.py. Like the discovery corpora, not read by the JS SDK's conformance suite: the browser SDK types the *full* envelope, which is what a viewer needs, and the levels serve local callers. The invariant these cases exist to pin is that an unrequested level is absent rather than null, and that no compact level ever carries a full numeric array.",
+  "$comment": "Conformance cases for the compact result payload (`GET /api/v1/jobs/{id}/summary`), added by protocol 1.3 with issue #46. Validated against fenixspoon.core.results.LeveledResult by server/tests/test_protocol_fixtures.py. Like the discovery corpora, not read by the JS SDK's conformance suite: the browser SDK types the *full* envelope, which is what a viewer needs, and the levels serve local callers. The invariant these cases exist to pin is that an unrequested level is absent rather than null, and that no compact level ever carries a full numeric array. Protocol 1.4 adds the `series` level (#69): the curves a solve produced, out of the default because a curve is a numeric array and the default answer's promise is that it carries none \u2014 but a level on the same request, not a second route.",
   "valid": [
     {
       "name": "the default answer",
@@ -14,9 +14,18 @@
           "finished_at": "2026-07-30T09:12:46.880000+00:00",
           "seconds": 2.76
         },
-        "metrics": { "t_max": 68.4, "t_rise": 48.4, "flux_max": 121500.0 },
+        "metrics": {
+          "t_max": 68.4,
+          "t_rise": 48.4,
+          "flux_max": 121500.0
+        },
         "diagnostics": {
-          "stats": { "cells": 25600.0, "solid_cells": 6144.0, "iterations": 3000.0, "seconds": 2.76 },
+          "stats": {
+            "cells": 25600.0,
+            "solid_cells": 6144.0,
+            "iterations": 3000.0,
+            "seconds": 2.76
+          },
           "converged": true,
           "residual": 8.4e-10,
           "warnings": []
@@ -33,17 +42,24 @@
     },
     {
       "name": "one level only",
-      "$comment": "`levels=metrics` answers with metrics and the identity, and nothing else. Absent, not null — the difference between a compact answer and a compact-looking one.",
+      "$comment": "`levels=metrics` answers with metrics and the identity, and nothing else. Absent, not null \u2014 the difference between a compact answer and a compact-looking one.",
       "payload": {
         "job_id": "j-2c4f9a1b7e30",
         "solver": "mock.heat2d",
-        "metrics": { "t_max": 68.4, "t_rise": 48.4 }
+        "metrics": {
+          "t_max": 68.4,
+          "t_rise": 48.4
+        }
       }
     },
     {
       "name": "a capability that declares no metrics",
       "$comment": "An empty map, not a missing level: the caller asked, and the honest answer is that this capability reports none.",
-      "payload": { "job_id": "j-1", "solver": "third_party.thing", "metrics": {} }
+      "payload": {
+        "job_id": "j-1",
+        "solver": "third_party.thing",
+        "metrics": {}
+      }
     },
     {
       "name": "a solve that did not converge",
@@ -52,10 +68,15 @@
         "job_id": "j-1",
         "solver": "mock.laplace2d",
         "diagnostics": {
-          "stats": { "cells": 6144.0, "iterations": 400.0 },
+          "stats": {
+            "cells": 6144.0,
+            "iterations": 400.0
+          },
           "converged": false,
           "residual": 0.0013,
-          "warnings": ["stopped at the iteration cap (400) with residual 0.0013"]
+          "warnings": [
+            "stopped at the iteration cap (400) with residual 0.0013"
+          ]
         }
       }
     },
@@ -66,7 +87,10 @@
         "job_id": "j-1",
         "solver": "dolfinx.heat2d",
         "diagnostics": {
-          "stats": { "cells": 41230.0, "dofs": 21015.0 },
+          "stats": {
+            "cells": 41230.0,
+            "dofs": 21015.0
+          },
           "converged": true,
           "residual": null,
           "warnings": []
@@ -82,12 +106,101 @@
         "fields": {
           "kind": "grid2d",
           "data": {
-            "bounds": [0.0, 0.0, 1.0, 1.0],
-            "shape": [2, 2],
-            "fields": { "psi": [0.0, 0.0, 1.0, 1.0] },
-            "mask": [0, 0, 0, 0]
+            "bounds": [
+              0.0,
+              0.0,
+              1.0,
+              1.0
+            ],
+            "shape": [
+              2,
+              2
+            ],
+            "fields": {
+              "psi": [
+                0.0,
+                0.0,
+                1.0,
+                1.0
+              ]
+            },
+            "mask": [
+              0,
+              0,
+              0,
+              0
+            ]
           }
         }
+      }
+    },
+    {
+      "name": "the series level",
+      "$comment": "One solve, two answers: the lift coefficient as a metric and the surface distribution as a curve. Each trace carries its own abscissa because the two surfaces are not sampled at matching stations.",
+      "payload": {
+        "job_id": "j-7d1e4b98c250",
+        "solver": "mock.laplace2d",
+        "metrics": {
+          "c_l": 0.5959,
+          "circulation": -0.298,
+          "c_m_c4": -0.0109,
+          "x_cp": 0.2708
+        },
+        "series": [
+          {
+            "name": "surface_cp",
+            "description": "Pressure coefficient along the body.",
+            "traces": [
+              {
+                "name": "cp_upper",
+                "unit": "1",
+                "values": [
+                  1.0,
+                  -1.62,
+                  -0.74,
+                  -0.2
+                ],
+                "x": {
+                  "name": "x/c",
+                  "unit": "1",
+                  "values": [
+                    0.0,
+                    0.12,
+                    0.45,
+                    0.88
+                  ]
+                }
+              },
+              {
+                "name": "cp_lower",
+                "unit": "1",
+                "values": [
+                  1.0,
+                  0.21,
+                  0.06
+                ],
+                "x": {
+                  "name": "x/c",
+                  "unit": "1",
+                  "values": [
+                    0.0,
+                    0.3,
+                    0.8
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "a capability that produced no curves",
+      "$comment": "Empty, not absent. A caller that asked for the level and got nothing back must be able to tell 'this solve produced no curves' from 'I forgot to ask'.",
+      "payload": {
+        "job_id": "j-nocurves01",
+        "solver": "mock.heat2d",
+        "series": []
       }
     }
   ],
@@ -95,20 +208,33 @@
     {
       "name": "no job_id",
       "reason": "Identity is always present, at every level selection, so an answer can be recognised without correlating it back to the request that produced it.",
-      "payload": { "solver": "mock.laplace2d", "metrics": { "speed_max": 1.4 } }
+      "payload": {
+        "solver": "mock.laplace2d",
+        "metrics": {
+          "speed_max": 1.4
+        }
+      }
     },
     {
       "name": "no solver",
       "reason": "Which capability produced a number is part of what the number means; two adapters for the same physics can differ by more than their names.",
-      "payload": { "job_id": "j-1", "metrics": { "speed_max": 1.4 } }
+      "payload": {
+        "job_id": "j-1",
+        "metrics": {
+          "speed_max": 1.4
+        }
+      }
     },
     {
       "name": "diagnostics without stats",
-      "reason": "`stats` is the level's core — the diagnostics level was grown out of it rather than opened beside it, so a diagnostics object without it is describing something else.",
+      "reason": "`stats` is the level's core \u2014 the diagnostics level was grown out of it rather than opened beside it, so a diagnostics object without it is describing something else.",
       "payload": {
         "job_id": "j-1",
         "solver": "mock.laplace2d",
-        "diagnostics": { "converged": true, "warnings": [] }
+        "diagnostics": {
+          "converged": true,
+          "warnings": []
+        }
       }
     },
     {
@@ -117,16 +243,59 @@
       "payload": {
         "job_id": "j-1",
         "solver": "mock.heat2d",
-        "metrics": { "t_max": "hot" }
+        "metrics": {
+          "t_max": "hot"
+        }
       }
     },
     {
       "name": "an artifact inlined instead of referenced",
-      "reason": "The artifacts level is references only — name, type, size, where it is. Bytes in this payload would defeat the level's entire purpose.",
+      "reason": "The artifacts level is references only \u2014 name, type, size, where it is. Bytes in this payload would defeat the level's entire purpose.",
       "payload": {
         "job_id": "j-1",
         "solver": "mock.laplace2d",
-        "artifacts": [{ "name": "solution.vtk", "content_type": "model/vnd.vtk", "size": 12 }]
+        "artifacts": [
+          {
+            "name": "solution.vtk",
+            "content_type": "model/vnd.vtk",
+            "size": 12
+          }
+        ]
+      }
+    },
+    {
+      "name": "a series level with a trace that has no abscissa",
+      "reason": "no shared x and none of its own leaves the curve un-plottable",
+      "payload": {
+        "job_id": "j-x",
+        "solver": "mock.laplace2d",
+        "series": [
+          {
+            "name": "surface_cp",
+            "traces": [
+              {
+                "name": "cp",
+                "unit": "1",
+                "values": [
+                  1.0
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "a series level keyed by name instead of a list",
+      "reason": "a list, so a result can carry several curve sets in a defined order",
+      "payload": {
+        "job_id": "j-x",
+        "solver": "mock.laplace2d",
+        "series": {
+          "surface_cp": {
+            "traces": []
+          }
+        }
       }
     }
   ]

@@ -2,10 +2,18 @@
 
 Solves the Laplace equation for the streamfunction psi on a regular Cartesian grid with a
 Jacobi iteration — pure NumPy, no FEM, no meshing. Physically it is textbook potential flow:
-uniform stream psi = U*y at the far field, psi = const on the obstacle. The point of this
-solver is to exercise the entire toolkit (geometry schema, job manager, progress streaming,
-cancellation, artifacts, grid2d/mesh2d results, browser rendering) without FEniCSx installed;
-the numbers are plausible, not publication-grade.
+uniform stream at the far field, psi = const on the obstacle. The point of this solver is to
+exercise the entire toolkit (geometry schema, job manager, progress streaming, cancellation,
+artifacts, grid2d/mesh2d/series1d results, browser rendering) without FEniCSx installed; the
+numbers are plausible, not publication-grade.
+
+**Circulation is a solved-for quantity, not a leftover (issue #68).** Which constant the body's
+streamline carries determines the circulation, and therefore the lift. This adapter used to
+pick it by a heuristic — the free-stream value at the obstacle's centroid — which made lift an
+artefact of an arbitrary choice, and said so nowhere. With `kutta` on, which is the default, it
+runs the Laplace problem twice and picks that constant so the flow leaves the trailing edge
+smoothly. The bookkeeping is in :mod:`fenixspoon.solvers.aerodynamics`; the cost is one extra
+solve, and what it buys is `circulation`, `c_l`, `c_m_c4` and `x_cp` being real numbers.
 """
 
 from typing import Literal
@@ -14,8 +22,9 @@ import numpy as np
 from pydantic import BaseModel, Field
 
 from ..geometry import Domain2D
+from . import aerodynamics as aero
 from .base import CapabilityExample, ProgressEvent, Solver, SolverContext, SolverResult
-from .declarations import POTENTIAL_FLOW_METRICS, VTK_ARTIFACT
+from .declarations import POTENTIAL_FLOW_ASSUMPTIONS, POTENTIAL_FLOW_METRICS, VTK_ARTIFACT
 from .registry import register
 
 
@@ -120,18 +129,52 @@ def _cp_min(speed_max: float, u_inf: float) -> dict[str, float]:
     return {"cp_min": 1.0 - (speed_max / u_inf) ** 2} if u_inf else {}
 
 
+class _Clock:
+    """Progress across however many relaxations one solve is made of.
+
+    The Kutta path runs the Laplace problem twice, and a progress stream that restarted at
+    iteration 1 halfway through would read as a job going backwards. Counting sweeps across
+    both and reporting the combined total keeps a progress bar monotonic, which is the only
+    thing a progress bar is for.
+    """
+
+    def __init__(self, ctx: SolverContext, every: int, total: int) -> None:
+        self._ctx = ctx
+        self._every = every
+        self.total = total
+        self.done = 0
+
+    def tick(self, residual: float, stage: str, *, final: bool = False) -> None:
+        self.done += 1
+        if self.done % self._every == 0 or final:
+            # `stage` is what makes the stream readable across two solves. Residual is
+            # monotone *within* a relaxation and jumps when the next one starts from its own
+            # initial guess, so without a label a subscriber watching the number alone would
+            # see the solve go backwards halfway through.
+            self._ctx.progress(
+                ProgressEvent(
+                    iteration=self.done,
+                    total=self.total,
+                    residual=residual,
+                    message=stage,
+                )
+            )
+
+
 @register
 class MockLaplace2D(Solver):
     name = "mock.laplace2d"
     title = "Potential flow (mock, NumPy)"
     description = (
         "2D incompressible potential flow around the obstacle: Laplace equation for the "
-        "streamfunction on a Cartesian grid, Jacobi-iterated. Development stand-in that runs "
-        "anywhere NumPy does."
+        "streamfunction on a Cartesian grid, Jacobi-iterated, with circulation set by the "
+        "Kutta condition at the trailing edge so that lift is a real number. Development "
+        "stand-in that runs anywhere NumPy does."
     )
     physics = "potential-flow"
     availability = "mock"
     metrics = POTENTIAL_FLOW_METRICS
+    assumptions = POTENTIAL_FLOW_ASSUMPTIONS
     artifacts = [VTK_ARTIFACT]
     examples = [
         CapabilityExample(
@@ -147,14 +190,56 @@ class MockLaplace2D(Solver):
             description="What the airfoil demo submits: a readable field in a few seconds.",
             params={"resolution": 256, "iterations": 4000},
         ),
+        CapabilityExample(
+            title="lift at incidence",
+            description=(
+                "Five degrees angle of attack, resolved enough for the two routes to lift to "
+                "agree. Read `c_l` from `metrics` and the surface distribution from `series`."
+            ),
+            params={"resolution": 192, "iterations": 12000, "alpha": 5.0},
+        ),
+        CapabilityExample(
+            title="flow field only, no circulation",
+            description=(
+                "The pre-#68 behaviour, kept because it is half the cost and the streamlines "
+                "are all some callers want. Lift is meaningless in this mode and the "
+                "`no_circulation` assumption says so."
+            ),
+            params={"resolution": 128, "iterations": 2000, "kutta": False},
+        ),
     ]
 
     class Params(BaseModel):
         resolution: int = Field(
             default=128, ge=16, le=512, description="Grid points along the longer domain edge"
         )
-        iterations: int = Field(default=2000, ge=10, le=20000)
-        u_inf: float = Field(default=1.0, description="Free-stream velocity (x direction)")
+        iterations: int = Field(
+            default=2000,
+            ge=10,
+            le=20000,
+            description=(
+                "Jacobi sweeps per solve. With `kutta` on there are two solves, so this is "
+                "half the total work"
+            ),
+        )
+        u_inf: float = Field(default=1.0, description="Free-stream speed")
+        alpha: float = Field(
+            default=0.0,
+            ge=-30.0,
+            le=30.0,
+            description=(
+                "Angle of attack in degrees. Rotates the free stream, not the geometry, so a "
+                "sweep re-uses the same domain"
+            ),
+        )
+        kutta: bool = Field(
+            default=True,
+            description=(
+                "Fix the circulation by the Kutta condition at the trailing edge, which is "
+                "what makes lift meaningful. Costs a second solve; turn it off for the flow "
+                "field alone"
+            ),
+        )
         report_every: int = Field(default=100, ge=1)
         output: Literal["grid2d", "mesh2d"] = Field(
             default="grid2d",
@@ -166,8 +251,47 @@ class MockLaplace2D(Solver):
 
     @classmethod
     def estimate_cells(cls, geometry: Domain2D, params: "MockLaplace2D.Params") -> int:
+        # Unchanged by `kutta`, deliberately. The budget this feeds is a *cell* budget — a
+        # proxy for the memory a job needs — and the second solve reuses the same grid. It
+        # doubles the wall clock, which is the job timeout's business, not this one's.
         ny, nx = _grid_shape(geometry.bounds, params.resolution)
         return ny * nx
+
+    @staticmethod
+    def _relax(
+        edges: np.ndarray,
+        body_value: float,
+        mask: np.ndarray,
+        params: "MockLaplace2D.Params",
+        ctx: SolverContext,
+        clock: _Clock,
+        stage: str,
+    ) -> tuple[np.ndarray, float]:
+        """Jacobi-relax the Laplace problem for one set of boundary data.
+
+        The boundary conditions arrive as the *initial field*: interior nodes are averaged and
+        the domain edges are never written, so whatever ``edges`` holds there stays there as a
+        Dirichlet condition, and ``body_value`` is re-imposed on the mask every sweep. That is
+        what lets the same six lines produce both halves of the superposition — the free-stream
+        solution and the circulatory one differ only in what is handed in here.
+        """
+        psi = np.asarray(edges, dtype=np.float64).copy()
+        psi[mask] = body_value
+        residual = float("inf")
+        for sweep in range(1, params.iterations + 1):
+            ctx.check_cancelled()
+            new = psi.copy()
+            new[1:-1, 1:-1] = 0.25 * (
+                psi[1:-1, :-2] + psi[1:-1, 2:] + psi[:-2, 1:-1] + psi[2:, 1:-1]
+            )
+            new[mask] = body_value  # Dirichlet on the body; edges untouched -> far field
+            residual = float(np.max(np.abs(new - psi)))
+            psi = new
+            settled = residual < 1e-9
+            clock.tick(residual, stage, final=settled or sweep == params.iterations)
+            if settled:
+                break
+        return psi, residual
 
     def solve(
         self, geometry: Domain2D, params: "MockLaplace2D.Params", ctx: SolverContext
@@ -186,27 +310,52 @@ class MockLaplace2D(Solver):
             cx, cy = pts.mean(axis=0)
             mask[np.argmin(np.abs(y - cy)), np.argmin(np.abs(x - cx))] = True
 
-        # Free stream everywhere; body held at the streamline through its centroid.
-        psi = (yy * params.u_inf).astype(np.float64)
-        psi_body = float(pts[:, 1].mean()) * params.u_inf
-        psi[mask] = psi_body
+        stream = aero.far_field_psi(xx, yy, params.u_inf, params.alpha)
+        clock = _Clock(ctx, params.report_every, params.iterations * (2 if params.kutta else 1))
+        # The streamline through the obstacle's centroid: what this adapter used to hold the
+        # body at, and still does when there is no Kutta condition to do better.
+        centroid = pts.mean(axis=0)
+        heuristic = float(
+            aero.far_field_psi(centroid[0], centroid[1], params.u_inf, params.alpha)
+        )
 
-        residual = float("inf")
-        for it in range(1, params.iterations + 1):
-            ctx.check_cancelled()
-            new = psi.copy()
-            new[1:-1, 1:-1] = 0.25 * (
-                psi[1:-1, :-2] + psi[1:-1, 2:] + psi[:-2, 1:-1] + psi[2:, 1:-1]
+        profile: aero.Profile | None = None
+        aero_warnings: list[str] = []
+        if not params.kutta:
+            psi, residual = self._relax(
+                stream, heuristic, mask, params, ctx, clock, "relaxing the streamfunction"
             )
-            new[mask] = psi_body  # Dirichlet on the body; edges untouched -> far-field Dirichlet
-            residual = float(np.max(np.abs(new - psi)))
-            psi = new
-            if it % params.report_every == 0 or it == params.iterations:
-                ctx.progress(
-                    ProgressEvent(iteration=it, total=params.iterations, residual=residual)
-                )
-            if residual < 1e-9:
-                break
+        else:
+            # The superposition #68 is built on: `psi_a` is the free stream with the body held
+            # at zero, `psi_gamma` is the pure circulatory solution with the body at one, and
+            # `psi_a + lam * psi_gamma` solves the same problem for *every* `lam`. So one extra
+            # solve turns the body's streamfunction value from a heuristic into an unknown the
+            # trailing edge can determine — and the condition that determines it is linear, so
+            # there is no iteration on top.
+            psi_a, residual_a = self._relax(
+                stream, 0.0, mask, params, ctx, clock, "relaxing the free-stream mode"
+            )
+            psi_gamma, residual_g = self._relax(
+                np.zeros_like(stream), 1.0, mask, params, ctx, clock,
+                "relaxing the circulatory mode",
+            )
+            residual = max(residual_a, residual_g)
+            body_value = heuristic
+            try:
+                profile = aero.profile_of(pts)
+                body_value = aero.resolve_kutta(
+                    profile,
+                    aero.GridField(x=x, y=y, values=psi_a, mask=mask),
+                    aero.GridField(x=x, y=y, values=psi_gamma, mask=mask),
+                ).body_value
+            except aero.AerodynamicsUnavailable as exc:
+                # The field is still a valid potential flow — only the *choice* of circulation
+                # failed — so the job succeeds with the heuristic body value and a warning
+                # naming what is missing. Failing the whole solve would throw away a usable
+                # flow field over a post-processing step.
+                profile = None
+                aero_warnings.append(aero.describe_unavailable(exc))
+            psi = psi_a + body_value * psi_gamma
 
         # Velocity magnitude from psi: u = d(psi)/dy, v = -d(psi)/dx.
         dy_ = y[1] - y[0]
@@ -224,26 +373,57 @@ class MockLaplace2D(Solver):
         v_out = np.where(mask, 0.0, v)
         velocity = np.stack([u_out, v_out], axis=-1)
 
+        # The aerodynamic post-processing reads the *combined* field, so it has to come after
+        # the superposition rather than beside the solves that make it up.
+        aerodynamics: aero.Aerodynamics | None = None
+        if profile is not None:
+            try:
+                aerodynamics = aero.analyse(
+                    profile=profile,
+                    psi=psi,
+                    speed=speed,
+                    x=x,
+                    y=y,
+                    mask=mask,
+                    u_inf=params.u_inf,
+                    alpha_deg=params.alpha,
+                )
+            except aero.AerodynamicsUnavailable as exc:
+                aero_warnings.append(aero.describe_unavailable(exc))
+
         if params.write_vtk:
             write_vtk_structured_points(
                 ctx.artifact("solution.vtk"), x, y, {"psi": psi, "speed": speed}
             )
 
-        stats = {"cells": float(nx * ny), "iterations": float(it)}
+        stats = {"cells": float(nx * ny), "iterations": float(clock.done)}
         converged = residual < 1e-9
+        warnings = list(aero_warnings)
+        if not converged:
+            warnings.append(
+                f"stopped at the iteration cap ({params.iterations} sweeps per solve) with "
+                f"residual {residual:.3g}; raise `iterations` for a converged field"
+            )
+        if not params.kutta:
+            # Said on every run rather than left to the capability declaration. A caller that
+            # reached this mode by accident is exactly the caller who will not have read the
+            # `assumptions` section, and a zero lift with no explanation beside it is the
+            # failure #68 was filed about.
+            warnings.append(
+                "no Kutta condition was imposed (`kutta` is false), so the circulation is an "
+                "artefact of where the body's streamline was fixed and lift is not a physical "
+                "result. `circulation`, `c_l`, `c_m_c4` and `x_cp` are therefore absent."
+            )
         common = {
             "stats": stats,
-            "metrics": _cp_min(float(speed[~mask].max(initial=0.0)), params.u_inf),
+            "metrics": {
+                **_cp_min(float(speed[~mask].max(initial=0.0)), params.u_inf),
+                **(aerodynamics.metrics if aerodynamics else {}),
+            },
+            "series": aerodynamics.series if aerodynamics else [],
             "converged": converged,
             "residual": residual,
-            "warnings": (
-                []
-                if converged
-                else [
-                    f"stopped at the iteration cap ({params.iterations}) with residual "
-                    f"{residual:.3g}; raise `iterations` for a converged field"
-                ]
-            ),
+            "warnings": warnings + (aerodynamics.warnings if aerodynamics else []),
         }
         if params.output == "mesh2d":
             return SolverResult(

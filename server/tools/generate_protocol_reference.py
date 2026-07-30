@@ -101,8 +101,10 @@ def render_model(
     doc = (model.__doc__ or "").strip()
     if doc:
         # Only the first paragraph: the rest is usually implementation notes for whoever
-        # maintains the model, not contract for whoever consumes it.
-        lines += [doc.split("\n\n")[0].replace("\n", " ").strip(), ""]
+        # maintains the model, not contract for whoever consumes it. Whitespace is collapsed
+        # rather than newlines merely replaced — a docstring's second line carries the class's
+        # indentation, which came through as a run of spaces in the middle of a sentence.
+        lines += [" ".join(doc.split("\n\n")[0].split()), ""]
 
     lines += ["| Field | Type | Required | Default | Description |", "|---|---|---|---|---|"]
     for name, field in model.model_fields.items():
@@ -160,10 +162,14 @@ def build() -> str:
         Mesh2DData,
         ProgressEvent,
         ResultEnvelope,
+        Series1DData,
+        SeriesAxis,
+        SeriesTrace,
         StatusEvent,
     )
     from fenixspoon.solvers.base import (
         ArtifactSpec,
+        Assumption,
         CapabilityExample,
         CapabilityFeatures,
         MetricSpec,
@@ -174,7 +180,21 @@ def build() -> str:
         ("Geometry", [Polygon2D, Domain2D, Region2D, Regions2D]),
         ("Jobs", [JobRequest, JobCreated, JobStatus, JobList]),
         ("Events", [ProgressEvent, StatusEvent]),
-        ("Results", [ResultEnvelope, Grid2DData, Mesh2DData, ArtifactRef]),
+        (
+            "Results",
+            [
+                ResultEnvelope,
+                Grid2DData,
+                Mesh2DData,
+                # Protocol 1.4, #69. Listed after the two field kinds because it is the third
+                # member of the same discriminated union, and before `ArtifactRef` because that
+                # is a reference to a file rather than a payload shape.
+                Series1DData,
+                SeriesAxis,
+                SeriesTrace,
+                ArtifactRef,
+            ],
+        ),
         (
             "Compact results",
             [
@@ -204,6 +224,10 @@ def build() -> str:
                 ParamsSection,
                 ParamSummary,
                 MetricSpec,
+                # Protocol 1.4, #70. Next to `MetricSpec` because it is what qualifies one:
+                # the metrics say what a capability reports, the assumptions say where that
+                # stops being valid.
+                Assumption,
                 ArtifactSpec,
                 CostSection,
                 CapabilityFeatures,

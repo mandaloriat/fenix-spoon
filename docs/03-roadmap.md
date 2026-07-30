@@ -92,18 +92,19 @@ the seams a second caller needs. The design specification is
       #46 and #48. (#42)
 - [x] **Progressive capability discovery.** `environment.inspect`, `capability.list`,
       `capability.describe` with eight selectable sections, in `core/discovery.py` and bound to
-      HTTP as protocol 1.2. `GET /solvers` keeps its payload exactly — it is the right answer for
-      a form generator — and `capability.list` is the compact one beside it: 0.5 kB against 4.0 kB
-      on the three mock adapters. An unrequested section is *absent*, not null, and an unknown
-      section name is refused rather than ignored, because a caller that misspells `metrics` and
-      gets a payload without them would conclude the capability has none. Solver adapters gained
-      a declaration — physics, availability, metrics, artifacts, features, requirements,
-      examples — all defaulted, so an adapter written against 1.1 keeps working. *Two things the
-      implementation had to be honest about: **metrics are declared, not computed** (the values
-      are #46), so a metric that reduces a result field names the field and a test runs a solve
-      and checks it is really emitted; and the flattened `params` list is **flatter, not
-      smaller** — measured, marginally larger than the schema, and what it buys is that no
-      `$ref` has to be resolved.* (#43)
+      HTTP as protocol 1.2 — nine since #70 added `assumptions`. `GET /solvers` keeps its
+      payload exactly — it is the right answer for a form generator — and `capability.list` is
+      the compact one beside it: 0.5 kB against 4.0 kB on the three mock adapters. An
+      unrequested section is *absent*, not null, and an unknown section name is refused rather
+      than ignored, because a caller that misspells `metrics` and gets a payload without them
+      would conclude the capability has none. Solver adapters gained a declaration — physics,
+      availability, metrics, assumptions, artifacts, features, requirements, examples — all
+      defaulted, so an adapter written against 1.1 keeps working. *Two things the implementation
+      had to be honest about: **metrics are declared, not computed** (the values are #46), so a
+      metric that reduces a result field names the field and a test runs a solve and checks it
+      is really emitted; and the flattened `params` list is **flatter, not smaller** — measured,
+      marginally larger than the schema, and what it buys is that no `$ref` has to be resolved.*
+      (#43)
 - [x] **Local workspace and object references.** Six object types under stable ids
       (`geometry:g-1`, `design:d-18`), versioned rather than mutated, with `workspace.open`,
       `workspace.list`, `object.create`, `object.get`, `object.patch` and a `job.submit` that
@@ -175,6 +176,40 @@ the seams a second caller needs. The design specification is
       validation errors are represented consistently, that mock and FEniCSx honor the same
       envelopes, that schemas do not diverge between adapters, and that compact responses never
       leak full numeric arrays. (#51)
+
+### Reported back from the application side
+
+Three gaps that a consumer of M2.5 found by trying to build on it, filed against this repository
+from [`physics-lab`](https://github.com/mandaloriat/physics-lab), and all three protocol 1.4:
+
+- [x] **Circulation and lift on the potential-flow adapters.** The streamfunction solve carried
+      whatever circulation the body's arbitrary streamline constant implied, so the most famous
+      output of the model was meaningless and nothing said so — which is why #21 and #22 had both
+      written *"lift **proxy**"* into their acceptance criteria. The problem is linear in that
+      constant, so the fix is a superposition rather than a new solver: solve once with the free
+      stream and the body at zero, once with the body at one, and the Kutta condition picks the
+      combination in a single division. `circulation`, `c_l`, `c_m_c4` and `x_cp` now come back
+      from both adapters, and there is a lift to optimise. *Verified against closed forms rather
+      than against itself: circulation to 0.006% on a lifting cylinder, `Gamma = 4 pi U R
+      sin(alpha + beta)` to 0.1% on the Joukowski condition, exactly zero drag (d'Alembert), and
+      a NACA 2412 zero-lift angle of -2.34° against the tabulated -2.1°. The two independent
+      routes to lift — Kutta-Joukowski and an integral of the surface pressure — are compared on
+      every run and a disagreement is reported rather than averaged.* (#68)
+- [x] **A result kind for 1-D data.** Both existing kinds were fields over a 2-D domain, and a
+      great deal of engineering output is a curve: a surface `C_p`, a sweep, a convergence
+      history. `series1d` is the third member of the union, with a `series` key so a field result
+      can carry curves beside it — one solve legitimately answers both. Bounded three ways, so a
+      curve cannot become the field arrays under a different key, and outside the default
+      response level for exactly that reason. *No curve widget yet: the protocol carries the
+      shape and each consumer still draws it.* (#69)
+- [x] **Declared assumptions.** #43 gave `capability.describe` eight sections and every one
+      described what a capability *does*. None said what its model *assumes*, which is what a
+      caller needs before trusting a number. `excludes` is the field that earns it: a caller
+      asking *"can this tell me about drag?"* gets a definite no rather than a plausible zero.
+      Where an assumption has a numeric edge it carries the limit, so the honest sentence that
+      was buried in `mock.magnetostatics2d`'s `b_max` description — *"past roughly 1.5 T the
+      permeability collapses and a linear solve stops describing the device"* — is now a number a
+      caller can act on. (#70)
 
 **Exit criterion (demonstrable).** From a local agent process, with no HTTP server running:
 discover the available potential-flow capability, create an airfoil design in a workspace, submit

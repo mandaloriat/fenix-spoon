@@ -1,5 +1,5 @@
 {
-  "$comment": "Conformance cases for `capability.describe` (`GET /api/v1/capabilities/{name}`), added by protocol 1.2 with issue #43. Validated against fenixspoon.core.discovery.CapabilityDescription. The shape under test is the section mechanism: every section is optional, `name` never is, and an unrequested section is absent rather than null. See environment.json for why the JS SDK does not read these.",
+  "$comment": "Conformance cases for `capability.describe` (`GET /api/v1/capabilities/{name}`), added by protocol 1.2 with issue #43. Validated against fenixspoon.core.discovery.CapabilityDescription. The shape under test is the section mechanism: every section is optional, `name` never is, and an unrequested section is absent rather than null. Protocol 1.4 adds the `assumptions` section (#70), which is the first section describing what a capability's model *assumes* rather than what it does, and the first whose empty list is itself an answer. See environment.json for why the JS SDK does not read these.",
   "valid": [
     {
       "name": "metrics only",
@@ -25,7 +25,9 @@
     {
       "name": "just the name",
       "$comment": "Degenerate but legal: `sections: []` asks for nothing, and getting an identifiable empty answer beats an error. A caller probing whether a capability exists can use it.",
-      "payload": { "name": "mock.laplace2d" }
+      "payload": {
+        "name": "mock.laplace2d"
+      }
     },
     {
       "name": "params as a reference",
@@ -48,7 +50,10 @@
               "type": "enum",
               "required": false,
               "default": "grid2d",
-              "choices": ["grid2d", "mesh2d"]
+              "choices": [
+                "grid2d",
+                "mesh2d"
+              ]
             }
           ],
           "schema_ref": "schema:params/mock.laplace2d"
@@ -62,12 +67,22 @@
         "name": "mock.laplace2d",
         "params": {
           "params": [
-            { "name": "u_inf", "type": "number", "required": false, "default": 1.0 }
+            {
+              "name": "u_inf",
+              "type": "number",
+              "required": false,
+              "default": 1.0
+            }
           ],
           "schema_ref": "schema:params/mock.laplace2d",
           "json_schema": {
             "type": "object",
-            "properties": { "u_inf": { "type": "number", "default": 1.0 } }
+            "properties": {
+              "u_inf": {
+                "type": "number",
+                "default": 1.0
+              }
+            }
           }
         }
       }
@@ -82,12 +97,19 @@
         "physics": "heat-conduction",
         "availability": "fenicsx",
         "geometries": {
-          "kinds": ["regions2d"],
+          "kinds": [
+            "regions2d"
+          ],
           "note": "Geometry schemas are protocol-level, not per-capability."
         },
         "params": {
           "params": [
-            { "name": "mesh_size", "type": "number", "required": false, "default": 0.0015 }
+            {
+              "name": "mesh_size",
+              "type": "number",
+              "required": false,
+              "default": 0.0015
+            }
           ],
           "schema_ref": "schema:params/dolfinx.heat2d"
         },
@@ -113,11 +135,23 @@
           "max_cells": 2000000,
           "job_timeout_seconds": 600.0
         },
-        "features": { "sweep": false, "gradient": false, "mpi": false },
+        "features": {
+          "sweep": false,
+          "gradient": false,
+          "mpi": false
+        },
         "requirements": {
           "packages": [
-            { "name": "dolfinx", "imported": true, "version": "0.11.0" },
-            { "name": "gmsh", "imported": true, "version": "4.13.1" }
+            {
+              "name": "dolfinx",
+              "imported": true,
+              "version": "0.11.0"
+            },
+            {
+              "name": "gmsh",
+              "imported": true,
+              "version": "4.13.1"
+            }
           ],
           "satisfied": true
         },
@@ -125,7 +159,10 @@
           {
             "title": "coarse mesh",
             "description": "A setup check, not a result.",
-            "params": { "mesh_size": 0.004, "write_vtk": false }
+            "params": {
+              "mesh_size": 0.004,
+              "write_vtk": false
+            }
           }
         ]
       }
@@ -144,17 +181,65 @@
           }
         ]
       }
+    },
+    {
+      "name": "assumptions only",
+      "$comment": "#70's shape. `excludes` is the field that pays for itself: it lets a caller ask \"can this tell me about drag?\" and get a definite no rather than a plausible zero. `quantity`/`limit`/`comparator` make an assumption machine-checkable where it has a numeric edge, which is what makes it more than documentation.",
+      "payload": {
+        "name": "mock.laplace2d",
+        "assumptions": [
+          {
+            "name": "incompressible",
+            "statement": "Density is constant. Valid below roughly Mach 0.3.",
+            "quantity": "mach",
+            "limit": 0.3,
+            "comparator": "<"
+          },
+          {
+            "name": "inviscid",
+            "statement": "No boundary layer, so no wall shear, no separation, no stall.",
+            "excludes": [
+              "drag",
+              "c_d",
+              "stall"
+            ]
+          },
+          {
+            "name": "no_circulation",
+            "statement": "With `kutta` false the solution carries no meaningful circulation.",
+            "excludes": [
+              "c_l",
+              "circulation"
+            ],
+            "when": "!kutta"
+          },
+          {
+            "name": "two_dimensional",
+            "statement": "A cross-section of a body infinitely long in z."
+          }
+        ]
+      }
+    },
+    {
+      "name": "a capability that declares no assumptions",
+      "$comment": "An empty list, not an absent key. Absent means the section was not requested; empty means none are declared \u2014 and since every physical model assumes something, empty reads as *undeclared*, which is a different and useful thing to learn.",
+      "payload": {
+        "name": "third-party.something",
+        "assumptions": []
+      }
     }
   ],
   "invalid": [
     {
       "name": "no name",
       "reason": "A description must say what it describes. Every other field is a section and may be absent; this one identifies the answer.",
-      "payload": { "metrics": [] }
+      "payload": {
+        "metrics": []
+      }
     },
     {
       "name": "a metric with an unknown reduction",
-      "reason": "`reduction` is a closed set — max, min, mean, integral — because #46 has to implement each one. 'median' would be a metric nothing can compute.",
+      "reason": "`reduction` is a closed set \u2014 max, min, mean, integral \u2014 because #46 has to implement each one. 'median' would be a metric nothing can compute.",
       "payload": {
         "name": "mock.heat2d",
         "metrics": [
@@ -173,7 +258,12 @@
       "reason": "A scalar without a unit is not an engineering answer. Dimensionless is spelled \"1\", which is a unit; omitting the field is not.",
       "payload": {
         "name": "mock.laplace2d",
-        "metrics": [{ "name": "cp_min", "description": "Suction peak." }]
+        "metrics": [
+          {
+            "name": "cp_min",
+            "description": "Suction peak."
+          }
+        ]
       }
     },
     {
@@ -182,7 +272,14 @@
       "payload": {
         "name": "mock.laplace2d",
         "params": {
-          "params": [{ "name": "u_inf", "type": "number", "required": false, "default": 1.0 }]
+          "params": [
+            {
+              "name": "u_inf",
+              "type": "number",
+              "required": false,
+              "default": 1.0
+            }
+          ]
         }
       }
     },
@@ -191,7 +288,68 @@
       "reason": "An ordered list, not a map: the declaration order is the order an adapter author wrote them in, which is the order a caller should read them in.",
       "payload": {
         "name": "mock.heat2d",
-        "metrics": { "t_max": { "unit": "degC", "description": "Peak temperature." } }
+        "metrics": {
+          "t_max": {
+            "unit": "degC",
+            "description": "Peak temperature."
+          }
+        }
+      }
+    },
+    {
+      "name": "an assumption with no statement",
+      "reason": "the prose is the point: a name alone says nothing about where the model stops",
+      "payload": {
+        "name": "mock.laplace2d",
+        "assumptions": [
+          {
+            "name": "inviscid"
+          }
+        ]
+      }
+    },
+    {
+      "name": "an assumption whose limit is prose",
+      "reason": "the whole point of the section is that a limit is structured rather than described: a number a caller can compare against, not a sentence",
+      "payload": {
+        "name": "mock.laplace2d",
+        "assumptions": [
+          {
+            "name": "incompressible",
+            "statement": "Density is constant.",
+            "quantity": "mach",
+            "limit": "about a third",
+            "comparator": "<"
+          }
+        ]
+      }
+    },
+    {
+      "name": "an assumption with an unknown comparator",
+      "reason": "the comparator says which side of the limit is valid and is a closed set",
+      "payload": {
+        "name": "mock.laplace2d",
+        "assumptions": [
+          {
+            "name": "incompressible",
+            "statement": "Density is constant.",
+            "quantity": "mach",
+            "limit": 0.3,
+            "comparator": "roughly"
+          }
+        ]
+      }
+    },
+    {
+      "name": "assumptions as an object keyed by name",
+      "reason": "a list, like metrics and artifacts: order is the order to present them in",
+      "payload": {
+        "name": "mock.laplace2d",
+        "assumptions": {
+          "inviscid": {
+            "statement": "No boundary layer."
+          }
+        }
       }
     }
   ]

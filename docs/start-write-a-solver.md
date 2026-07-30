@@ -110,6 +110,37 @@ costs a user one parameter change and a clear error message. The FEniCSx adapter
 learned this the hard way — the equilateral-tiling formula `2A/h²` looks like a triangle
 count but is really a *floor*, and Gmsh comes in about 35% above it.
 
+## Returning a curve as well as a field
+
+If your solve produces a curve — a surface distribution, a sweep, a convergence history — put it
+in `result.series` rather than inventing keys in `stats` or shipping an artifact for it. One solve
+may legitimately answer both questions, which is why this is a list beside `data` and not a
+different result kind:
+
+```python
+from fenixspoon.series import Series1DData, SeriesAxis, SeriesTrace
+
+return SolverResult(
+    kind="grid2d",
+    data=data,
+    series=[
+        Series1DData(
+            name="convergence",
+            description="Residual against sweep count.",
+            x=SeriesAxis(name="sweep", unit="1", values=sweeps),
+            traces=[SeriesTrace(name="residual", unit="1", values=residuals)],
+        )
+    ],
+)
+```
+
+Units are required here and not on a field, because a curve is drawn with axis labels and the
+client has no other way to know what the axis is. Give each trace its own `x` when they are
+genuinely sampled differently; otherwise share one. And keep it small — the models refuse a
+series large enough to be the field arrays under a different name, which is the whole reason the
+level is safe to serve. The [wire protocol](04-wire-protocol.md#one-dimensional-results) has the
+shape and the limits.
+
 ## Describing yourself to a caller that is not a form
 
 Everything above makes your solver *runnable*. This makes it *discoverable*: the
@@ -117,7 +148,9 @@ Everything above makes your solver *runnable*. This makes it *discoverable*: the
 whatever you declare here, so a caller can decide whether to run you before it does.
 
 ```python
-from fenixspoon.solvers.base import ArtifactSpec, CapabilityExample, MetricSpec
+from fenixspoon.solvers.base import (
+    ArtifactSpec, Assumption, CapabilityExample, MetricSpec,
+)
 
 
 class SteadyHeat2D(Solver):
@@ -130,6 +163,14 @@ class SteadyHeat2D(Solver):
     metrics = [
         MetricSpec(name="t_max", unit="degC", description="Peak temperature.",
                    field="T", reduction="max"),
+    ]
+    assumptions = [
+        Assumption(name="steady_state",
+                   statement="No time derivative: every temperature is the equilibrium "
+                             "the device settles at, reached after a time this cannot tell you.",
+                   excludes=["thermal_time_constant", "transient_temperature"]),
+        Assumption(name="two_dimensional",
+                   statement="A cross-section of a body infinitely long in z."),
     ]
     artifacts = [
         ArtifactSpec(name="solution.vtk", content_type="model/vnd.vtk",
@@ -145,11 +186,20 @@ class SteadyHeat2D(Solver):
 reports `unspecified` where it has not said, and stays fully usable. They are plain class
 attributes in the spirit of `Params`, not a registration framework.
 
-Two things to get right:
+Three things to get right:
 
 **Metrics are the engineering *answer*; `stats` is what the solve *cost*.** Peak
 temperature is a metric, `seconds` and `cells` are stats. Keeping them apart is what lets
 an operator size a machine and an engineer make a decision from the same result.
+
+**Declare what your model *assumes*, and say what that puts out of reach.** Every other
+attribute here describes what your solver does; `assumptions` describes where it stops being
+true, which is what a caller most needs before trusting your numbers. The `excludes` list is
+the part that earns its keep: it turns *"can this tell me about drag?"* into a definite **no**
+rather than a plausible zero. Where an assumption has a numeric edge and the quantity is
+computable, add `quantity`, `limit` and `comparator` and it becomes checkable rather than
+merely readable. This one attribute defaults to empty and *should not stay that way* — every
+physical model assumes something, so an empty list reads as undeclared.
 
 **Name a `field` and a `reduction` where the metric really is a reduction of one — and
 then write no code for it.** The runtime computes those after your `solve` returns, from
@@ -157,7 +207,12 @@ the declaration itself, so four adapters do not each contain the same `float(T.m
 It also makes the declaration checkable rather than decorative: the test suite runs a
 solve and fails if the field is not in the payload.
 
-What you *do* compute is the derived ones, in `result.metrics`. `t_rise` needs
+**A metric that is an integral over a boundary names `boundary` instead of `field`.** Lift and
+moment are integrals over the body surface, gap force over an air gap, wall heat flux over a
+wetted face — none of them is a reduction of a field over the domain. Declaring
+`boundary="body"` says which, and it is checked the same way: a solve must return the metric.
+
+What you *do* compute is the derived and boundary ones, in `result.metrics`. `t_rise` needs
 `t_ambient` and `cp_min` needs `u_inf` — both parameters, and a parameter is not in the
 result payload, so nothing generic can reach them:
 

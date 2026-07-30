@@ -22,8 +22,14 @@
  * 1.3 added `metrics` and `diagnostics` to the result envelope, which this SDK does type:
  * a metric is the number a page shows, and the heat-sink demo reads its temperature rise
  * from there now that `stats` no longer carries it.
+ *
+ * 1.4 added the `series1d` result kind and the `series` key beside `data`, both typed here.
+ * A curve *does* have a browser consumer — `<fs-viewer>` draws fields, and `C_p(x/c)` needs a
+ * plot — which is why this half of 1.4 is mirrored where the 1.2 discovery operations are only
+ * tracked. It also added the `assumptions` section to `capability.describe`, which is a local
+ * caller's concern and is not typed here for the same reason the rest of discovery is not.
  */
-export const PROTOCOL_VERSION = '1.3';
+export const PROTOCOL_VERSION = '1.4';
 
 /** What `GET /api/v1/version` returns. The one endpoint that never requires a key. */
 export interface ProtocolVersion {
@@ -240,6 +246,60 @@ export interface Mesh2DData {
   cell_fields?: Record<string, number[]>;
 }
 
+/**
+ * The abscissa of a curve: what is on the x axis, in what unit, at which samples.
+ *
+ * Units travel on the wire for curves and not for fields, which looks inconsistent and is not:
+ * a field is coloured and `<fs-viewer>` takes its colourbar caption from an attribute the page
+ * sets, while a curve is drawn with axis labels the client has no other way to know. Added in
+ * protocol 1.4.
+ */
+export interface SeriesAxis {
+  /** Axis label, e.g. `x/c`, `alpha`, `cells`. */
+  name: string;
+  /** Display string — `deg`, `m`, `Hz`; `1` if dimensionless. */
+  unit: string;
+  /**
+   * Sample positions in draw order. Monotonic for a sweep or a convergence history, and
+   * **not** for a surface distribution, which traverses a closed contour and revisits x.
+   */
+  values: number[];
+}
+
+/** One curve. `values` line up with the shared abscissa unless it brings its own `x`. */
+export interface SeriesTrace {
+  name: string;
+  unit: string;
+  values: number[];
+  /**
+   * This trace's own abscissa, when it is not sampled like its siblings — the upper and lower
+   * surface of an airfoil, which a staircase does not sample at matching stations. Absent means
+   * it uses the series-level `x`.
+   */
+  x?: SeriesAxis | null;
+}
+
+/**
+ * A named set of curves sharing an abscissa. The `series1d` payload, and what rides in a field
+ * result's `series` list. Added in protocol 1.4.
+ *
+ * Complex values are two real traces rather than a complex type: a harmonic result is plotted
+ * as a magnitude and a phase, with different units on different axes, and JSON has no complex
+ * number to be faithful to.
+ */
+export interface Series1DData {
+  name: string;
+  description?: string;
+  /** Shared by every trace that does not carry its own; absent only when all of them do. */
+  x?: SeriesAxis | null;
+  traces: SeriesTrace[];
+}
+
+/** Read the curves off a result, whichever of the two places they are in. */
+export function resultSeries(result: JobResult): Series1DData[] {
+  return result.kind === 'series1d' ? [result.data] : (result.series ?? []);
+}
+
 export interface ArtifactRef {
   name: string;
   content_type: string;
@@ -282,6 +342,8 @@ export interface Grid2DResult {
   stats: JobStats;
   metrics?: JobMetrics;
   diagnostics?: JobDiagnostics;
+  /** Curves produced beside the field — the airfoil adapters send the surface `C_p` here. */
+  series?: Series1DData[];
   artifacts: ArtifactRef[];
 }
 
@@ -292,11 +354,33 @@ export interface Mesh2DResult {
   stats: JobStats;
   metrics?: JobMetrics;
   diagnostics?: JobDiagnostics;
+  series?: Series1DData[];
   artifacts: ArtifactRef[];
 }
 
-export type JobResult = Grid2DResult | Mesh2DResult;
+/**
+ * A result whose answer *is* curves: a parameter sweep, a convergence history, a modal list.
+ *
+ * The curves are in `data` rather than in `series`, because `kind` selects the schema of `data`
+ * and that invariant is worth more than one accessor — `resultSeries` is the accessor. A
+ * `series1d` result carries no `series`; the server rejects a payload that fills both.
+ */
+export interface Series1DResult {
+  job_id: string;
+  kind: 'series1d';
+  data: Series1DData;
+  stats: JobStats;
+  metrics?: JobMetrics;
+  diagnostics?: JobDiagnostics;
+  series?: never[];
+  artifacts: ArtifactRef[];
+}
+
+export type JobResult = Grid2DResult | Mesh2DResult | Series1DResult;
 export type ResultKind = JobResult['kind'];
+
+/** A result that is a field over a 2-D domain, as opposed to a curve. */
+export type FieldResult = Grid2DResult | Mesh2DResult;
 
 export function isGrid2D(result: JobResult): result is Grid2DResult {
   return result.kind === 'grid2d';
@@ -306,19 +390,39 @@ export function isMesh2D(result: JobResult): result is Mesh2DResult {
   return result.kind === 'mesh2d';
 }
 
+export function isSeries1D(result: JobResult): result is Series1DResult {
+  return result.kind === 'series1d';
+}
+
+/** Whether this result carries a 2-D field, i.e. whether `<fs-viewer>` can draw it. */
+export function isFieldResult(result: JobResult): result is FieldResult {
+  return result.kind === 'grid2d' || result.kind === 'mesh2d';
+}
+
 /**
- * Read a scalar field from either result kind without narrowing at the call site —
- * useful for viewers that render both.
+ * Read a scalar field from either *field* result kind without narrowing at the call site —
+ * useful for viewers that render both. `undefined` for a `series1d` result, which has no
+ * field: use `resultSeries` for those.
  */
 export function fieldValues(result: JobResult, name: string): number[] | undefined {
+  if (!isFieldResult(result)) return undefined;
   return result.kind === 'grid2d'
     ? result.data.fields[name]
     : result.data.point_fields[name];
 }
 
-/** Names of the scalar fields carried by a result. */
+/** Names of the scalar fields carried by a result; empty for a `series1d`. */
 export function fieldNames(result: JobResult): string[] {
+  if (!isFieldResult(result)) return [];
   return Object.keys(
     result.kind === 'grid2d' ? result.data.fields : result.data.point_fields,
   );
+}
+
+/** The abscissa a trace is drawn against: its own if it has one, else the series-level one. */
+export function traceAbscissa(
+  series: Series1DData,
+  trace: SeriesTrace,
+): SeriesAxis | undefined {
+  return trace.x ?? series.x ?? undefined;
 }

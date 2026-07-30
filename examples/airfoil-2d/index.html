@@ -117,7 +117,9 @@ async function run() {
     glyphToggle.disabled = viewer.vectorFields.length === 0;
     if (glyphToggle.checked && !glyphToggle.disabled) viewer.vectors = viewer.vectorFields[0];
     statusEl.textContent =
-      `done — ${result.data.triangles?.length ?? 0} elements` + formatStats(result.stats);
+      `done — ${result.data.triangles?.length ?? 0} elements` +
+      formatMetrics(result.metrics) +
+      formatStats(result.stats);
     showArtifacts(result.artifacts);
   } catch (error) {
     statusEl.textContent =
@@ -152,6 +154,28 @@ const STAT_FORMATS = [
 function formatStats(stats = {}) {
   const parts = STAT_FORMATS.filter(([key]) => Number.isFinite(stats[key])).map(
     ([key, format]) => format(stats[key]),
+  );
+  return parts.length ? ` · ${parts.join(' · ')}` : '';
+}
+
+// " · C_L 0.28 · C_p,min -0.85". The engineering *answer*, as opposed to what it cost —
+// which is why it is read from `metrics` and not from `stats`, and why it comes first on
+// the line.
+//
+// `c_l` is there because protocol 1.4 made it real: before that the solve carried whatever
+// circulation the body's arbitrary streamline constant implied, so a lift coefficient would
+// have been a number with no physics behind it. It is absent when `kutta` is false, and the
+// same `Number.isFinite` test that keeps a 0.00 s duration visible keeps a genuinely zero
+// lift — a symmetric section at zero incidence — visible too.
+const METRIC_FORMATS = [
+  ['c_l', (v) => `C_L ${v.toFixed(3)}`],
+  ['c_m_c4', (v) => `C_m,c/4 ${v.toFixed(3)}`],
+  ['cp_min', (v) => `C_p,min ${v.toFixed(2)}`],
+];
+
+function formatMetrics(metrics = {}) {
+  const parts = METRIC_FORMATS.filter(([key]) => Number.isFinite(metrics[key])).map(
+    ([key, format]) => format(metrics[key]),
   );
   return parts.length ? ` · ${parts.join(' · ')}` : '';
 }

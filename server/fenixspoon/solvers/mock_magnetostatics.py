@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 
 from ..geometry import Regions2D
 from .base import CapabilityExample, ProgressEvent, Solver, SolverContext, SolverResult
-from .declarations import MAGNETOSTATICS_METRICS, VTK_ARTIFACT
+from .declarations import MAGNETOSTATICS_ASSUMPTIONS, MAGNETOSTATICS_METRICS, VTK_ARTIFACT
 from .mock_laplace import (
     _grid_shape,
     grid_to_mesh2d,
@@ -66,6 +66,7 @@ class MockMagnetostatics2D(Solver):
     physics = "magnetostatics"
     availability = "mock"
     metrics = MAGNETOSTATICS_METRICS
+    assumptions = MAGNETOSTATICS_ASSUMPTIONS
     artifacts = [VTK_ARTIFACT]
     examples = [
         CapabilityExample(

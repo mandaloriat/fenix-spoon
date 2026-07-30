@@ -14,10 +14,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, ClassVar, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .. import fields
 from ..geometry import Geometry
+from ..series import Series1DData, check_series
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +82,23 @@ class SolverResult(BaseModel):
     iteration cap, a mesh coarser than requested. Previously these could only be said in a
     progress event, which is to say only to a client that happened to be watching."""
 
+    series: list[Series1DData] = []
+    """Curves this solve produced alongside its field (protocol 1.4, issue #69).
+
+    A surface distribution, a section, a convergence history: an ordered list of (x, y) pairs
+    with names and units. Separate from ``data`` because one solve legitimately answers both
+    questions at once — the airfoil adapters return the flow field *and* the surface `C_p`,
+    and making a caller submit twice for the second one would be inventing a round trip."""
+
+    @model_validator(mode="after")
+    def _check_series(self) -> "SolverResult":
+        # Enforced at construction, inside the adapter, rather than only on the wire: the
+        # collection-level ceiling is the thing standing between "a curve" and "the field
+        # arrays under another key", and an adapter should learn it wrote too much where it
+        # wrote it.
+        check_series(self.series)
+        return self
+
 
 class MetricSpec(BaseModel):
     """A scalar engineering quantity this capability reports (roadmap M2.5, issue #43).
@@ -115,6 +133,106 @@ class MetricSpec(BaseModel):
         default=None,
         description="How `field` becomes a scalar. Null exactly when `field` is null.",
     )
+    boundary: str | None = Field(
+        default=None,
+        description=(
+            "Boundary this metric integrates over, when it is a boundary integral rather "
+            "than a reduction of a field — `body` for the surface of a `domain2d` obstacle. "
+            "Mutually exclusive with `field`: a quantity is one or the other."
+        ),
+    )
+    """Named boundary this metric integrates over (protocol 1.4, issue #68).
+
+    Lift, moment and centre of pressure are integrals over the **body surface**, not over the
+    domain, so before this they could only be declared with `field` null — honest, but
+    indistinguishable from an arbitrary derived ratio, and outside the reach of
+    ``test_declared_metrics_reduce_a_field_the_solver_emits``. Boundary integrals are a
+    recurring shape rather than a one-off: lift and moment here, gap force in magnetostatics,
+    reaction forces in elasticity, wall heat flux in conduction. Naming the boundary is what
+    lets a caller tell "the solver integrates this over the body" from "the solver worked this
+    out somehow", and lets a test insist the adapter actually returns it."""
+
+
+class Assumption(BaseModel):
+    """A modelling assumption in force, and where it stops applying (issue #70).
+
+    Every other section of a capability description says what the capability **does**. This
+    one says what its model **assumes** — which is the information a caller needs most before
+    trusting a number, and which until now existed only as prose inside `description`, if at
+    all. Prose cannot be filtered, cannot be checked, and cannot be shown next to the number
+    it qualifies.
+
+    Two fields carry most of the weight.
+
+    ``excludes`` is the one that pays for itself immediately: it lets a caller ask *"can this
+    capability tell me about drag?"* and get a definite **no** rather than a plausible zero.
+    That is the same argument #43 made for :class:`CapabilityFeatures`, where all three flags
+    default to false so that "can I sweep this?" has an answer a caller can act on — this is
+    the physics equivalent.
+
+    ``quantity`` / ``limit`` / ``comparator`` make an assumption *machine-checkable* where it
+    has a numeric edge and the quantity is computable from the params: Mach against 0.3, `B`
+    against a saturation threshold. That is what makes this more than documentation. The
+    per-run half — "this run has M = 0.42, above the 0.3 limit" — is a diagnostic and belongs
+    with the warnings in #46; declaring the limit here is what lets such a warning name the
+    assumption it violated instead of restating it.
+    """
+
+    name: str = Field(description="Short identifier a caller can filter on, e.g. `inviscid`.")
+    statement: str = Field(
+        description="What is assumed, and where it stops holding, in one or two sentences."
+    )
+    quantity: str | None = Field(
+        default=None,
+        description=(
+            "Physical quantity the limit applies to, when the assumption has a numeric edge "
+            "— `mach`, `reynolds`, `b_max`. Null for a structural assumption like `2-D`."
+        ),
+    )
+    limit: float | None = Field(
+        default=None,
+        description="Value of `quantity` at which the assumption fails. Null when there is no "
+        "single number, which is most of them.",
+    )
+    comparator: Literal["<", "<=", ">", ">="] | None = Field(
+        default=None,
+        description=(
+            "Which side of `limit` is valid: `<` means the assumption holds while `quantity` "
+            "is below it. Null exactly when `limit` is null."
+        ),
+    )
+    excludes: list[str] = Field(
+        default=[],
+        description=(
+            "Quantities this assumption puts out of reach entirely — `drag` for an inviscid "
+            "model. A caller asking for one of these should be told no, not given a zero."
+        ),
+    )
+    when: str | None = Field(
+        default=None,
+        description=(
+            "Boolean param that puts this assumption in force, `!name` for one that puts it "
+            "in force by being false. Null — the usual case — means it always applies."
+        ),
+    )
+
+    def applies(self, params: dict[str, Any] | None = None) -> bool:
+        """Whether this assumption is in force for a given parameter set.
+
+        Unconditional assumptions are always in force, which is what makes the *static*
+        declaration useful on its own: a caller reading `capability.describe` with no params
+        in hand still learns that the model is 2-D and inviscid. ``when`` exists for the one
+        genuinely conditional case — an assumption a parameter switches off, like the absent
+        circulation of a potential-flow solve run without the Kutta condition — and a caller
+        that has not decided its params yet should read such an entry as "possible", which is
+        why it is declared rather than hidden.
+        """
+        if self.when is None:
+            return True
+        negated = self.when.startswith("!")
+        name = self.when[1:] if negated else self.when
+        value = bool((params or {}).get(name))
+        return value != negated
 
 
 class ArtifactSpec(BaseModel):
@@ -258,12 +376,12 @@ class Solver(ABC):
     call ``ctx.progress`` at a sensible cadence (every few hundred ms of work, not every
     iteration), and call ``ctx.check_cancelled`` inside long loops.
 
-    The eight attributes below ``geometry_types`` are the **capability declaration** added
-    for progressive discovery (roadmap M2.5, issue #43). Every one of them has a default, so
-    an existing adapter keeps working untouched and reports ``"unspecified"`` where it has
-    not said. They are plain class attributes in the spirit of ``Params`` rather than a
-    registration framework: declaring a metric is one line in a list, and forgetting to
-    declare anything costs a caller information, not a crash.
+    The nine attributes below ``geometry_types`` are the **capability declaration** added
+    for progressive discovery (roadmap M2.5, issue #43, extended by #70). Every one of them
+    has a default, so an existing adapter keeps working untouched and reports
+    ``"unspecified"`` where it has not said. They are plain class attributes in the spirit of
+    ``Params`` rather than a registration framework: declaring a metric is one line in a list,
+    and forgetting to declare anything costs a caller information, not a crash.
     """
 
     name: ClassVar[str]
@@ -290,6 +408,15 @@ class Solver(ABC):
 
     #: Scalar engineering quantities this capability reports. See :class:`MetricSpec`.
     metrics: ClassVar[list[MetricSpec]] = []
+
+    #: Modelling assumptions in force, and what they put out of reach. See
+    #: :class:`Assumption`. Empty is the honest default for a third-party adapter that has
+    #: not said — and, unlike the other declarations, an empty list here is worth noticing:
+    #: every physical model assumes *something*, so "no assumptions declared" means
+    #: undeclared rather than unconditionally valid. Which is why
+    #: `test_every_shipped_adapter_declares_its_assumptions` refuses it for the adapters in
+    #: this repository.
+    assumptions: ClassVar[list[Assumption]] = []
 
     #: Files it may write. See :class:`ArtifactSpec`.
     artifacts: ClassVar[list[ArtifactSpec]] = []
