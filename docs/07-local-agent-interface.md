@@ -16,12 +16,14 @@
     through the core only ([#44](https://github.com/mandaloriat/fenix-spoon/issues/44)); and
     compact results §10 — the five levels, metric values, diagnostics and the nine bounded
     field queries, bound to HTTP as protocol 1.3
-    ([#46](https://github.com/mandaloriat/fenix-spoon/issues/46)). Four of §15's open
+    ([#46](https://github.com/mandaloriat/fenix-spoon/issues/46)); and the **content-addressed
+    cache** §9 — identity, reuse and provenance, protocol 1.4
+    ([#47](https://github.com/mandaloriat/fenix-spoon/issues/47)). Four of §15's open
     questions are settled as a result, and are marked there.
 
-    Where §6, §8 and §10 below differ from what shipped, the implementation is the accurate
-    one; the differences are noted inline. The transports themselves — JSON-RPC, CLI, MCP —
-    the content-addressed cache and the study abstraction are still design.
+    Where §6, §8, §9 and §10 below differ from what shipped, the implementation is the
+    accurate one; the differences are noted inline. The transports themselves — JSON-RPC,
+    CLI, MCP — and the study abstraction are still design.
 
 ## 1. Motivation
 
@@ -274,10 +276,14 @@ caller:
   at a caller that did not ask.
 - **Completion produces a `result` object**, not a payload. `job.get` on a finished job returns
   status, the result id, its metrics and diagnostics — not fields.
-- **Equivalent jobs may not run at all.** With a content-addressed identity (geometry + solver +
-  params + environment), a resubmission of something already computed returns the cached result and
-  says so in the provenance (`cached: true`). This is the single biggest lever on both compute cost
-  and context cost in an iterative loop.
+- **Equivalent jobs may not run at all.** *(Implemented, #47.)* With a content-addressed identity
+  (geometry + solver + its declared version + params + environment), a resubmission of something
+  already computed returns the job that already ran and says so in the provenance
+  (`cached: true`). This is the single biggest lever on both compute cost and context cost in an
+  iterative loop. Two departures from the sketch above, both deliberate: **caching is opt-in per
+  adapter**, because a solver that cannot promise reproducibility must not be cached at all; and
+  a hit returns *the earlier job* rather than a new one pointing at it, which is what keeps
+  retention trivial — the entry is the job.
 - **Ownership and limits still apply.** A local caller resolves to a `Principal` like any other;
   its jobs are owned, counted against quotas if any are configured, and swept by the same retention
   policy. The local transport is a different door, not a bypass.

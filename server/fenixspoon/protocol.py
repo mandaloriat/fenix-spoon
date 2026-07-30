@@ -28,7 +28,7 @@ from .solvers.base import ProgressEvent  # noqa: F401  (re-export for consumers)
 #: repeating it on each event and result would be per-message overhead for something one
 #: call answers — see `GET /api/v1/version`, and `docs/04-wire-protocol.md` for the
 #: reasoning and the bump procedure.
-PROTOCOL_VERSION = "1.3"
+PROTOCOL_VERSION = "1.4"
 
 
 class ProtocolVersion(BaseModel):
@@ -178,6 +178,16 @@ class ResultEnvelope(BaseModel):
             "How the solve went: `converged`, `residual`, `warnings`. Added in protocol "
             "1.3, because `stats` is typed `dict[str, float]` and a flag or a warning "
             "string had nowhere to go in it."
+        ),
+    )
+    provenance: dict[str, Any] = Field(
+        default={},
+        description=(
+            "Where the answer came from: `cached`, the solver and its declared version, the "
+            "content-addressed `cache_key`, when it was computed, and the workspace object "
+            "revisions it resolved. Added in protocol 1.4. `cached` is the one to read — it "
+            "is the difference between a number that reflects the edit you just made and "
+            "one answering a question you asked earlier."
         ),
     )
     artifacts: list[ArtifactRef] = Field(

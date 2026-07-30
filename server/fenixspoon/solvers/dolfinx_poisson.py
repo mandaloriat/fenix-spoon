@@ -89,6 +89,11 @@ class DolfinxPotentialFlow2D(Solver):
     availability = "fenicsx"
     requires = ["dolfinx", "gmsh"]
     metrics = POTENTIAL_FLOW_METRICS
+    #: Single-rank Gmsh meshing followed by a direct LU factorisation — both reproducible for
+    #: the same inputs and the same library versions, which the cache key includes. The
+    #: caveat is MPI: a multi-rank run decomposes differently and would not reproduce, which
+    #: is exactly what `features.mpi = False` already says this adapter does not support (#47).
+    deterministic = True
     artifacts = [VTK_ARTIFACT]
     examples = [
         CapabilityExample(

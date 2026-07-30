@@ -67,6 +67,9 @@ class MockHeat2D(Solver):
     physics = "heat-conduction"
     availability = "mock"
     metrics = HEAT_METRICS
+    #: Pure NumPy with a fixed sweep count and no randomness anywhere: the same inputs give
+    #: the same array, bit for bit, on the same numpy. Safe to cache (#47).
+    deterministic = True
     artifacts = [VTK_ARTIFACT]
     examples = [
         CapabilityExample(

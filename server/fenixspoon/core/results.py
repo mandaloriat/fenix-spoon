@@ -43,11 +43,24 @@ from ..store import ResultSummary
 from . import errors
 
 #: Response levels, in the order a full answer presents them.
-LEVELS: tuple[str, ...] = ("status", "metrics", "diagnostics", "fields", "artifacts")
+LEVELS: tuple[str, ...] = (
+    "status",
+    "metrics",
+    "diagnostics",
+    "provenance",
+    "fields",
+    "artifacts",
+)
 
 #: What a caller gets for asking nothing. Everything except the arrays — the one level that
 #: is measured in megabytes is the one level you have to ask for by name.
-DEFAULT_LEVELS: tuple[str, ...] = ("status", "metrics", "diagnostics", "artifacts")
+DEFAULT_LEVELS: tuple[str, ...] = (
+    "status",
+    "metrics",
+    "diagnostics",
+    "provenance",
+    "artifacts",
+)
 
 
 class StatusView(BaseModel):
@@ -84,6 +97,61 @@ class DiagnosticsView(BaseModel):
     residual: float | None = Field(default=None, description="Final residual, when iterative.")
     warnings: list[str] = Field(
         default=[], description="Non-fatal things worth knowing about this solve."
+    )
+
+
+class Provenance(BaseModel):
+    """Where a result came from (roadmap M2.5, issue #47).
+
+    In the default answer rather than behind a flag, because `cached` changes how a caller
+    should read everything else in the payload. A metric that took 40 ms and a metric that
+    took 40 seconds are the same number; whether the run happened *now* is the difference
+    between "this reflects my edit" and "this is the answer to a question I asked before".
+    """
+
+    job_id: str = Field(description="The job that produced these numbers.")
+    cached: bool = Field(
+        description=(
+            "True when this answer came from an earlier identical solve rather than from "
+            "one run for this request. The single most useful bit in an iterative loop."
+        )
+    )
+    solver: str = Field(description="Capability that ran it.")
+    solver_version: str = Field(
+        description="The adapter's declared `version` — what a cache key is invalidated by."
+    )
+    cache_key: str | None = Field(
+        default=None,
+        description=(
+            "Content-addressed identity of the inputs. Null when this solve was not "
+            "cacheable: the adapter does not declare itself deterministic, or the server "
+            "has caching switched off."
+        ),
+    )
+    computed_at: str | None = Field(
+        default=None,
+        description=(
+            "When the underlying solve finished (RFC 3339, UTC). On a cache hit this is "
+            "older than the request, and how much older is the point."
+        ),
+    )
+    seconds: float | None = Field(
+        default=None, description="What the original solve cost in wall-clock seconds."
+    )
+    environment: dict[str, str] = Field(
+        default={},
+        description=(
+            "Package versions the answer depends on, as they were when it ran. Part of the "
+            "cache key, so a dolfinx upgrade produces a different key rather than a stale hit."
+        ),
+    )
+    inputs: dict[str, Any] = Field(
+        default={},
+        description=(
+            "Pinned workspace object revisions this job resolved, when it came from a "
+            "design: `design:d-1@2`, `geometry:g-1@3`. Empty for an inline submission — "
+            "the design → job → result relation, recorded where it is knowable."
+        ),
     )
 
 
@@ -127,6 +195,7 @@ class LeveledResult(BaseModel):
         ),
     )
     diagnostics: DiagnosticsView | None = Field(default=None, description="Level `diagnostics`.")
+    provenance: Provenance | None = Field(default=None, description="Level `provenance`.")
     fields: FieldsView | None = Field(default=None, description="Level `fields`.")
     artifacts: list[ArtifactView] | None = Field(default=None, description="Level `artifacts`.")
 
@@ -209,6 +278,7 @@ def build(
     summary: ResultSummary | None,
     artifacts: list[ArtifactView],
     data: dict[str, Any] | None,
+    provenance: Provenance | None,
     levels: tuple[str, ...],
 ) -> LeveledResult:
     """Assemble the requested levels. The caller has already decided what to load."""
@@ -230,6 +300,8 @@ def build(
             residual=summary.residual,
             warnings=list(summary.warnings),
         )
+    if "provenance" in levels:
+        out.provenance = provenance
     if "fields" in levels and summary is not None and data is not None:
         out.fields = FieldsView(kind=summary.kind, data=data)
     if "artifacts" in levels:

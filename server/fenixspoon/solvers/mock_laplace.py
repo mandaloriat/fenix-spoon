@@ -132,6 +132,9 @@ class MockLaplace2D(Solver):
     physics = "potential-flow"
     availability = "mock"
     metrics = POTENTIAL_FLOW_METRICS
+    #: Pure NumPy with a fixed sweep count and no randomness anywhere: the same inputs give
+    #: the same array, bit for bit, on the same numpy. Safe to cache (#47).
+    deterministic = True
     artifacts = [VTK_ARTIFACT]
     examples = [
         CapabilityExample(

@@ -22,8 +22,14 @@
  * 1.3 added `metrics` and `diagnostics` to the result envelope, which this SDK does type:
  * a metric is the number a page shows, and the heat-sink demo reads its temperature rise
  * from there now that `stats` no longer carries it.
+ *
+ * 1.4 added `provenance` and the result cache. Two things a browser client should know:
+ * `POST /jobs` can now come back `done` immediately with `cached: true`, so a page that
+ * assumes a fresh submission is always `queued` will wait for a transition that already
+ * happened; and `provenance.cached` says whether the numbers on screen were computed for
+ * this request.
  */
-export const PROTOCOL_VERSION = '1.3';
+export const PROTOCOL_VERSION = '1.4';
 
 /** What `GET /api/v1/version` returns. The one endpoint that never requires a key. */
 export interface ProtocolVersion {
@@ -170,6 +176,28 @@ export interface JobRequest {
 export interface JobCreated {
   job_id: string;
   status: JobState;
+  /**
+   * True when an identical solve had already been run and this submission was answered
+   * from it (protocol 1.4). `status` is then already terminal — do not wait for a
+   * `queued` → `running` transition that will not come.
+   */
+  cached?: boolean;
+}
+
+/** Where a result came from, and whether anything ran for it. Protocol 1.4. */
+export interface JobProvenance {
+  job_id: string;
+  /** The bit worth reading: false means these numbers were computed for this request. */
+  cached: boolean;
+  solver: string;
+  solver_version: string;
+  /** Content-addressed identity of the inputs; null when the solve was not cacheable. */
+  cache_key?: string | null;
+  computed_at?: string | null;
+  seconds?: number | null;
+  environment?: Record<string, string>;
+  /** Pinned workspace object revisions, when the job came from a design. */
+  inputs?: Record<string, unknown>;
 }
 
 export interface JobStatus {
@@ -282,6 +310,7 @@ export interface Grid2DResult {
   stats: JobStats;
   metrics?: JobMetrics;
   diagnostics?: JobDiagnostics;
+  provenance?: JobProvenance;
   artifacts: ArtifactRef[];
 }
 
@@ -292,6 +321,7 @@ export interface Mesh2DResult {
   stats: JobStats;
   metrics?: JobMetrics;
   diagnostics?: JobDiagnostics;
+  provenance?: JobProvenance;
   artifacts: ArtifactRef[];
 }
 

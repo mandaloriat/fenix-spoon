@@ -173,9 +173,12 @@ def test_quotas_are_enforced_by_the_core(tmp_path):
     capped = Principal(id="capped", quotas=Quotas(jobs_per_hour=1))
 
     async def run():
-        await core.submit("mock.laplace2d", AIRFOIL, FAST, capped)
+        # Two different solves: a resubmission of the *same* one is a cache hit, which
+        # consumes no compute and therefore no quota (#47). That is deliberate, and
+        # `test_cache.py` asserts it; here the point is that real work is capped.
+        await core.submit("mock.laplace2d", AIRFOIL, {**FAST, "u_inf": 1.0}, capped)
         with pytest.raises(errors.QuotaExceeded) as caught:
-            await core.submit("mock.laplace2d", AIRFOIL, FAST, capped)
+            await core.submit("mock.laplace2d", AIRFOIL, {**FAST, "u_inf": 2.0}, capped)
         # Waiting genuinely helps for an hourly cap, so the hint is set.
         assert caught.value.retry_after == 3600
 
@@ -183,9 +186,12 @@ def test_quotas_are_enforced_by_the_core(tmp_path):
 
 
 def test_history_is_scoped_and_paginated(core, me):
+    """Three *different* solves. Identical ones collapse onto one job now that the result
+    cache (#47) is in the submit path, which would make this count to one."""
+
     async def run():
-        for _ in range(3):
-            await solve(core, me)
+        for u_inf in (1.0, 2.0, 3.0):
+            await solve(core, me, u_inf=u_inf)
         jobs, total = core.history(me)
         assert total == 3 and len(jobs) == 3
         page, total = core.history(me, limit=2)
