@@ -283,30 +283,36 @@ class Workspace:
         head at submit time and freezes it here — otherwise two solves of "the same design"
         could mean two different shapes with nothing saying so.
         """
-        design = self._record(ref, owner)
-        if design.type != "design":
-            raise errors.WrongObjectType(design.ref, "design", design.type)
+        design = self._record(ref, owner, expected="design")
         body = DesignBody.model_validate(design.body)
 
-        geometry_record = self._record(body.geometry, owner)
-        if geometry_record.type != "geometry":
-            raise errors.WrongObjectType(geometry_record.ref, "geometry", geometry_record.type)
+        geometry_record = self._record(body.geometry, owner, expected="geometry")
         try:
             geometry = _GEOMETRY.validate_python(geometry_record.body)
         except ValidationError as exc:  # pragma: no cover - create() already validated it
             raise errors.InvalidObject("geometry", json.loads(exc.json())) from exc
+
+        # Every reference the design names is resolved and type-checked, not just the two
+        # that feed the solver. A design listing a geometry under `materials` would
+        # otherwise resolve happily and write provenance that is wrong in a way nothing
+        # would ever surface — and the thin types are the ones most likely to be miswired,
+        # because nothing validates their bodies either.
+        def pin(refs: list[str], expected: str) -> list[str]:
+            return [self._record(item, owner, expected=expected).pinned for item in refs]
 
         return geometry, ResolvedDesign(
             solver=body.solver,
             params=dict(body.params),
             design=design.pinned,
             geometry=geometry_record.pinned,
-            materials=[self._record(m, owner).pinned for m in body.materials],
+            materials=pin(body.materials, "material"),
+            boundary_conditions=pin(body.boundary_conditions, "boundary_condition"),
+            load_cases=pin(body.load_cases, "load_case"),
         )
 
     # ---------------------------------------------------------------------- internals
 
-    def _record(self, ref: str, owner: str) -> ObjectRecord:
+    def _record(self, ref: str, owner: str, expected: str | None = None) -> ObjectRecord:
         try:
             parse_ref(ref)
         except ValueError as exc:
@@ -316,6 +322,8 @@ class Workspace:
             # Missing and somebody else's are the same answer, for the same reason a job is:
             # confirming that an id exists is itself a disclosure.
             raise errors.ObjectNotFound(ref)
+        if expected is not None and record.type != expected:
+            raise errors.WrongObjectType(record.ref, expected, record.type)
         return record
 
     @staticmethod
@@ -345,3 +353,9 @@ class ResolvedDesign(BaseModel):
     design: str = Field(description="Design revision used, pinned: `design:d-1@2`.")
     geometry: str = Field(description="Geometry revision used, pinned.")
     materials: list[str] = Field(default=[], description="Material revisions used, pinned.")
+    boundary_conditions: list[str] = Field(
+        default=[], description="Boundary-condition revisions the design named, pinned."
+    )
+    load_cases: list[str] = Field(
+        default=[], description="Load-case revisions the design named, pinned."
+    )

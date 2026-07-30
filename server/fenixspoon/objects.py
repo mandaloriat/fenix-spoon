@@ -291,6 +291,15 @@ class ObjectFileStore:
                 if not directory.is_dir():
                     continue
                 ref = f"{name}:{directory.name}"
+                try:
+                    parse_ref(ref)
+                except ValueError:
+                    # Not an object directory. This design invites people to browse the
+                    # workspace and commit it, so a stray `tmp/` or a mistyped folder is a
+                    # thing that happens — and one of them must not take the whole listing
+                    # down with a ValueError. The allocator already ignores what it cannot
+                    # parse; this now matches it.
+                    continue
                 head = self.head_revision(ref)
                 if head is None:
                     continue

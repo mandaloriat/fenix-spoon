@@ -117,6 +117,8 @@ def test_the_iteration_loop_survives_the_process(tmp_path):
         "design": f"{design_ref}@1",
         "geometry": f"{geometry_ref}@2",
         "materials": [],
+        "boundary_conditions": [],
+        "load_cases": [],
     }
     assert reopened.result(job.id, me).kind == "grid2d"
 
@@ -215,6 +217,22 @@ def test_a_revision_file_is_never_rewritten(tmp_path):
         store.revise(record)
 
 
+def test_a_stray_directory_does_not_break_the_listing(tmp_path):
+    """Raised in review of #66. A workspace is meant to be browsed, committed and poked at,
+    so a `tmp/` or a mistyped folder under `objects/geometry/` is a thing that happens — and
+    it used to raise `ValueError` out of `parse_ref` and take the whole listing with it.
+
+    The id allocator already skipped what it could not parse; listing now matches it.
+    """
+    store = ObjectFileStore(tmp_path)
+    store.create("geometry", "me", AIRFOIL)
+    (store.root / "geometry" / "tmp").mkdir()
+    (store.root / "geometry" / ".ipynb_checkpoints").mkdir()
+    assert [record.ref for record in store.list_heads()] == ["geometry:g-1"]
+    # …and allocation still lands on the next real number rather than counting the strays.
+    assert store.create("geometry", "me", AIRFOIL).ref == "geometry:g-2"
+
+
 def test_ids_are_readable_and_allocated_in_sequence(tmp_path):
     store = ObjectFileStore(tmp_path)
     assert [store.create("geometry", "me", AIRFOIL).ref for _ in range(3)] == [
@@ -303,6 +321,70 @@ def test_a_design_pointing_at_the_wrong_type_says_which(core, me):
     with pytest.raises(errors.WrongObjectType) as caught:
         core.resolve_design(design_ref, me)
     assert (caught.value.expected, caught.value.got) == ("geometry", "material")
+
+
+@pytest.mark.parametrize(
+    ("field", "expected"),
+    [
+        ("materials", "material"),
+        ("boundary_conditions", "boundary_condition"),
+        ("load_cases", "load_case"),
+    ],
+)
+def test_every_reference_list_is_type_checked_not_just_the_geometry(core, me, field, expected):
+    """Raised in review of #66, and true of all three lists rather than only `materials`.
+
+    A design naming a geometry under `materials` used to resolve happily and record
+    provenance that was wrong in a way nothing would ever surface — the reference resolved,
+    so no error, and `inputs.materials` then said a geometry was a material. The thin types
+    are the likeliest to be miswired, because nothing validates their bodies either.
+    """
+    geometry_ref = core.create_object("geometry", AIRFOIL, me).ref
+    design_ref = core.create_object(
+        "design",
+        {"solver": "mock.laplace2d", "geometry": geometry_ref, field: [geometry_ref]},
+        me,
+    ).ref
+    with pytest.raises(errors.WrongObjectType) as caught:
+        core.resolve_design(design_ref, me)
+    assert (caught.value.expected, caught.value.got) == (expected, "geometry")
+
+
+def test_a_design_pins_every_reference_it_names(core, me):
+    """Provenance covers the thin types too, even though no solver consumes them yet:
+    what the design named is what the job should record it ran with."""
+    geometry_ref = core.create_object("geometry", AIRFOIL, me).ref
+    material_ref = core.create_object(
+        "material", {"name": "iron", "properties": {"mu_r": 1000.0}}, me
+    ).ref
+    bc_ref = core.create_object("boundary_condition", {"kind": "fixed"}, me).ref
+    design_ref = core.create_object(
+        "design",
+        {
+            "solver": "mock.laplace2d",
+            "geometry": geometry_ref,
+            "materials": [material_ref],
+            "boundary_conditions": [bc_ref],
+        },
+        me,
+    ).ref
+    resolved = core.resolve_design(design_ref, me)
+    assert resolved.materials == [f"{material_ref}@1"]
+    assert resolved.boundary_conditions == [f"{bc_ref}@1"]
+    assert resolved.load_cases == []
+
+
+def test_a_design_naming_a_missing_reference_is_refused(core, me):
+    """A design is only submittable if every reference resolves — otherwise "this design
+    works" is a claim about the two fields that happen to feed the solver."""
+    geometry_ref = core.create_object("geometry", AIRFOIL, me).ref
+    design_ref = core.create_object(
+        "design",
+        {"solver": "mock.laplace2d", "geometry": geometry_ref, "materials": ["material:m-99"]},
+        me,
+    ).ref
+    with pytest.raises(errors.ObjectNotFound):
+        core.resolve_design(design_ref, me)
 
 
 def test_submitting_a_design_still_validates_params_and_the_geometry_kind(core, me):
