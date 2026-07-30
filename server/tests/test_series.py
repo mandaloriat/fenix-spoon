@@ -259,6 +259,7 @@ def test_a_series1d_result_reaches_the_compact_level_through_the_store(tmp_path)
         summary=summary,
         artifacts=[],
         data=None,
+        provenance=None,
         levels=("series",),
     )
     assert built.series is not None
