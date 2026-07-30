@@ -26,12 +26,14 @@
     ([#48](https://github.com/mandaloriat/fenix-spoon/issues/48)); and the **MCP adapter**
     §11 — thirteen tools over the JSON-RPC method table, an optional extra
     ([#49](https://github.com/mandaloriat/fenix-spoon/issues/49)), documented at
-    [MCP adapter](09-mcp.md). Six of §15's open questions are settled as a result and are
-    marked there; a seventh is partly settled and says which part.
+    [MCP adapter](09-mcp.md); and the **CLI and Python API** §11
+    ([#50](https://github.com/mandaloriat/fenix-spoon/issues/50)), documented at
+    [CLI and Python API](10-cli-and-python.md). Six of §15's open questions are settled as a
+    result and are marked there; a seventh is partly settled and says which part.
 
     Where §6–§11 below differ from what shipped, the implementation is the accurate one; the
-    differences are noted inline. What remains design is the CLI and Python adapters, and the
-    study kinds beyond the first.
+    differences are noted inline. What remains is #51 — cross-transport conformance and the
+    vertical slice — and the study kinds beyond the first.
 
 ## 1. Motivation
 
@@ -363,8 +365,8 @@ caps it. Full arrays are reached exactly one way: fetch the artifact.
 |---|---|---|
 | HTTP + WebSocket (`/api/v1`) | shipped | browsers, remote clients, the multi-user deployment |
 | JSON-RPC 2.0 over stdio | **shipped (#45)** | **the base local transport** |
-| CLI (`fenix-spoon …`, JSON output) | planned, M2.5 | shells, CI, reproducible scripting, debugging |
-| Python API | planned, M2.5 | notebooks and in-process embedding |
+| CLI (`fenix-spoon …`, JSON output) | **shipped (#50)** | shells, CI, reproducible scripting, debugging |
+| Python API | **shipped (#50)** | notebooks and in-process embedding |
 | MCP | **shipped (#49)**, thin | MCP hosts; an adapter over the same operations |
 
 **JSON-RPC 2.0 over stdio.** The agent spawns the process (`fenix-spoon rpc --stdio` is the

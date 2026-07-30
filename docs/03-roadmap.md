@@ -240,9 +240,26 @@ the seams a second caller needs. The design specification is
       cannot produce. One sub-case is settled on grounds that need no host: a large artifact
       is described, not base64-encoded — base64 makes a file a third larger and lands it in a
       context window that cannot use it. (#49)
-- [ ] **CLI and Python adapters.** `fenix-spoon <command> --json` for shells and reproducible
-      scripting, plus a direct in-process Python API — the same models and semantics as HTTP,
-      JSON-RPC and MCP, and the debugging surface for everything an agent can do. (#50)
+- [x] **CLI and Python adapters.** `fenix-spoon <noun> <verb>` for shells and CI, and
+      `fenixspoon.local` for notebooks and scripts. Documented in
+      [CLI and Python API](10-cli-and-python.md).
+      *The CLI dispatches through the **JSON-RPC method table***, like the MCP adapter, so
+      `--json` is not comparable to what an agent gets — it is the same bytes, asserted by a
+      test. That is what makes the CLI worth using as the debugging surface for what an agent
+      sees; one that reformatted anything would be showing something the protocol does not
+      say. Human output is a *rendering* of that JSON, never a different answer.
+      *`job submit` waits by default*, and that is the only behaviour that is not broken: with
+      the in-process backend a command that submitted and exited would kill the solve it just
+      started and leave a row saying `running` that the next startup reconciles to failed.
+      `--detach` exists for a worker backend and says plainly what it costs without one.
+      *Exit codes come from the JSON-RPC codes* — invalid request, not found, conflict, quota,
+      gone — so the distinction a shell sees is the distinction an agent sees.
+      *The Python API owns one event loop on a background thread.* A coroutine-per-method API
+      would make "solve something and print a number" require `asyncio.run`; a per-call
+      `asyncio.run` is the trap the test suites hit three times, because the in-process
+      backend completes a solve on the loop that submitted it — so it would work for
+      everything except finishing a job. One loop makes submit-now-wait-later, the notebook
+      shape, an ordinary blocking call. (#50)
 - [ ] **Cross-transport conformance and the vertical slice.** Shared fixtures asserting that an
       equivalent request over HTTP and over JSON-RPC yields the same semantic result, that
       validation errors are represented consistently, that mock and FEniCSx honor the same

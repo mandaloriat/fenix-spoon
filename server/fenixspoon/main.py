@@ -76,30 +76,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 async def _shut_down(manager: JobManager) -> None:
-    """Release the three things the manager owns, innermost last.
-
-    The backend first so nothing new starts solving, then the bus so nothing new is
-    published, then the store. Each is guarded: a backend that fails to close must not
-    leave a Redis connection and a database handle open behind it.
-
-    This used to close the store alone, which mattered more than it looks. The in-process
-    backend holds a `ThreadPoolExecutor`, and `concurrent.futures` registers an atexit
-    hook that *joins* its threads — so an abandoned executor turns a long solve into a
-    process that will not exit. The arq backend and the Redis bus each hold a connection
-    pool. The worker entry point has always cleaned up after itself; the API had not.
-    """
-    for label, close in (
-        ("execution backend", manager.backend.close),
-        ("event bus", manager.bus.close),
-    ):
-        try:
-            await close()
-        except Exception:
-            log.exception("failed to close the %s", label)
-    try:
-        manager.store.close()
-    except Exception:
-        log.exception("failed to close the job store")
+    """Release what the manager owns. The sequence and its reasoning live on the manager —
+    see :meth:`JobManager.aclose` — because the Python API (#50) needs the identical one and
+    must not import a web framework to get it."""
+    await manager.aclose()
 
 
 def create_app() -> FastAPI:
