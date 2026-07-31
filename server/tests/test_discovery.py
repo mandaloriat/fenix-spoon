@@ -40,6 +40,9 @@ SMOKE = {
     "mock.magnetostatics2d": (SOLENOID, {"resolution": 40, "iterations": 60}),
     "mock.heat2d": (SOLENOID, {"resolution": 40, "iterations": 60}),
     "mock.elasticity2d": (UNIFORM_BEAM, {"resolution": 32, "iterations": 200}),
+    # Four steps, not a converged run: these tests ask which keys come back, and a
+    # transient's cost is cells times steps.
+    "mock.transient_heat2d": (SOLENOID, {"resolution": 32, "steps": 4, "duration": 10.0}),
 }
 
 #: The FEniCSx half, exercised only by `pytest -m fenics` in the dolfinx image. Without
@@ -57,6 +60,7 @@ FENICS_SMOKE = {
     "dolfinx.magnetostatics2d": (SOLENOID, {"mesh_size": 0.01}),
     "dolfinx.heat2d": (SOLENOID, {"mesh_size": 0.004}),
     "dolfinx.elasticity2d": (UNIFORM_BEAM, {"mesh_size": 0.03, "degree": 1}),
+    "dolfinx.transient_heat2d": (SOLENOID, {"mesh_size": 0.004, "steps": 3, "duration": 10.0}),
 }
 
 
