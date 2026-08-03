@@ -61,16 +61,12 @@ CODES: dict[type[errors.CoreError], int] = {
     errors.UnknownLevel: INVALID_PARAMS,
     errors.FieldQueryFailed: INVALID_PARAMS,
     errors.RegionUnavailable: INVALID_PARAMS,
-    # The load-case refusals (#85), 422 over HTTP and so `INVALID_PARAMS` here. Note where
-    # `ConflictingLoadCases` lands: two load cases claiming one boundary reads like a conflict
-    # and is not one in this sense — nothing about the server will change to resolve it, and
-    # the caller fixes it by editing the design. The grouping follows what a caller must *do*,
-    # not what the word sounds like.
-    errors.CapabilityTakesNoConditions: INVALID_PARAMS,
+    # A load case the geometry or the capability cannot honour (#85). `invalid_request`
+    # rather than `conflict`, including for two load cases that disagree: nothing about the
+    # server's state is in the way, and the fix is always a different request.
     errors.UnknownBoundary: INVALID_PARAMS,
     errors.UnknownConditionKey: INVALID_PARAMS,
-    errors.ConditionNeedsCompanion: INVALID_PARAMS,
-    errors.ConflictingLoadCases: INVALID_PARAMS,
+    errors.ConflictingConditions: INVALID_PARAMS,
     # The request was well-formed and the state says no. Retrying the identical call is
     # pointless; doing something else first may help.
     errors.JobAlreadyFinished: CONFLICT,

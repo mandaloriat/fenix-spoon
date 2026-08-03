@@ -126,7 +126,10 @@ the seams a second caller needs. The design specification is
       workspace outlives the results computed from it, and keeps enough to recompute.
       *`boundary_condition`, `load_case` and `study` stay **thin and unvalidated**.* No shipped
       solver has a boundary condition separable from its params, so a generic schema today
-      would generalise from zero examples. Said out loud rather than invented.
+      would generalise from zero examples. Said out loud rather than invented. (Two of the
+      three have since left that list, each when a capability arrived that needed it: `study`
+      in #48, `load_case` in #85. `boundary_condition` is still thin — and now the type with
+      no user, since a load case is what it was reaching for.)
       *Scope: core only, no HTTP routes.* The workspace's first transport is #45; binding it to
       HTTP now would mean designing an object API that JSON-RPC may want differently, so
       `/api/v1` is unchanged apart from `environment.inspect` gaining the workspace path #43
@@ -398,29 +401,26 @@ capability first and the protocol change second.
       ***The asymmetry with a material key is the release.*** A material key a solver does not
       read leaves a property at its default and the answer is merely computed with it. A
       condition a solver does not read leaves a clamp out of the assembly, and the solve
-      converges and answers a different problem with no symptom — so a capability declaring no
-      conditions refuses a load case outright, an unknown boundary is refused with both lists in
-      the message, and an unknown key is refused rather than dropped. The conditions go into the
-      cache key, because two designs differing only in what is clamped are two different solves.
-      *The two placement routes are cross-checked against each other rather than each against
-      itself*: a load case clamping the boundary that **is** `xmin` reproduces the
-      `fixed_edge`/`load_edge` shorthand's answer to 1e-6 through entirely different code, and
-      sending both at once is refused. The id decision is re-tested at the level that matters —
-      a workspace patch inserting a vertex, then a solve — and the test carries its own
-      counterexample, re-running with the selector an index-based implementation would have
-      produced and requiring it to disagree.
-      *And a limitation stated rather than smoothed over*: a mock meshes a raster and conforms
-      to an outline only where the outline lands on grid lines, so it **refuses** a boundary it
-      cannot resolve instead of loading the band of nodes nearby. It carries a
-      `raster_conforming_boundary` assumption its FEniCSx twin does not — the first case where a
-      pair's declared validity legitimately differs, and the reason the pairing test now has a
-      narrow, named exemption for assumptions that are about discretisation rather than physics.
+      converges and answers a different problem with no symptom. Hence three refusals, all at
+      submit and all in the shared error corpus: `UnknownBoundary`, `UnknownConditionKey` and
+      `ConflictingConditions` for two of a design's load cases setting one key on one boundary.
+      The conditions go into the cache key, because two designs differing only in what is
+      clamped are two different solves — leaving them out would have served the clamped answer
+      to the caller who asked about the free one.
+      *Precedence between a load case and the `fixed_edge`/`load_edge` shorthand is **total,
+      never a merge***: a caller who named every boundary must not inherit an invisible clamp
+      from a default it never set. The FEniCSx half builds facet tags from the same predicate
+      the mock consumes as a NumPy mask, which is what the `f(x) -> bool` shape was chosen for —
+      and writing it found a real bug in the 1.8 resolver, which did two-row arithmetic on the
+      `(3, N)` coordinates dolfinx passes. Verified in the FEniCSx CI job: the load case
+      reproduces the edge shorthand to 1e-9, and a plate hangs from its own hole.
 
 **Where this thread leaves the open questions.** #44 said `boundary_condition` and `load_case`
 would stay thin "until a capability needs them", and elasticity is the capability that did —
 so `load_case` acquired a body the same way `study` did at #48, by having something concrete to
-generalise from. `boundary_condition` is still thin, still for the recorded reason, and still
-waiting on the next capability rather than on an argument.
+generalise from. The honest reading of #85 is that a load case is what a boundary condition was
+reaching for: `boundary_condition` is now the type with no user, still thin, still waiting on a
+capability rather than on an argument.
 
 ## M3 — Production job execution
 

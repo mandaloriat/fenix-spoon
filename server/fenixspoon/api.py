@@ -61,13 +61,11 @@ class JobRequest(BaseModel):
     conditions: dict[str, dict[str, float]] = Field(
         default={},
         description=(
-            "The load case: boundary name to the conditions applied there, e.g. "
-            '`{"root": {"fixed": 1}, "tip": {"traction_y": -1.0e6}}` (protocol 1.9, #85). '
-            "Names must be ones the geometry declares in its `boundaries`, keys must be ones "
-            "the capability declares in its `conditions`, and a capability that declares none "
-            "refuses a job that carries any — it would otherwise solve as though the load case "
-            "had not been sent. Inline here; a workspace caller references a `load_case` object "
-            "instead and the server merges it."
+            "An inline load case (protocol 1.9, #85): boundary name to the condition keys "
+            "in force there. Every name must be one this geometry's `boundaries` declares, "
+            "and every key one the capability declares in its `conditions` section — both "
+            "are refused rather than ignored. Omit it to let the solver's own parameters "
+            "govern, which is what every capability shipped before #85 does."
         ),
     )
 

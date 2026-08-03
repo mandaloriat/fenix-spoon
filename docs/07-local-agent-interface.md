@@ -154,8 +154,8 @@ The workspace holds typed objects with stable identifiers of the form `<type>:<i
 |---|---|---|
 | `geometry` | a payload of a protocol geometry kind (`domain2d`, `regions2d`, …) | validated by the existing pydantic models |
 | `material` | named scalar properties (`mu_r`, `k`, `rho`, …) | the open-dict convention of `regions2d.material`, promoted to a reusable object |
-| `boundary_condition` | a named condition bound to a boundary tag | today implicit in each solver's params; needs a schema before it can be an object |
-| `load_case` | a set of sources/loads applied to a design | groups current densities, inlet velocities, thermal loads |
+| `boundary_condition` | a named condition bound to a boundary tag | still thin: what this was reaching for turned out to be `load_case`, and nothing reads this type |
+| `load_case` | what happens on each boundary the geometry names — `{"root": {"fixed": 1}}` | validated since #85; the keys are open per capability, and each capability declares the ones it reads |
 | `design` | a geometry reference + material/BC/load-case references + solver params | the unit an iteration patches |
 | `study` | a study kind + its base design + a variation spec | orchestrates several jobs |
 | `job` | one submitted solve | **already exists and is already durable** (`JobRecord` in `store.py`) |
@@ -288,15 +288,16 @@ Unchanged in substance from the HTTP path — the same execution backend, the sa
 wall-clock timeout, cell budget and sequence-numbered event replay. What changes for a local
 caller:
 
-- **Submission takes references.** `job.submit` with a `design` id resolves geometry, materials and
-  params from the workspace; an inline geometry is still accepted for one-shot use.
+- **Submission takes references.** `job.submit` with a `design` id resolves geometry, materials,
+  load cases and params from the workspace; an inline geometry — with an inline `conditions` map
+  beside it, since #85 — is still accepted for one-shot use.
 - **Progress is opt-in.** An agent that does not want twenty progress ticks in its context submits,
   then polls `job.get`, or subscribes with a coarser cadence. The stream exists; it is not pushed
   at a caller that did not ask.
 - **Completion produces a `result` object**, not a payload. `job.get` on a finished job returns
   status, the result id, its metrics and diagnostics — not fields.
 - **Equivalent jobs may not run at all.** *(Implemented, #47.)* With a content-addressed identity
-  (geometry + solver + its declared version + params + environment), a resubmission of something
+  (geometry + solver + its declared version + params + load case + environment), a resubmission of something
   already computed returns the job that already ran and says so in the provenance
   (`cached: true`). This is the single biggest lever on both compute cost and context cost in an
   iterative loop. Two departures from the sketch above, both deliberate: **caching is opt-in per
@@ -497,20 +498,13 @@ know whether the decision still holds.
 
 Two further questions were worth naming even though they were not blocking: how a capability
 declares its metrics without every adapter reimplementing the plumbing, and whether
-`boundary_condition` and `load_case` can be schematized generically or must stay solver-specific.
-Both were to be answered by the next physics capability that had to be modelled, not by argument.
-Both have now been answered that way, and the answers came out differently:
+`boundary_condition` and `load_case` can be schematized generically or must stay solver-specific
+for now. Both said they would be answered by the next physics capability that had to be modelled,
+and both were: #46 for the metrics, and the elasticity pair (#81) for the load case, whose
+conditions were the first that could not be inferred from the shape.
 
-- **Metrics**: settled by #46. A metric declared as a reduction of a field is computed generically
-  from #43's declaration, so four adapters do not each write `float(T.max())`; only the derived
-  ones, which need a parameter, are adapter code.
-- **`load_case`**: settled by #85, and by elasticity being the capability that needed it. It is
-  schematized, but only *around* the values — conditions are keyed by a boundary name the geometry
-  declares, and what is applied there stays an open dict of scalars. A typed union of condition
-  kinds would have put physics into the protocol and made every new physics a protocol change.
-  What is closed is one adapter's vocabulary, declared per capability, which is enough to refuse a
-  key nobody reads without generalising over physics nobody has written yet.
-- **`boundary_condition`**: still thin, and still by this rule rather than by neglect. No shipped
-  capability has one separable from its params in the way that type would describe, and #85 did
-  not produce one — a load case turned out to be the thing elasticity wanted. The next capability
-  that needs it decides, as before.
+The answer to the second is a split rather than a yes or a no. The **structure** generalises — a
+map of boundary name to scalars, resolved against boundaries the geometry names — and the
+**vocabulary** does not, so it stays per capability and each one declares its own keys (#85). A
+typed enum of condition kinds would have been the generic schema this row was asking after, and
+it would have made every new physics a protocol change.

@@ -138,6 +138,33 @@
       "exit": 3
     },
     {
+      "type": "UnknownBoundary",
+      "group": "invalid_request",
+      "http": 422,
+      "jsonrpc": -32602,
+      "exit": 3,
+      "structured": "declared",
+      "note": "A load case named a boundary the geometry does not declare (#85). Carries what the geometry does declare, so the fix is visible from the refusal rather than from a second round trip."
+    },
+    {
+      "type": "UnknownConditionKey",
+      "group": "invalid_request",
+      "http": 422,
+      "jsonrpc": -32602,
+      "exit": 3,
+      "structured": "accepted",
+      "note": "A condition key the capability does not read. The check that keeps load-case values open without making a typo silent."
+    },
+    {
+      "type": "ConflictingConditions",
+      "group": "invalid_request",
+      "http": 422,
+      "jsonrpc": -32602,
+      "exit": 3,
+      "structured": "sources",
+      "note": "Two of a design's load cases set the same key on the same boundary. Refused rather than resolved by list order, because order is not an intent."
+    },
+    {
       "type": "JobNotFinished",
       "group": "conflict",
       "http": 409,
@@ -189,46 +216,6 @@
       "jsonrpc": -32004,
       "exit": 7,
       "note": "The job is there and its arrays are not. Distinct from not_found on purpose."
-    },
-    {
-      "type": "CapabilityTakesNoConditions",
-      "group": "invalid_request",
-      "http": 422,
-      "jsonrpc": -32602,
-      "exit": 3,
-      "note": "A load case was sent to a capability that declares no condition keys (#85). Refused rather than ignored: the solve would run, converge, and answer the problem without the load case, under the caller's name for the one with it."
-    },
-    {
-      "type": "UnknownBoundary",
-      "group": "invalid_request",
-      "http": 422,
-      "jsonrpc": -32602,
-      "exit": 3,
-      "note": "A load case named a boundary the geometry does not declare (#85). The message carries both what was asked for and what the geometry names, because the usual cause is a load case written against a different shape."
-    },
-    {
-      "type": "UnknownConditionKey",
-      "group": "invalid_request",
-      "http": 422,
-      "jsonrpc": -32602,
-      "exit": 3,
-      "note": "A condition key no adapter declares (#85). Deliberately unlike an unread *material* key, which is ignored: an unread condition leaves a constraint out of the assembly rather than leaving a property at its default."
-    },
-    {
-      "type": "ConditionNeedsCompanion",
-      "group": "invalid_request",
-      "http": 422,
-      "jsonrpc": -32602,
-      "exit": 3,
-      "note": "A key whose declaration names companions it was sent without (#85). No shipped adapter declares one \u2014 a traction component absent means zero, which is a real answer \u2014 so this guards adapters this repository does not contain."
-    },
-    {
-      "type": "ConflictingLoadCases",
-      "group": "invalid_request",
-      "http": 422,
-      "jsonrpc": -32602,
-      "exit": 3,
-      "note": "Two of a design's load cases apply conditions to one boundary (#85). Grouped with the invalid requests rather than the conflicts: nothing about the server resolves it, and the caller fixes it by editing the design."
     }
   ]
 }

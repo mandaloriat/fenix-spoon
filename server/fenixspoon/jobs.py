@@ -324,7 +324,7 @@ class JobManager:
             self._jobs[job.id] = job
             on_finish = self._retire(job)
         await self.backend.start(
-            record, solver_cls, geometry, params, on_finish=on_finish, conditions=conditions
+            record, solver_cls, geometry, params, conditions or {}, on_finish=on_finish
         )
         return job
 

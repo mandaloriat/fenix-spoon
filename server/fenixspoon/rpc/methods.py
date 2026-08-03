@@ -74,32 +74,22 @@ class SubmitParams(BaseModel):
     conditions: dict[str, dict[str, float]] = Field(
         default_factory=dict,
         description=(
-            "Inline load case: boundary name to the conditions applied there (#85). For the "
-            "inline form only — a design names `load_cases` and the server merges them."
+            "An inline load case (#85), for the inline form. A design names its load cases "
+            "the way it names its geometry, so passing both is refused for the same reason."
         ),
     )
 
     @model_validator(mode="after")
     def _one_form_only(self) -> "SubmitParams":
-        inline = self.solver is not None or self.geometry is not None
+        inline = self.solver is not None or self.geometry is not None or bool(self.conditions)
         if self.design is not None and inline:
             raise ValueError(
-                "pass either `design` or `solver` + `geometry`, not both: a design already "
-                "names its solver and geometry"
+                "pass either `design` or `solver` + `geometry` (with `conditions` if the "
+                "solve needs a load case), not both: a design already names its solver, its "
+                "geometry and its load cases"
             )
         if self.design is None and not (self.solver and self.geometry):
             raise ValueError("pass a `design`, or both `solver` and `geometry`")
-        if self.design is not None and self.conditions:
-            # Same rule as the one above, and the same reason. A design resolves its own load
-            # cases, so a request carrying both has two answers to "what is clamped" and
-            # honouring either silently would produce a job whose inputs are not what the
-            # caller thinks. To vary a load, patch the load case or name a different one:
-            # both are versioned, where an inline override would not be.
-            raise ValueError(
-                "pass `conditions` only with the inline form: a design's load case comes from "
-                "the `load_cases` it names, and an inline override would not be reproducible "
-                "from the workspace"
-            )
         return self
 
 

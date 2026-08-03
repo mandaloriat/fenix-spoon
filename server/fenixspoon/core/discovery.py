@@ -364,12 +364,10 @@ class CapabilityDescription(Selective):
     conditions: list[ConditionSpec] | None = Field(
         default=None,
         description=(
-            "Section `conditions`: the boundary-condition keys a load case may apply to this "
-            "capability (#85). **An empty list is the load-bearing answer here** — it means "
-            "this capability takes no load case at all and will refuse a job carrying one, "
-            "rather than meaning it has simply not said. Every other section reports something "
-            "about the answer; this one reports an input, and a caller has to be able to tell "
-            "'do not send me a load case' from 'undeclared'."
+            "Section `conditions`: the boundary-condition keys this capability reads from a "
+            "load case, and their units (#85). An empty list means it takes no load case at "
+            "all — and that is enforced rather than merely reported, so it reads as a "
+            "refusal a caller can plan around rather than as an omission."
         ),
     )
     artifacts: list[ArtifactSpec] | None = Field(
@@ -573,9 +571,9 @@ def describe_capability(
         # `response_model_exclude_none` drops `None`, not `[]`.
         out.assumptions = list(solver_cls.assumptions)
     if "conditions" in wanted:
-        # Empty matters more here than in `assumptions`, where it means "not declared". Here
-        # it is a *rule the server enforces*: no declared keys means a load case is refused,
-        # so `[]` is the answer "this capability takes none" and a caller can act on it.
+        # Empty is a real answer here for the same reason it is for assumptions, and a
+        # sharper one: "this capability reads no boundary-condition keys" is exactly what a
+        # caller needs to know before authoring a load case for it.
         out.conditions = list(solver_cls.conditions)
     if "artifacts" in wanted:
         out.artifacts = list(solver_cls.artifacts)

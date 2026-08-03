@@ -433,32 +433,27 @@ def test_the_validated_types_are_validated(core, me):
         core.create_object("design", {"solver": "mock.laplace2d"}, me)  # no geometry
 
 
-def test_the_thin_type_is_stored_exactly_as_given(core, me):
+def test_the_thin_types_are_stored_exactly_as_given(core, me):
     """#44 asked for this to be explicit rather than papered over with an invented schema.
 
-    No shipped solver has a `boundary_condition` separable from its params in the way that
-    type would describe, so there is nothing to validate it against yet. Storing the body
-    faithfully — including a shape nobody has agreed on — is the honest behaviour until a
-    capability needs one.
+    No shipped solver has a boundary condition separable from its params in a way this type
+    would capture, so there is nothing to validate against yet. Storing the body faithfully —
+    including a shape nobody has agreed on — is the honest behaviour until a capability needs
+    one.
 
-    **Two types have now left this list, and both left the same way**: `study` at #48 and
-    `load_case` at #85, each at the moment a concrete capability gave it something to
-    generalise from rather than at the moment somebody felt like designing a schema. That is
-    the pattern working, and the assertions below keep the remaining one a decision rather
-    than an omission — the second half fails if `boundary_condition` quietly acquires a schema
-    without this test being reconsidered.
+    Two types have left this list since, and the pattern is the same both times: `study` in
+    #48 and `load_case` in #85, each at the moment it had a concrete use case to generalise
+    from rather than an imaginable one. `boundary_condition` still does not, so it is still
+    here, and the assertions below keep that a decision rather than an omission.
     """
     body = {"kind": "whatever-the-caller-decided", "nested": {"values": [1, 2, 3]}}
     stored = core.create_object("boundary_condition", body, me)
     assert stored.body == body
     assert core.object(stored.ref, me).body == body
 
-    for typed, nonsense in (
-        ("study", {"kind": "whatever-the-caller-decided"}),
-        ("load_case", {"kind": "whatever-the-caller-decided"}),
-    ):
+    for typed in ("study", "load_case"):
         with pytest.raises(errors.InvalidObject):
-            core.create_object(typed, nonsense, me)
+            core.create_object(typed, {"kind": "whatever-the-caller-decided"}, me)
 
 
 def test_an_unknown_object_type_is_refused(core, me):

@@ -1,5 +1,5 @@
 {
-  "$comment": "Conformance corpus for POST /api/v1/jobs request bodies. Protocol 1.9 adds `conditions`, the load case (#85): boundary name to the conditions applied there. Validated on both sides as a shape only \u2014 that a name exists in the geometry and that a key is one the capability reads are checked at submit against the geometry and the adapter's declaration, neither of which a fixture corpus holds. So the invalid cases below are the ones the *model* can refuse: a value that is not a number, and conditions that are not a mapping per boundary. The refusals that need a capability live in errors.json, where the partition they belong to is asserted.",
+  "$comment": "Conformance corpus for POST /api/v1/jobs request bodies.",
   "valid": [
     {
       "name": "minimal request with default params",
@@ -7,29 +7,8 @@
         "solver": "mock.laplace2d",
         "geometry": {
           "type": "domain2d",
-          "bounds": [
-            -1.0,
-            -1.0,
-            2.0,
-            1.0
-          ],
-          "obstacle": {
-            "type": "polygon2d",
-            "points": [
-              [
-                0.4,
-                0.4
-              ],
-              [
-                0.6,
-                0.4
-              ],
-              [
-                0.5,
-                0.6
-              ]
-            ]
-          }
+          "bounds": [-1.0, -1.0, 2.0, 1.0],
+          "obstacle": { "type": "polygon2d", "points": [[0.4, 0.4], [0.6, 0.4], [0.5, 0.6]] }
         }
       }
     },
@@ -39,160 +18,10 @@
         "solver": "mock.laplace2d",
         "geometry": {
           "type": "domain2d",
-          "bounds": [
-            -1.0,
-            -1.0,
-            2.0,
-            1.0
-          ],
-          "obstacle": {
-            "type": "polygon2d",
-            "points": [
-              [
-                0.4,
-                0.4
-              ],
-              [
-                0.6,
-                0.4
-              ],
-              [
-                0.5,
-                0.6
-              ]
-            ]
-          }
+          "bounds": [-1.0, -1.0, 2.0, 1.0],
+          "obstacle": { "type": "polygon2d", "points": [[0.4, 0.4], [0.6, 0.4], [0.5, 0.6]] }
         },
-        "params": {
-          "resolution": 64,
-          "output": "mesh2d"
-        }
-      }
-    },
-    {
-      "name": "a load case on named boundaries",
-      "$comment": "Protocol 1.9. Clamped at the root, pulled down at the tip \u2014 the cantilever, with the conditions on boundaries the geometry names rather than on axis-aligned edges.",
-      "payload": {
-        "solver": "mock.elasticity2d",
-        "geometry": {
-          "type": "domain2d",
-          "bounds": [
-            0.0,
-            0.0,
-            1.0,
-            0.2
-          ],
-          "obstacle": {
-            "type": "polygon2d",
-            "points": [
-              [
-                0.4,
-                0.08
-              ],
-              [
-                0.6,
-                0.08
-              ],
-              [
-                0.6,
-                0.12
-              ],
-              [
-                0.4,
-                0.12
-              ]
-            ]
-          },
-          "boundaries": [
-            {
-              "name": "root",
-              "select": {
-                "type": "near",
-                "axis": "x",
-                "value": 0.0,
-                "tol": 1e-06
-              }
-            },
-            {
-              "name": "tip",
-              "select": {
-                "type": "near",
-                "axis": "x",
-                "value": 1.0,
-                "tol": 1e-06
-              }
-            }
-          ]
-        },
-        "params": {
-          "resolution": 64
-        },
-        "conditions": {
-          "root": {
-            "fixed": 1.0
-          },
-          "tip": {
-            "traction_y": -1000000.0
-          }
-        }
-      }
-    },
-    {
-      "name": "no load case at all",
-      "$comment": "The default and the overwhelmingly common case: `conditions` is absent, and a capability whose conditions come from its params is unaffected by 1.9 existing.",
-      "payload": {
-        "solver": "mock.heat2d",
-        "geometry": {
-          "type": "domain2d",
-          "bounds": [
-            0.0,
-            0.0,
-            1.0,
-            0.2
-          ],
-          "obstacle": {
-            "type": "polygon2d",
-            "points": [
-              [
-                0.4,
-                0.08
-              ],
-              [
-                0.6,
-                0.08
-              ],
-              [
-                0.6,
-                0.12
-              ],
-              [
-                0.4,
-                0.12
-              ]
-            ]
-          },
-          "boundaries": [
-            {
-              "name": "root",
-              "select": {
-                "type": "near",
-                "axis": "x",
-                "value": 0.0,
-                "tol": 1e-06
-              }
-            },
-            {
-              "name": "tip",
-              "select": {
-                "type": "near",
-                "axis": "x",
-                "value": 1.0,
-                "tol": 1e-06
-              }
-            }
-          ]
-        },
-        "params": {}
+        "params": { "resolution": 64, "output": "mesh2d" }
       }
     }
   ],
@@ -200,10 +29,7 @@
     {
       "name": "missing geometry",
       "reason": "geometry is required",
-      "payload": {
-        "solver": "mock.laplace2d",
-        "params": {}
-      }
+      "payload": { "solver": "mock.laplace2d", "params": {} }
     },
     {
       "name": "geometry with invalid obstacle",
@@ -212,147 +38,8 @@
         "solver": "mock.laplace2d",
         "geometry": {
           "type": "domain2d",
-          "bounds": [
-            -1.0,
-            -1.0,
-            2.0,
-            1.0
-          ],
-          "obstacle": {
-            "type": "polygon2d",
-            "points": [
-              [
-                0,
-                0
-              ],
-              [
-                1,
-                1
-              ]
-            ]
-          }
-        }
-      }
-    },
-    {
-      "name": "a condition value that is not a number",
-      "reason": "Condition values are scalars. `\"fixed\": true` is the tempting spelling and is refused: the values ride into the cache key, and a bool and a 1 that mean the same thing would be two different solves of one problem.",
-      "payload": {
-        "solver": "mock.elasticity2d",
-        "geometry": {
-          "type": "domain2d",
-          "bounds": [
-            0.0,
-            0.0,
-            1.0,
-            0.2
-          ],
-          "obstacle": {
-            "type": "polygon2d",
-            "points": [
-              [
-                0.4,
-                0.08
-              ],
-              [
-                0.6,
-                0.08
-              ],
-              [
-                0.6,
-                0.12
-              ],
-              [
-                0.4,
-                0.12
-              ]
-            ]
-          },
-          "boundaries": [
-            {
-              "name": "root",
-              "select": {
-                "type": "near",
-                "axis": "x",
-                "value": 0.0,
-                "tol": 1e-06
-              }
-            },
-            {
-              "name": "tip",
-              "select": {
-                "type": "near",
-                "axis": "x",
-                "value": 1.0,
-                "tol": 1e-06
-              }
-            }
-          ]
-        },
-        "conditions": {
-          "root": {
-            "fixed": "yes"
-          }
-        }
-      }
-    },
-    {
-      "name": "conditions that are not keyed by boundary",
-      "reason": "`conditions` is boundary name to key-value map, two levels. A flat map loses which boundary a condition is on, which is the entire question this field answers.",
-      "payload": {
-        "solver": "mock.elasticity2d",
-        "geometry": {
-          "type": "domain2d",
-          "bounds": [
-            0.0,
-            0.0,
-            1.0,
-            0.2
-          ],
-          "obstacle": {
-            "type": "polygon2d",
-            "points": [
-              [
-                0.4,
-                0.08
-              ],
-              [
-                0.6,
-                0.08
-              ],
-              [
-                0.6,
-                0.12
-              ],
-              [
-                0.4,
-                0.12
-              ]
-            ]
-          },
-          "boundaries": [
-            {
-              "name": "root",
-              "select": {
-                "type": "near",
-                "axis": "x",
-                "value": 0.0,
-                "tol": 1e-06
-              }
-            },
-            {
-              "name": "tip",
-              "select": {
-                "type": "near",
-                "axis": "x",
-                "value": 1.0,
-                "tol": 1e-06
-              }
-            }
-          ]
-        },
-        "conditions": {
-          "fixed": 1.0
+          "bounds": [-1.0, -1.0, 2.0, 1.0],
+          "obstacle": { "type": "polygon2d", "points": [[0, 0], [1, 1]] }
         }
       }
     }

@@ -68,21 +68,20 @@ not a specification written forward.
   ***An unread condition is an error where an unread material key is not***, and that
   asymmetry is the point of the release. An ignored material key leaves a property at its
   default. An ignored condition leaves a clamp out of the assembly, and the solve converges and
-  answers a different problem with no symptom — so a capability declaring no conditions
-  **refuses** a load case, an unknown boundary name is refused with both lists in the message,
-  and an unknown key is refused rather than dropped. The conditions go into the cache key, since
-  two designs differing only in what is clamped are two different solves; an absent load case
-  hashes identically to an empty one, so existing keys are untouched.
-  *Both elasticity adapters read them*, keeping `fixed_edge`/`load_edge` as the shorthand for
-  the common case — and sending both is refused. The two paths are cross-checked against each
-  other: a load case clamping the boundary that *is* `xmin` reproduces the shorthand's answer to
-  1e-6, through completely different code on each side.
-  *One thing the implementation had to be honest about.* A mock meshes a raster and conforms to
-  an outline only where the outline lands on grid lines, while Gmsh meshes the outline itself.
-  So a mock **refuses** a boundary it cannot resolve rather than loading the band of nodes
-  nearby, and carries a `raster_conforming_boundary` assumption its FEniCSx twin does not — the
-  first time a pair's declared validity legitimately differs, which cost the pairing test a
-  narrow, named exemption for discretisation-only assumptions. (#85, second half)
+  answers a different problem with no symptom. So three refusals, all at submit and all in the
+  shared error corpus: `UnknownBoundary` for a name the geometry does not declare,
+  `UnknownConditionKey` for a key no capability reads, and `ConflictingConditions` for two of a
+  design's load cases setting one key on one boundary — refused rather than resolved by list
+  order. The conditions go into the cache key, since two designs differing only in what is
+  clamped are two different solves.
+  *Both elasticity adapters read them*, falling back to `fixed_edge`/`load_edge` when no load
+  case is supplied. **Precedence is total, never a merge**: a caller who named every boundary
+  must not inherit an invisible clamp from a default it never set. The FEniCSx half tags facets
+  built from the same predicate the mock consumes as a NumPy mask, so the pair cannot apply one
+  load case to different edges — and writing it turned up a real bug in the 1.8 resolver, which
+  did two-row arithmetic on the `(3, N)` coordinates dolfinx passes.
+  *Verified in the FEniCSx CI job*, where a load case reproduces the edge shorthand to 1e-9 and
+  a plate hangs from its own hole. (#85, second half)
 
 ### Added — an explorable field viewer (`@fenix-spoon/viewer`)
 

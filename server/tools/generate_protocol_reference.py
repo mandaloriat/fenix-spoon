@@ -142,6 +142,7 @@ def render_model(
 def build() -> str:
     # Imported here so `--help` works without the package installed.
     from fenixspoon.api import JobCreated, JobList, JobRequest
+    from fenixspoon.core.conditions import LoadCaseBody
     from fenixspoon.core.discovery import (
         CacheInfo,
         CapabilityDescription,
@@ -199,6 +200,7 @@ def build() -> str:
         Assumption,
         CapabilityExample,
         CapabilityFeatures,
+        ConditionSpec,
         MetricSpec,
         SolverInfo,
     )
@@ -219,6 +221,11 @@ def build() -> str:
                 NearSelector,
                 BoxSelector,
                 AllOfSelector,
+                # Protocol 1.9, #85. Last in this section because it is the other half of a
+                # boundary: everything above says *where*, and this says what happens there.
+                # It is a workspace object body rather than a geometry, but a reader arriving
+                # from `BoundarySpec` needs it in the next paragraph, not four sections later.
+                LoadCaseBody,
             ],
         ),
         ("Jobs", [JobRequest, JobCreated, JobStatus, JobList]),
@@ -275,6 +282,10 @@ def build() -> str:
                 # the metrics say what a capability reports, the assumptions say where that
                 # stops being valid.
                 Assumption,
+                # Protocol 1.9, #85. Beside the assumptions for the same reason those sit
+                # beside the metrics: it is the vocabulary a load case must be written in,
+                # and a key this list does not carry is refused rather than ignored.
+                ConditionSpec,
                 ArtifactSpec,
                 CostSection,
                 CapabilityFeatures,

@@ -10,6 +10,13 @@ mock working on a raster. One resolution, two consumers, no chance of the pair d
 about which edge was meant — which is the same reasoning that put the elasticity stress
 post-processing in one place.
 
+**`(2, N)` is the minimum, not the requirement.** dolfinx hands its locators a `(3, N)`
+array — every mesh is embedded in three dimensions there, whatever its topological
+dimension — so every predicate built here reads the first two rows and ignores anything
+below them. Getting this wrong is not a subtle error: a `(3, N)` array reaches a two-row
+subtraction and raises, so the FEniCSx half of a pair would fail on the geometry the mock
+half solved.
+
 ## Why a predicate rather than a list of entities
 
 A list would have to be a list *of something*: vertex indices on the raster, facet tags on
@@ -64,43 +71,6 @@ def predicate(geometry, name: str):
     return _resolve(named(geometry, name).select, geometry)
 
 
-def governed_by_load_case(ctx, params, shorthand: tuple[str, ...]) -> bool:
-    """Whether the load case governs this solve, refusing a request that asks for both (#85).
-
-    An adapter that predates load cases keeps its parameter shorthand — elasticity's
-    `fixed_edge` / `load_edge` are the case #85 names — and the two ways of saying where the
-    conditions go must not both be in force at once. A caller that sends a load case *and*
-    sets `load_edge` has two intents in one request, and applying either silently is the
-    failure mode this design keeps refusing: a solve that runs, converges, and answers a
-    different problem.
-
-    Only an **explicitly set** shorthand conflicts. Every one of them has a default, so a
-    request that never mentions them still arrives with values, and reading those as an intent
-    would make a load case unusable without also passing sentinels. ``model_fields_set``
-    survives ``model_validate``, so what the caller actually wrote is knowable here.
-
-    Raises :class:`ValueError`, which fails the job with the message rather than returning a
-    number. Not a submit-time refusal like the other three, and the reason is a boundary this
-    module respects: the core validates a load case against the *geometry* and the capability's
-    *declaration*, both of which it can read, while which params are shorthand for what is
-    knowledge only the adapter has. Pushing that into the core would mean the core knowing an
-    adapter's parameters by name.
-    """
-    if not getattr(ctx, "conditions", None):
-        return False
-    stated = [name for name in shorthand if name in params.model_fields_set]
-    if stated:
-        # Joined by hand rather than interpolated: this string reaches a caller as a job's
-        # `error`, and `['load_edge']` is a Python repr leaking into an engineering message.
-        named = ", ".join(f"`{name}`" for name in stated)
-        raise ValueError(
-            f"this job carries a load case and also sets {named}: the load case puts the "
-            "conditions on boundaries the geometry names, and those parameters put them on "
-            "edges of the bounding rectangle. Send one or the other."
-        )
-    return True
-
-
 def _resolve(selector, geometry):
     if isinstance(selector, NearSelector):
         axis = 0 if selector.axis == "x" else 1
@@ -151,7 +121,7 @@ def _segments_predicate(ids: list[str], geometry):
     span = _extent(geometry)
 
     def test(x):
-        coords = np.asarray(x, dtype=float)
+        coords = _planar(x)
         hit = np.zeros(coords.shape[1], dtype=bool)
         for start, end in segments:
             hit |= _distance_to_segment(coords, start, end) <= SEGMENT_TOLERANCE * span
@@ -190,13 +160,23 @@ def _outline_predicate(polygon: Polygon2D, span: float):
     edges = [(points[i], points[(i + 1) % len(points)]) for i in range(len(points))]
 
     def test(x):
-        coords = np.asarray(x, dtype=float)
+        coords = _planar(x)
         hit = np.zeros(coords.shape[1], dtype=bool)
         for start, end in edges:
             hit |= _distance_to_segment(coords, start, end) <= SEGMENT_TOLERANCE * span
         return hit
 
     return test
+
+
+def _planar(x) -> np.ndarray:
+    """The first two rows of a coordinate array, as float.
+
+    dolfinx passes `(3, N)` to a locator and this package's mocks pass `(2, N)`; both mean
+    the same points to a 2-D geometry. Taken in one helper so the two callers that do
+    per-point arithmetic cannot disagree about it.
+    """
+    return np.asarray(x, dtype=float)[:2]
 
 
 def _extent(geometry) -> float:

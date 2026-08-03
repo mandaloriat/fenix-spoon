@@ -102,15 +102,14 @@ def cache_key(
     between two different arrangements of the same bytes — `{"a": "bc"}` and `{"ab": "c"}`
     serialise differently here even though a naive concatenation would not distinguish them.
 
-    ``conditions`` is the load case (#85), and it has to be in here for the reason the whole
-    cache is opt-in: two designs that differ *only* in what is clamped are two different
-    solves, and a key blind to them would answer the second from the first. That is the same
-    shape as #48's `resolutoin` guard — a fabricated agreement between runs that were never
-    the same run — and it is the version of it the cache could produce on its own.
-
-    Defaulted rather than required, because every caller that predates load cases passes a
-    solve that has none, and an absent load case must hash identically to an empty one or
-    every key in an existing store would change for no change in inputs.
+    ``conditions`` is the resolved load case (#85), and it is **part of the identity, not
+    metadata**. Two solves of one geometry with one parameter set and two different load
+    cases are two different problems, and leaving them out here would serve the clamped
+    answer to the caller who asked about the free one — a wrong answer delivered instantly,
+    which is the single worst thing a cache can do. Omitted from the payload entirely when
+    empty, so every key computed before #85 is still the key that solve gets today: a
+    condition-free solve is what "no conditions" has always meant, and cooling the whole
+    cache to record that would buy nothing.
     """
     payload = canonical(
         {
@@ -120,8 +119,6 @@ def cache_key(
             "geometry": geometry,
             "params": params,
             "environment": environment,
-            # Omitted when empty, so a store written before #85 keeps hitting: adding a key
-            # whose value is `{}` would change every existing digest.
             **({"conditions": conditions} if conditions else {}),
         }
     )

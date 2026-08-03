@@ -67,13 +67,13 @@ async def run_solve(
     geometry: Geometry,
     params: BaseModel,
     *,
+    conditions: dict[str, dict[str, float]] | None = None,
     store: JobStore,
     sink: EventSink,
     artifact_dir: Path,
     executor: Executor | None,
     timeout: float,
     cancel_event: threading.Event,
-    conditions: dict[str, dict[str, float]] | None = None,
 ) -> JobRecord:
     """Run one solve to a terminal status, persisting and publishing as it goes.
 

@@ -35,17 +35,12 @@
  * tracked. It also added the `assumptions` section to `capability.describe`, which is a local
  * caller's concern and is not typed here for the same reason the rest of discovery is not.
  *
- * 1.6 and 1.7 are the transient pair: a metric declaring what it is taken over (discovery
- * only, tracked and not typed) and the time index over the artifacts, which *is* typed —
- * `ArtifactRef.t` and `FrameRef` sit inside a result envelope this SDK already describes, so
- * omitting them would have made this constant advertise a shape the types denied. 1.8 let a
- * geometry name pieces of its boundary; typed, because the geometry editor is what has to
- * carry `point_ids` through an edit.
- *
- * 1.9 added the load case: `JobRequest.conditions`, what happens on the boundaries 1.8 let a
- * geometry name. Typed for the same reason 1.8 is — a page that lets someone click an edge
- * and clamp it sends this field — and it completes the pair, since naming a boundary with no
- * way to say what happens there was only ever half of an answer.
+ * 1.9 said what happens *on* a named boundary: a `load_case` workspace object, and
+ * `conditions` on a submission. Typed here on `JobRequest`, because the editor is the place
+ * a boundary gets named and it would be odd to let a page name one and not load it. The
+ * values are an open map of scalars per capability — deliberately not an enum, so a new
+ * physics is not a protocol change — which is why `ConditionValues` is `Record<string,
+ * number>` rather than a union this file would have to grow.
  */
 export const PROTOCOL_VERSION = '1.9';
 
@@ -250,23 +245,28 @@ export function isTerminal(status: JobState): status is TerminalState {
   return (TERMINAL_STATES as readonly string[]).includes(status);
 }
 
+/**
+ * What a load case says on one boundary: an open map of scalars, per capability.
+ *
+ * Open on purpose (protocol 1.9). A typed union of condition kinds would put physics into
+ * the protocol, so every new physics would become a protocol change — the coupling the
+ * server has consistently refused. Read `capability.describe(["conditions"])` for the keys a
+ * given capability accepts and their units; a key it does not declare is refused at submit
+ * rather than ignored, which is what keeps the openness from costing a silent typo.
+ */
+export type ConditionValues = Record<string, number>;
+
 export interface JobRequest {
   solver: string;
   geometry: Geometry;
   params?: Record<string, unknown>;
   /**
-   * The load case: what happens on the boundaries the geometry names (protocol 1.9).
-   *
-   * Keyed by a name from the geometry's `boundaries`, then by a condition key the capability
-   * declares — `{root: {fixed: 1}, tip: {traction_y: -1e6}}`. The values are open scalars on
-   * purpose; a typed union of condition kinds would put physics in the protocol.
-   *
-   * Three things the server refuses rather than ignores, all with a 422: a capability that
-   * declares no conditions receiving any, a boundary the geometry does not declare, and a key
-   * the capability does not read. Each of them would otherwise produce a solve that runs,
-   * converges, and answers a different problem.
+   * An inline load case (protocol 1.9): boundary name to the scalars in force there. Every
+   * name must be one this geometry's `boundaries` declares — the refusal is a 422, not a
+   * silent no-op, because a condition applied to nothing produces a solve that runs and
+   * answers a different problem.
    */
-  conditions?: Record<string, Record<string, number>>;
+  conditions?: Record<string, ConditionValues>;
 }
 
 export interface JobCreated {

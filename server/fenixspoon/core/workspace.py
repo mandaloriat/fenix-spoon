@@ -14,28 +14,24 @@ Six object types, and they are deliberately not equal:
 | `material` | name + property map | mirrors what `regions2d` regions already carry |
 | `design` | :class:`DesignBody` | the load-bearing one — what `job.submit` resolves |
 | `boundary_condition` | *nothing* | see below |
-| `load_case` | :class:`LoadCaseBody` | #85 defined it |
+| `load_case` | :class:`~fenixspoon.core.conditions.LoadCaseBody` | #85 defined it |
 | `study` | :class:`~fenixspoon.core.studies.StudyBody` | #48 defined it |
 
 **`boundary_condition` is stored as opaque JSON on purpose.** Issue #44 asked for that to be
 said out loud rather than papered over with an invented schema, so: no shipped solver has a
-boundary condition that is separable from its params in the way that type would describe.
-`mock.heat2d` expresses convective cooling as `h` and `t_ambient`; `dolfinx.magnetostatics2d`
-puts A = 0 on the outer boundary and offers no choice about it. A generic schema written for it
-today would still be a guess generalising from zero examples. The type exists so that ids and
-references are consistent when a capability finally needs it; until then the body is whatever
-the caller puts there and the workspace stores it faithfully.
+boundary condition that is separable from its params in a way this type would capture.
+`mock.heat2d` expresses convective cooling as `h` and `t_ambient`;
+`dolfinx.magnetostatics2d` puts A = 0 on the outer boundary and offers no choice about it. A
+generic schema written today would be a guess generalising from zero examples. The type
+exists so that ids and references are consistent when a capability finally needs them; until
+then the body is whatever the caller puts there and the workspace stores it faithfully.
 
-**`load_case` left that list with #85**, and the way it left is the case #44 described: it was
-thin *pending a capability that needed it*, and elasticity is that capability. It gained a body
-rather than an assumption — the conditions are still an open dict of scalars, because the
-alternative is a typed enum of condition kinds that would put physics in the protocol and make
-every new physics a protocol change. What the schema fixes is the *shape* around them:
-conditions are keyed by a boundary name the geometry declares. `study` made the same move for
-the same reason at #48. The remaining question this leaves —
-"can `boundary_condition` be schematized generically?" — is still answered by the next
-capability that needs it rather than by argument, which is where §15 of the design draft left
-it and where it stays.
+`study` and `load_case` *were* the same, and each left the thin list the moment a concrete
+use case arrived to generalise from — #48 for the first, #85 and the elasticity pair for the
+second. That is the rule this table is keeping: a body gets a schema when something needs to
+read it, not when someone can imagine reading it. Note that `load_case` is the one that
+turned out to carry the physics; `boundary_condition` is now the type with no user, and the
+honest reading of #85 is that a load case is what a boundary condition was reaching for.
 
 ## Versioning and patching
 
@@ -74,11 +70,12 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 import jsonpatch
-from pydantic import BaseModel, Field, TypeAdapter, ValidationError, model_validator
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
 from ..geometry import Geometry
 from ..objects import OBJECT_TYPES, ObjectFileStore, ObjectRecord, parse_ref
 from . import errors
+from .conditions import Conditions, LoadCaseBody, merge_load_cases
 from .studies import StudyBody
 
 #: Built once. The union is fixed at import time, and constructing a `TypeAdapter` per
@@ -99,51 +96,6 @@ class MaterialBody(BaseModel):
     properties: dict[str, float] = Field(
         description="Property name to value, in the units the solver documents."
     )
-
-
-class LoadCaseBody(BaseModel):
-    """What happens on the boundaries a geometry names (#85).
-
-    The other half of the split that resolves boundary conditions: *where* is a property of the
-    shape and lives in the geometry, *what* is not and lives here. The same cantilever loaded
-    three ways is the same cantilever, so putting the conditions in the geometry would mint a
-    new geometry revision for every load change and turn comparing two load cases into
-    comparing two shapes.
-
-    **Its own object type rather than a block inside the design**, because an engineer reuses
-    one set of restraints and loads across a family of shapes. That reuse is the whole argument,
-    and it is what the acceptance test for #85 exercises: one load case, two geometries that
-    both declare `root` and `tip`, two designs, two solves.
-    """
-
-    conditions: dict[str, dict[str, float]] = Field(
-        description=(
-            "Boundary name to the conditions applied there — "
-            '`{"root": {"fixed": 1}, "tip": {"traction_y": -1.0e6}}`. The names must be ones '
-            "the geometry declares in its `boundaries`, and the keys ones the capability "
-            "declares in its `conditions`; both are checked at submit, when the geometry and "
-            "the capability are known. Values are an open dict of scalars, like a region's "
-            "`material`: a typed enum of condition kinds would put physics into the protocol "
-            "and make every new physics a protocol change."
-        )
-    )
-
-    @model_validator(mode="after")
-    def _no_empty_boundary(self) -> "LoadCaseBody":
-        """A boundary listed with no conditions is refused.
-
-        It is the same failure as a selector that matches nothing, one level up: `{"root": {}}`
-        reads like the root has been dealt with, and applies nothing at all. There is no honest
-        reading of it — a caller that means "leave this boundary free" says so by not naming it,
-        which is what every adapter already assumes about a boundary nobody mentioned.
-        """
-        for boundary, values in self.conditions.items():
-            if not values:
-                raise ValueError(
-                    f"boundary {boundary!r} is listed with no conditions; omit it entirely to "
-                    "leave that boundary free, rather than naming it and applying nothing"
-                )
-        return self
 
 
 class DesignBody(BaseModel):
@@ -228,9 +180,9 @@ VALIDATED: dict[str, type[BaseModel] | Literal["geometry"]] = {
     "geometry": "geometry",
     "material": MaterialBody,
     "design": DesignBody,
-    # #48 gave `study` a body and #85 gave `load_case` one; both left the thin list the same
-    # way, by acquiring a capability that needed them. `boundary_condition` is the one still
-    # thin, and still for the reason above rather than for want of attention.
+    # #48 gave `study` a body and #85 gave `load_case` one, so both left the thin list.
+    # `boundary_condition` is still thin, and still for the reason above rather than for
+    # want of attention.
     "study": StudyBody,
     "load_case": LoadCaseBody,
 }
@@ -369,46 +321,32 @@ class Workspace:
         # otherwise resolve happily and write provenance that is wrong in a way nothing
         # would ever surface — and the thin types are the ones most likely to be miswired,
         # because nothing validates their bodies either.
-        def pin(refs: list[str], expected: str) -> list[str]:
-            return [self._record(item, owner, expected=expected).pinned for item in refs]
+        def resolve(refs: list[str], expected: str) -> list[ObjectRecord]:
+            return [self._record(item, owner, expected=expected) for item in refs]
 
-        load_cases = [self._record(item, owner, expected="load_case") for item in body.load_cases]
+        # The load cases are the one set of references whose *bodies* are read here rather
+        # than only pinned: they say what happens on each named boundary, and that has to
+        # reach the solver. Merged now, at the moment the revisions are frozen, so the
+        # conditions a job runs with and the revisions its provenance names are one reading
+        # of the workspace rather than two that could differ.
+        cases = resolve(body.load_cases, "load_case")
+        conditions = merge_load_cases(
+            [(record.pinned, LoadCaseBody.model_validate(record.body)) for record in cases]
+        )
 
         return geometry, ResolvedDesign(
             solver=body.solver,
             params=dict(body.params),
+            conditions=conditions,
             design=design.pinned,
             geometry=geometry_record.pinned,
-            materials=pin(body.materials, "material"),
-            boundary_conditions=pin(body.boundary_conditions, "boundary_condition"),
-            load_cases=[record.pinned for record in load_cases],
-            conditions=self._merge_conditions(load_cases),
+            materials=[record.pinned for record in resolve(body.materials, "material")],
+            boundary_conditions=[
+                record.pinned
+                for record in resolve(body.boundary_conditions, "boundary_condition")
+            ],
+            load_cases=[record.pinned for record in cases],
         )
-
-    @staticmethod
-    def _merge_conditions(records: list[ObjectRecord]) -> dict[str, dict[str, float]]:
-        """One conditions map from the design's load cases, refusing an overlap.
-
-        A design may name several load cases — restraints authored once and a load authored per
-        study is the shape that asks for it — but only while they speak about different
-        boundaries. Two that both name `root` are refused rather than merged by list order:
-        last-wins would make which clamp applied a function of the order of a JSON array, which
-        is reproducible and undetectable, and that combination is the one this design keeps
-        refusing to ship.
-
-        Merging happens here rather than at submit because it is a property of the *design* —
-        an inline job carries one conditions map and has nothing to merge.
-        """
-        merged: dict[str, dict[str, float]] = {}
-        source: dict[str, str] = {}
-        for record in records:
-            body = LoadCaseBody.model_validate(record.body)
-            for boundary, values in body.conditions.items():
-                if boundary in merged:
-                    raise errors.ConflictingLoadCases(boundary, source[boundary], record.pinned)
-                merged[boundary] = dict(values)
-                source[boundary] = record.pinned
-        return merged
 
     # ---------------------------------------------------------------------- internals
 
@@ -450,6 +388,16 @@ class ResolvedDesign(BaseModel):
 
     solver: str = Field(description="Capability the job will run.")
     params: dict[str, Any] = Field(description="Parameters from the design, before validation.")
+    conditions: Conditions = Field(
+        default={},
+        description=(
+            "The design's load cases merged into one mapping of boundary name to the "
+            "scalars in force there (#85). Empty when the design names none, which is "
+            "every design written before the elasticity pair. Not a reference like the "
+            "fields below — it is the *content* those references resolved to, because it "
+            "is what the solve actually runs with."
+        ),
+    )
     design: str = Field(description="Design revision used, pinned: `design:d-1@2`.")
     geometry: str = Field(description="Geometry revision used, pinned.")
     materials: list[str] = Field(default=[], description="Material revisions used, pinned.")
@@ -458,12 +406,4 @@ class ResolvedDesign(BaseModel):
     )
     load_cases: list[str] = Field(
         default=[], description="Load-case revisions the design named, pinned."
-    )
-    conditions: dict[str, dict[str, float]] = Field(
-        default={},
-        description=(
-            "What those load cases add up to: boundary name to the conditions applied there "
-            "(#85). The values a solve receives, as distinct from `load_cases`, which is the "
-            "provenance — the revisions they came from."
-        ),
     )

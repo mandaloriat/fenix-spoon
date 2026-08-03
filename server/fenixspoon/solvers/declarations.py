@@ -420,93 +420,82 @@ ELASTICITY_ASSUMPTIONS = [
     Assumption(
         name="edge_aligned_boundary_conditions",
         statement=(
-            "**Only when the `fixed_edge` / `load_edge` shorthand is used.** Those params name "
-            "edges of the bounding rectangle (`xmin`, `xmax`, `ymin`, `ymax`) and apply a "
-            "uniform traction along one of them, so a load on part of an edge, on the hole "
-            "boundary or on an arbitrary curve cannot be expressed that way. Submitting a "
-            "**load case** instead lifts the restriction entirely: conditions go on boundaries "
-            "the geometry names, and a named boundary can be any part of any outline. Narrowed "
-            "rather than deleted when #85 landed, because a caller still using the shorthand "
-            "really is restricted to it."
+            "Without a load case, the clamped and loaded boundaries are named as edges of "
+            "the bounding rectangle (`xmin`, `xmax`, `ymin`, `ymax`) by the `fixed_edge` "
+            "and `load_edge` parameters, and the traction is uniform along the loaded one. "
+            "**A load case lifts this**: conditions supplied for the geometry's named "
+            "boundaries (#85) reach part of an edge, the hole boundary or an arbitrary "
+            "outline, and they replace the two parameters entirely rather than adding to "
+            "them. What neither route expresses is a concentrated force: a traction is per "
+            "unit length, so a point load has to be approximated by a short loaded stretch."
         ),
-        excludes=["partial_edge_load", "hole_boundary_load", "point_load"],
-        # Not expressed with `when`, though it is exactly the conditional shape `when` exists
-        # for. `when` names a **param** whose truthiness gates the assumption, and what gates
-        # this one is whether a *load case* was submitted — which is not a param and must not
-        # become one, because a flag saying "I sent conditions" beside the conditions
-        # themselves is a second source of truth that can disagree with the first. So the
-        # condition is stated in the sentence, where a caller reads it, rather than encoded in
-        # a field that cannot hold it.
+        # Narrowed rather than deleted, as #85 asked. `partial_edge_load` and
+        # `hole_boundary_load` left the list because a load case genuinely reaches them and
+        # a caller filtering on `excludes` would otherwise be told no about something the
+        # server will do. `point_load` stayed because neither route offers it.
+        #
+        # Stated in prose rather than through `when`, and that is a real limit worth naming:
+        # `Assumption.when` gates on a *parameter*, and "a load case was supplied" is not a
+        # parameter — it arrives beside the params rather than inside them. So a caller
+        # reading this statically cannot be told which of the two regimes it is in, and the
+        # statement has to describe both.
+        excludes=["point_load"],
     ),
     TWO_DIMENSIONAL,
 ]
 
 
-#: The one assumption a mock carries and its FEniCSx twin does not (#85).
+#: What an elasticity load case may say on a named boundary (#85).
 #:
-#: Every other declaration is shared by a pair, and `test_paired_adapters_declare_the_same_
-#: assumptions` enforces that on the good argument that two adapters solving the same
-#: equations are valid over the same domain. This is the first thing that breaks the rule, and
-#: it breaks it in a category the rule was not about: **discretisation, not physics**. A mock
-#: meshes a raster and keeps the grid nodes outside the obstacle, so it conforms to an outline
-#: only where the outline lands on grid lines; Gmsh meshes the polygon itself and always
-#: conforms. Switching adapters therefore *does* change what can be asked, which is exactly
-#: what a caller reading `assumptions` needs to be told.
+#: Shared by the pair for the same reason the metrics are: a caller that swaps
+#: `mock.elasticity2d` for `dolfinx.elasticity2d` must find the same vocabulary, or the two
+#: are interchangeable only in principle. `test_paired_adapters_declare_the_same_conditions`
+#: fails if a new adapter for an existing physics invents its own spelling.
 #:
-#: Declared rather than tolerated, and refused rather than approximated: matching within a
-#: band of one cell would put the load on a ring of nodes *near* the boundary instead of on
-#: the boundary, which is a plausible number for a problem nobody posed.
-RASTER_CONFORMING_BOUNDARY = Assumption(
-    name="raster_conforming_boundary",
-    statement=(
-        "The mesh is a raster of the bounding rectangle with the obstacle's interior nodes "
-        "removed, so a boundary that follows the *shape* — a `points` selector, or `part` on "
-        "an obstacle or region outline — is resolved exactly where that outline lands on grid "
-        "lines and not at all where it does not. A condition on an unaligned outline is "
-        "refused with a message naming the boundary rather than applied to the nodes nearby. "
-        "Boundaries that follow the *space* (`near`, `box`) and the outer rectangle are "
-        "unaffected, and the FEniCSx adapter has no such restriction: increase `resolution` "
-        "until the outline is resolved, or use it."
-    ),
-    excludes=["condition_on_unaligned_outline"],
-)
-
-
-#: Elasticity: what a load case may say on a boundary the geometry names (#85).
-#:
-#: Three keys and no more, because three is what the physics of a linear-elastic body admits
-#: on a boundary: hold it, push on it, or leave it alone. The third is spelled by *not naming
-#: the boundary*, which is why there is no `free` key — a key meaning "do nothing" would be
-#: indistinguishable from the absence it duplicates, and would give a caller two ways to write
-#: the same load case.
-#:
-#: `traction_x` and `traction_y` do not `require` each other. An absent component is zero, and
-#: zero is a real answer here — a purely vertical shear is `traction_y` alone, and demanding
-#: `traction_x: 0.0` beside it would be ceremony. The field exists for keys where an absent
-#: companion would mean *unspecified* rather than zero; none of these three is that.
+#: Deliberately small. Five keys cover clamped, rolled and loaded — the restraints and loads
+#: a plane problem actually needs — and each new one has to earn its place by being something
+#: an adapter can honour on *any* selected boundary, not just on an edge of the bounding box.
 ELASTICITY_CONDITIONS = [
     ConditionSpec(
-        key="fixed",
+        name="fixed",
         unit="1",
         description=(
-            "Hold this boundary at zero displacement in both directions when non-zero. A "
-            "flag rather than a value: partial restraint (a roller, a symmetry plane) is a "
-            "different condition and would be a different key, not this one at half strength."
+            "Nonzero clamps this boundary in both directions. The usual restraint, and the "
+            "one a cantilever's root needs: with nothing fixed anywhere the problem is "
+            "singular and the solve reports a rigid-body motion rather than a deflection."
         ),
+        kind="dirichlet",
     ),
     ConditionSpec(
-        key="traction_x",
+        name="fixed_x",
+        unit="1",
+        description=(
+            "Nonzero holds x while leaving y free — a roller, and the honest way to model a "
+            "symmetry plane normal to x. Clamping such a plane in both directions instead "
+            "would suppress the Poisson contraction along it and overstate the stiffness."
+        ),
+        kind="dirichlet",
+    ),
+    ConditionSpec(
+        name="fixed_y",
+        unit="1",
+        description="Nonzero holds y while leaving x free; the other roller.",
+        kind="dirichlet",
+    ),
+    ConditionSpec(
+        name="traction_x",
         unit="Pa",
         description=(
-            "Surface traction along x, as force per unit area, positive towards +x. Applied "
-            "as consistent nodal forces over the boundary's own length, so refining the mesh "
-            "converges to the same total force rather than a different one."
+            "Uniform surface traction along x on this boundary, force per unit area, "
+            "positive towards +x. Per unit depth in z like everything else here."
         ),
+        kind="neumann",
     ),
     ConditionSpec(
-        key="traction_y",
+        name="traction_y",
         unit="Pa",
-        description="Surface traction along y, as force per unit area, positive towards +y.",
+        description="Uniform surface traction along y, positive towards +y.",
+        kind="neumann",
     ),
 ]
 

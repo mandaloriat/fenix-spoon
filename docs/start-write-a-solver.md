@@ -232,7 +232,7 @@ whatever you declare here, so a caller can decide whether to run you before it d
 
 ```python
 from fenixspoon.solvers.base import (
-    ArtifactSpec, Assumption, CapabilityExample, MetricSpec,
+    ArtifactSpec, Assumption, CapabilityExample, ConditionSpec, MetricSpec,
 )
 
 
@@ -255,6 +255,12 @@ class SteadyHeat2D(Solver):
         Assumption(name="two_dimensional",
                    statement="A cross-section of a body infinitely long in z."),
     ]
+    conditions = [
+        ConditionSpec(name="temperature", unit="degC", kind="dirichlet",
+                      description="Holds this boundary at a fixed temperature."),
+        ConditionSpec(name="flux", unit="W/m^2", kind="neumann",
+                      description="Heat flux into the body through this boundary."),
+    ]
     artifacts = [
         ArtifactSpec(name="solution.vtk", content_type="model/vnd.vtk",
                      description="Full field, opens in ParaView.", when="write_vtk"),
@@ -269,7 +275,7 @@ class SteadyHeat2D(Solver):
 reports `unspecified` where it has not said, and stays fully usable. They are plain class
 attributes in the spirit of `Params`, not a registration framework.
 
-Three things to get right:
+Five things to get right:
 
 **Metrics are the engineering *answer*; `stats` is what the solve *cost*.** Peak
 temperature is a metric, `seconds` and `cells` are stats. Keeping them apart is what lets
@@ -289,6 +295,31 @@ then write no code for it.** The runtime computes those after your `solve` retur
 the declaration itself, so four adapters do not each contain the same `float(T.max())`.
 It also makes the declaration checkable rather than decorative: the test suite runs a
 solve and fails if the field is not in the payload.
+
+**Declare every boundary-condition key you read, and read them from `ctx.conditions`.** A
+load case is a workspace object mapping a boundary the *geometry* names to the scalars in
+force there, and it reaches you as `ctx.conditions` — `{"root": {"fixed": 1}}` — already
+checked against your declaration. Turn a name into something you can select with:
+
+```python
+from fenixspoon.boundaries import predicate
+
+for name, values in ctx.conditions.items():
+    where = predicate(geometry, name)          # f(x) -> bool over (2, N) or (3, N) points
+    if "temperature" in values:
+        ...                                     # dolfinx: locate_dofs_geometrical(V, where)
+```
+
+That signature is what `dolfinx.mesh.locate_entities_boundary` takes, so a FEniCSx adapter
+passes it straight through, and it is a plain NumPy mask for a solver working on a raster.
+
+The values are an open map of scalars on purpose — a typed enum of condition kinds would
+put physics into the protocol, so a new physics would be a protocol change. `conditions` is
+what keeps that openness from costing a caller a silent typo: a key you have not declared is
+**refused at submit**, not ignored, and an empty list means your capability takes no load
+case at all and says so. Leaving it empty is fine if your conditions really are parameters —
+several shipped adapters put theirs where the outer/obstacle split implies them — but if a
+caller can place them, declare them.
 
 **Say what your metric is taken *over*, if it is not the answer you returned.** `over` defaults
 to `payload` — the result that came back — and that is right for every steady solve. Set
