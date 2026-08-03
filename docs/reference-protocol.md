@@ -505,6 +505,7 @@ A scalar engineering quantity this capability reports (roadmap M2.5, issue #43).
 | `field` | `str \| null` | no | `None` | Result field this metric reduces, when it is a reduction of one. Null when the solver computes it some other way (an integral over a region, a ratio). |
 | `reduction` | `'max' \| 'min' \| 'mean' \| 'integral' \| null` | no | `None` | How `field` becomes a scalar. Null exactly when `field` is null. |
 | `boundary` | `str \| null` | no | `None` | Boundary this metric integrates over, when it is a boundary integral rather than a reduction of a field — `body` for the surface of a `domain2d` obstacle. Mutually exclusive with `field`: a quantity is one or the other. |
+| `over` | `'payload' \| 'run'` | no | `'payload'` | What the number is taken over. `payload` — the result that came back, which for a steady solve is the whole answer and for a transient is the final instant. `run` — the whole solve: a peak over its history, a time to reach a level, or a property of the configuration. A `run` metric can only be supplied by the adapter, because it is not in the payload to be reduced. |
 
 ## `Assumption`
 

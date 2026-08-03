@@ -248,6 +248,16 @@ saying so is what lets a caller tell "the solver integrates this over the body" 
 works this out somehow" — added in 1.5 with
 [#68](https://github.com/mandaloriat/fenix-spoon/issues/68).
 
+`over` says **what the number is taken over**, and 1.6 added it because a transient made the
+question unavoidable ([#86](https://github.com/mandaloriat/fenix-spoon/issues/86)). `payload` is
+the default and means the result that came back — for a steady solve that is the whole answer,
+for a transient it is the final instant. `run` means the whole solve: the peak over a start-up,
+the time to reach a level, a property of the configuration. The distinction is not cosmetic and
+the models enforce half of it: a `run` metric **cannot** name a `field`, because a field
+reduction is computed by the runtime from the payload and a `run` quantity is by definition not
+in it. Without the declaration the two are told apart only by their names, and a transient's
+`t_peak` and `t_final_max` agree on every monotonic case anyone would check by hand.
+
 The `params` section carries a flat parameter list — name, type, default, bounds, enum choices —
 plus `schema_ref`. Being flat is the point rather than being small: a `Literal` parameter reaches
 a caller as `$ref` → `$defs` → `enum`, and resolving that is work the summary does once. On the

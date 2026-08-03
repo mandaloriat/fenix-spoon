@@ -424,8 +424,13 @@ ELASTICITY_ASSUMPTIONS = [
 #: is a reduction of the result payload, and a transient's payload is one instant — so
 #: `t_final_max` can be declared and the peak over the whole history cannot. `t_peak` is
 #: computed by the adapter for exactly that reason, and the pair differ whenever a solve
-#: overshoots. That is the first concrete consequence of the protocol having no time
-#: dimension, and it is why it is written here rather than discovered later.
+#: overshoots.
+#:
+#: Which of the two a metric is, is now *declared* rather than implied by its name (#86):
+#: `over="run"` marks the three that only the adapter can supply, and the constructor
+#: refuses to let one of them also name a field. `t_rise` stays `payload` — it is the final
+#: peak minus a parameter, so it is a property of the result that came back, just not a
+#: pure reduction of it.
 TRANSIENT_HEAT_METRICS = [
     MetricSpec(
         name="t_final_max",
@@ -441,6 +446,7 @@ TRANSIENT_HEAT_METRICS = [
     MetricSpec(
         name="t_peak",
         unit="degC",
+        over="run",
         description=(
             "Highest temperature reached at any time during the run, which is the number a "
             "rating must survive. Equal to `t_final_max` for a monotonic warm-up and larger "
@@ -455,6 +461,7 @@ TRANSIENT_HEAT_METRICS = [
     MetricSpec(
         name="time_to_90pc",
         unit="s",
+        over="run",
         description=(
             "Time to reach 90% of the temperature rise, interpolated between steps so the "
             "answer is not a property of the step size. Absent when the run never got "
@@ -465,6 +472,7 @@ TRANSIENT_HEAT_METRICS = [
     MetricSpec(
         name="time_constant",
         unit="s",
+        over="run",
         description=(
             "Lumped time constant `rho_cp V / (h A)`: how fast the body would charge if it "
             "were too conductive to hold a gradient. A closed form, not a measurement — "

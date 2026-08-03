@@ -150,6 +150,20 @@ class MetricSpec(BaseModel):
             "Mutually exclusive with `field`: a quantity is one or the other."
         ),
     )
+    # Added by #86, and found by #84 rather than reasoned about in advance. A transient's
+    # payload is *one instant*, so `t_final_max` is declarable as a reduction and the peak
+    # over the whole run is not. Without this, the two are distinguishable only by their
+    # names — a convention two adapter authors would spell differently and both look right.
+    over: Literal["payload", "run"] = Field(
+        default="payload",
+        description=(
+            "What the number is taken over. `payload` — the result that came back, which "
+            "for a steady solve is the whole answer and for a transient is the final "
+            "instant. `run` — the whole solve: a peak over its history, a time to reach a "
+            "level, or a property of the configuration. A `run` metric can only be supplied "
+            "by the adapter, because it is not in the payload to be reduced."
+        ),
+    )
 
     @model_validator(mode="after")
     def _check_recipe(self) -> "MetricSpec":
@@ -175,6 +189,16 @@ class MetricSpec(BaseModel):
                 f"metric {self.name!r} declares both a field ({self.field!r}) and a boundary "
                 f"({self.boundary!r}); a quantity is a reduction of a field or an integral "
                 f"over a boundary, not both"
+            )
+        # `field` means "the runtime reduces this from the payload", and a `run` metric is by
+        # definition not in the payload. Allowing both would produce the exact failure #86
+        # exists to prevent: a peak over a transient's history quietly reported as the value
+        # at the final instant, which agrees on every monotonic case anyone would test.
+        if self.over == "run" and self.field is not None:
+            raise ValueError(
+                f"metric {self.name!r} is declared over the run but reduces the field "
+                f"{self.field!r}; the payload holds one instant, so the runtime cannot "
+                f"compute it — drop the field and have the adapter supply the value"
             )
         return self
 

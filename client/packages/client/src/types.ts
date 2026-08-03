@@ -35,7 +35,7 @@
  * tracked. It also added the `assumptions` section to `capability.describe`, which is a local
  * caller's concern and is not typed here for the same reason the rest of discovery is not.
  */
-export const PROTOCOL_VERSION = '1.5';
+export const PROTOCOL_VERSION = '1.6';
 
 /** What `GET /api/v1/version` returns. The one endpoint that never requires a key. */
 export interface ProtocolVersion {

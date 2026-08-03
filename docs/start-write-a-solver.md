@@ -259,6 +259,15 @@ the declaration itself, so four adapters do not each contain the same `float(T.m
 It also makes the declaration checkable rather than decorative: the test suite runs a
 solve and fails if the field is not in the payload.
 
+**Say what your metric is taken *over*, if it is not the answer you returned.** `over` defaults
+to `payload` — the result that came back — and that is right for every steady solve. Set
+`over="run"` for a quantity the adapter works out across the whole solve: the peak of a
+transient's history, the time it took to reach a level, a time constant. The models enforce the
+half of this that can be enforced — a `run` metric may not name a `field`, because a field
+reduction is computed by the runtime *from the payload*, and a `run` quantity is not in it. This
+is the one declaration mistake that is invisible in testing: a transient's peak-over-time and
+its value-at-the-final-instant agree on every monotonic case you would try by hand.
+
 **A metric that is an integral over a boundary names `boundary` instead of `field`.** Lift and
 moment are integrals over the body surface, gap force over an air gap, wall heat flux over a
 wetted face — none of them is a reduction of a field over the domain. Declaring
