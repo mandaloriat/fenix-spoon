@@ -38,8 +38,9 @@ and the FEniCSx solver.
 
 > **Status: M1, M2 and M2.5 done, M3 mostly.** Five physics run end to end on real FEniCSx
 > solves (potential flow, magnetostatics, steady and transient heat conduction, linear
-> elasticity) and three of them have demo pages, the three browser packages — SDK, geometry editor,
-> field viewer — are published from `client/`, and the airfoil demo is built from them.
+> elasticity) and three of them have demo pages, the four browser packages — SDK, geometry editor,
+> field viewer and curve plot — are published from `client/`, and the airfoil demo is built from
+> them.
 > Pure-NumPy mock solvers mirror every FEniCSx one, so the full loop (edit geometry → submit →
 > stream progress → render field) runs without installing FEniCSx at all. Jobs now persist
 > across restarts, API keys and per-user quotas are available, solves can run in worker
@@ -85,6 +86,7 @@ see the [state-of-the-art survey](docs/01-state-of-the-art.md). Fenix Spoon is t
 | **JS/TS SDK** — `@fenix-spoon/client`: typed protocol client with progress streaming, reconnection and runtime validators | [`client/packages/client/`](client/packages/client/) | ✅ working |
 | **Geometry editor widget** — `<fs-geometry-2d>`: SVG-based parametric profile editor, keyboard-operable, emits protocol JSON | [`client/packages/geometry-2d/`](client/packages/geometry-2d/) | ✅ working |
 | **Field viewer widget** — `<fs-viewer>`: canvas renderer *and explorer* for `grid2d`/`mesh2d` — colormaps, contours, probe, sections, zoom/pan, vector glyphs, integral curves, capability-driven tools, all on data already received | [`client/packages/viewer/`](client/packages/viewer/) | ✅ working |
+| **Curve widget** — `<fs-plot>`: the other half of a result. Axes with round ticks, a legend, a hover readout, log scales, and an opt-in inverted `y` for a `C_p` — never inferred from a trace's name | [`client/packages/plot/`](client/packages/plot/) | ✅ working |
 | **Docker deployment** — one image with dolfinx + server, `docker compose up`; a worker override for API + Redis + N solver containers | [`Dockerfile`](server/Dockerfile), [`docker-compose.yml`](docker-compose.yml), [`docker-compose.workers.yml`](docker-compose.workers.yml) | ✅ working |
 | **Distributed job execution** — `ExecutionBackend` with an in-process pool and an arq/Redis backend; progress crosses processes over pub/sub | [`backends.py`](server/fenixspoon/backends.py), [`worker.py`](server/fenixspoon/worker.py) | ✅ working |
 

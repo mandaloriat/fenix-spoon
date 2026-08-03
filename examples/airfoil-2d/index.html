@@ -28,13 +28,19 @@
   #status { font-size: 0.85rem; opacity: 0.75; min-height: 1.2em; }
   .hint { font-size: 0.8rem; opacity: 0.6; }
   .missing { padding: 1rem; border: 1px solid #f59e0b; border-radius: 6px; background: #f59e0b22; }
+  /* The plot is a sibling of the stage rather than an overlay on it: a curve and a field
+     answer different questions about the same solve, and stacking them would make the
+     page choose which one you are looking at. */
+  #plot { display: block; width: 100%; height: 220px; margin-top: 0.75rem;
+          border: 1px solid #8884; border-radius: 6px; }
 </style>
 <script type="importmap">
 {
   "imports": {
     "@fenix-spoon/client": "/packages/client/index.js",
     "@fenix-spoon/geometry-2d": "/packages/geometry-2d/index.js",
-    "@fenix-spoon/viewer": "/packages/viewer/index.js"
+    "@fenix-spoon/viewer": "/packages/viewer/index.js",
+    "@fenix-spoon/plot": "/packages/plot/index.js"
   }
 }
 </script>
@@ -63,6 +69,17 @@ read the field. Nothing there re-runs the solver — it is all the arrays the pa
   <fs-geometry-2d id="editor" bounds="-1,-1,2,1" mode="spline" samples="10"></fs-geometry-2d>
 </div>
 
+<!-- `invert-y` because a C_p is plotted with suction upwards, and the *page* says so: the
+     widget will not read a trace called `cp_upper` and flip an axis on its own. -->
+<fs-plot id="plot" series="surface_cp" invert-y legend interactive
+         y-label="C_p (suction up)"></fs-plot>
+<p class="hint">Surface pressure, straight off the same result the field above came from —
+no second request. <strong>The saw teeth are the mock solver, not the plot.</strong> It masks a
+Cartesian grid, so the body is a staircase whose treads and risers sit at almost the same
+<code>x/c</code> and carry very different pressures; sorting them by chord station interleaves
+the two. Pick the FEniCSx solver, which meshes the profile itself, and the curve comes out
+smooth. Hover to read a point.</p>
+
 <div class="controls">
   <button id="run">Run ▶</button>
   <button id="cancel" hidden>Cancel ✕</button>
@@ -83,10 +100,12 @@ read the field. Nothing there re-runs the solver — it is all the arrays the pa
 import { FenixSpoonClient, JobFailedError } from '@fenix-spoon/client';
 import '@fenix-spoon/geometry-2d';
 import '@fenix-spoon/viewer';
+import '@fenix-spoon/plot';
 
 const client = new FenixSpoonClient('');
 const editor = document.getElementById('editor');
 const viewer = document.getElementById('viewer');
+const plot = document.getElementById('plot');
 const statusEl = document.getElementById('status');
 const progEl = document.getElementById('prog');
 const runBtn = document.getElementById('run');
@@ -125,6 +144,10 @@ async function run() {
     });
 
     viewer.result = result;
+    // The same result object. `series` has ridden beside `data` since protocol 1.5 and
+    // this page was throwing it away — the solve computes a surface C_p, and until
+    // `<fs-plot>` existed there was nothing to draw it with.
+    plot.result = result;
     // A result carries arrays and a bounding box, not an outline. The page has the exact
     // geometry it submitted, so it hands it over: that is what "Fit profile" frames and
     // what the outline overlay draws.

@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist",
+    "rootDir": "src",
+    // Resolve the sibling package through its published entry point, not its source:
+    // the emitted d.ts must reference @fenix-spoon/client the way consumers do.
+    // This requires that package to be built first — see the workspace build script.
+    "paths": {}
+  },
+  "include": ["src/**/*.ts"]
+}

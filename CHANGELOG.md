@@ -5,15 +5,59 @@ Notable changes to Fenix Spoon. The **wire protocol** has a version of its own
 [docs/04-wire-protocol.md](docs/04-wire-protocol.md); this file records what changed for the
 people who build on the toolkit, protocol bump or not.
 
-*The number above is asserted, not maintained by hand: `test_changelog_states_the_current_protocol`
-reads this line and compares it with `fenixspoon.protocol.PROTOCOL_VERSION`. It had drifted three
-minors behind before that test existed, which is the whole argument for it.*
+*The number above is asserted, not maintained by hand: `test_the_prose_states_the_current_protocol`
+reads this line — and the matching one in the README — and compares each with
+`fenixspoon.protocol.PROTOCOL_VERSION`. It had drifted three minors behind before that test
+existed, and the README drifted one commit after it, which is why the check covers both.*
 
 Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely and the
 project is pre-1.0, so the packages are versioned together and nothing here is a stability
 promise yet.
 
 ## Unreleased
+
+### Added — a curve widget (`@fenix-spoon/plot`)
+
+The one extension `docs/04-wire-protocol.md` had listed as unfinished since 1.5: the protocol
+carried curves and every consumer wrote its own plot. **No wire-protocol change** — `<fs-plot>`
+draws numbers that have been on the wire since `series1d` landed, the same relationship the
+explorable viewer has to 1.1.
+
+- **`<fs-plot>`**, a fourth browser package. Takes a `JobResult` of either kind — a `series1d`
+  payload *is* the curve set, a field result carries its curves beside `data` — or a
+  `Series1DData` directly. Axes with round ticks chosen from {1, 2, 5} × 10ⁿ, a legend, a
+  pointer readout that resolves in *screen* space (a data-space distance would add metres to
+  pascals), linear or log scales, and per-trace abscissae honoured, which is what an airfoil's
+  two surfaces need.
+- **`invert-y` is an attribute, never an inference.** A `C_p` is drawn with suction upwards and
+  it would be easy to notice a trace called `cp_upper` and flip the axis — the class of guess
+  [ADR 0001](docs/adr/0001-explorable-viewer.md) records the viewer refusing. A name is not a
+  quantity, so the page says so and the widget does not decide.
+- **One y axis, stated.** Where traces disagree about units — a magnitude and a phase — the axis
+  goes uncaptioned and the legend carries each unit, rather than labelling the axis with the
+  first trace's unit and being wrong about every other curve on it.
+- **A separate package, not a second element in the viewer.** They share a canvas and nothing
+  else, and folding them together would make every page showing a temperature map carry axis
+  code it never calls — against the property `@fenix-spoon/viewer` exists to keep.
+- **The airfoil demo plots its surface pressure**, which it has computed since #68 and been
+  discarding. The saw teeth are the mock's staircased body rather than the plot, and the page
+  says which, because a first-time visitor would otherwise read a faithful drawing as a bug.
+- *Three things found while building it, two by the tests and one in review.* A zero-width-domain
+  guard inside the projection was unreachable — the domain repair upstream already prevents one —
+  so two defences that could have disagreed became one. The accessible description was skipped
+  whenever the canvas had no 2D context, because it sat after the early return; the name of an
+  element is a function of its data, not of whether the environment can rasterise. And **padding
+  a log axis additively is wrong in a way nothing reports**: a residual history from 1e-1 down to
+  1e-7 had 0.005 subtracted from its lower bound, which is negative, so the domain repair lifted
+  it to the log floor and six decades silently became twelve. Padding is now a fraction of the
+  *decades* on a log scale, decided in one place for both axes — the version that special-cased
+  x at the call site and left y additive is what produced it.
+- *Paints are coalesced to one per frame*, the `render()` / `draw()` split `<fs-viewer>` uses. It
+  matters more here than there: a pointer crossing a dense curve resolves a different nearest
+  point many times per frame, and each one repainted the axes, the ticks and every trace. The
+  accessible description stays **synchronous** — deferring it to a frame would be a milder
+  version of the mistake of deferring it to a rendering context — which is affordable because
+  the resolved traces are now cached rather than re-paired on every pointer sample.
 
 ### Added — two more physics, and the three protocol gaps they exposed
 
