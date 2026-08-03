@@ -380,11 +380,20 @@ def test_the_transient_pair_declares_which_metrics_are_over_the_run():
     """
     transient = [cls for cls in registered_solvers() if cls.physics.endswith("-transient")]
     assert transient, "no transient capability is installed, so this checks nothing"
+    # Compared as a whole mapping rather than metric by metric, so a metric added later
+    # cannot slip in undeclared: the assertion fails on the new name until someone decides
+    # what it is taken over, which is the decision this field exists to force.
     for cls in transient:
-        over = {metric.name: metric.over for metric in cls.metrics}
-        assert over["t_final_max"] == "payload"
-        assert over["t_peak"] == "run"
-        assert over["time_to_90pc"] == "run"
+        assert {metric.name: metric.over for metric in cls.metrics} == {
+            "t_final_max": "payload",
+            "t_rise": "payload",
+            "t_peak": "run",
+            "time_to_90pc": "run",
+            # The one that drove the naming: a lumped time constant is a property of the
+            # configuration, not of a history — and it is the likeliest of the three to be
+            # "corrected" back to the default by someone reading only its closed form.
+            "time_constant": "run",
+        }, cls.name
 
 
 @pytest.mark.parametrize(
