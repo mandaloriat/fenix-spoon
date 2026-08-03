@@ -436,23 +436,24 @@ def test_the_validated_types_are_validated(core, me):
 def test_the_thin_types_are_stored_exactly_as_given(core, me):
     """#44 asked for this to be explicit rather than papered over with an invented schema.
 
-    No shipped solver has a boundary condition separable from its params, so there is
-    nothing to validate against yet. Storing the body faithfully — including a shape nobody
-    has agreed on — is the honest behaviour until a capability needs one.
+    No shipped solver has a boundary condition separable from its params in a way this type
+    would capture, so there is nothing to validate against yet. Storing the body faithfully —
+    including a shape nobody has agreed on — is the honest behaviour until a capability needs
+    one.
 
-    `study` used to be in this list and left it in #48, which is the pattern working as
-    intended rather than an exception to it: the type got a schema at the moment it had a
-    concrete use case to generalise from. These two still do not, so they are still here, and
-    the assertion below keeps that a decision rather than an omission.
+    Two types have left this list since, and the pattern is the same both times: `study` in
+    #48 and `load_case` in #85, each at the moment it had a concrete use case to generalise
+    from rather than an imaginable one. `boundary_condition` still does not, so it is still
+    here, and the assertions below keep that a decision rather than an omission.
     """
-    for object_type in ("boundary_condition", "load_case"):
-        body = {"kind": "whatever-the-caller-decided", "nested": {"values": [1, 2, 3]}}
-        stored = core.create_object(object_type, body, me)
-        assert stored.body == body
-        assert core.object(stored.ref, me).body == body
+    body = {"kind": "whatever-the-caller-decided", "nested": {"values": [1, 2, 3]}}
+    stored = core.create_object("boundary_condition", body, me)
+    assert stored.body == body
+    assert core.object(stored.ref, me).body == body
 
-    with pytest.raises(errors.InvalidObject):
-        core.create_object("study", {"kind": "whatever-the-caller-decided"}, me)
+    for typed in ("study", "load_case"):
+        with pytest.raises(errors.InvalidObject):
+            core.create_object(typed, {"kind": "whatever-the-caller-decided"}, me)
 
 
 def test_an_unknown_object_type_is_refused(core, me):

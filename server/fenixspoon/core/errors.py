@@ -184,6 +184,73 @@ class CannotPatchRevision(CoreError):
         self.ref = ref
 
 
+class UnknownBoundary(CoreError):
+    """A load case named a boundary the geometry does not declare (issue #85).
+
+    The refusal #85 asked for by name, and the one that carries the whole design. A
+    condition applied to nothing does not fail — it produces a solve that runs, converges,
+    and answers a different problem than the caller described: a cantilever that was never
+    clamped comes back as a rigid-body motion, and a plate that was never loaded comes back
+    at zero stress. Both look like results.
+
+    So it is refused at submit, and the message names both halves of the mistake: what was
+    asked for and what is on offer. A typo in a boundary name is then a one-line fix rather
+    than an afternoon.
+    """
+
+    def __init__(self, boundary: str, declared: list[str]) -> None:
+        super().__init__(
+            f"the load case names the boundary {boundary!r}, which this geometry does not "
+            + (
+                f"declare; it declares {declared}"
+                if declared
+                else "declare — it names no boundaries at all"
+            )
+        )
+        self.boundary = boundary
+        self.declared = declared
+
+
+class UnknownConditionKey(CoreError):
+    """A load case used a condition key this capability does not read (issue #85).
+
+    Load-case values are an open map of scalars on purpose — a typed enum of condition
+    kinds would put physics into the protocol. :class:`~fenixspoon.solvers.base.ConditionSpec`
+    is what keeps that openness from costing a caller a silent typo, and this is where the
+    declaration is spent.
+    """
+
+    def __init__(self, solver: str, boundary: str, key: str, accepted: list[str]) -> None:
+        super().__init__(
+            f"the load case sets {key!r} on the boundary {boundary!r}, which the capability "
+            f"{solver!r} does not read; it reads "
+            + (f"{accepted}" if accepted else "no boundary-condition keys at all")
+        )
+        self.solver = solver
+        self.boundary = boundary
+        self.key = key
+        self.accepted = accepted
+
+
+class ConflictingConditions(CoreError):
+    """Two load cases of one design set the same key on the same boundary (issue #85).
+
+    Refused rather than resolved by order. A design listing two load cases that both say
+    what happens on `root` has two intents in one request, and the same argument that makes
+    `design` and an inline geometry mutually exclusive applies: honouring one silently
+    produces a solve whose inputs are not what the caller thinks they are.
+    """
+
+    def __init__(self, boundary: str, key: str, sources: list[str]) -> None:
+        super().__init__(
+            f"load cases {sources} both set {key!r} on the boundary {boundary!r}; a design "
+            "cannot say what happens there twice"
+        )
+        self.boundary = boundary
+        self.key = key
+        self.sources = sources
+
+
 class JobNotFound(CoreError):
     """No such job, or it belongs to another principal.
 

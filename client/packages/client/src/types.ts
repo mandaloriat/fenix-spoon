@@ -34,8 +34,15 @@
  * plot — which is why this half of 1.5 is mirrored where the 1.2 discovery operations are only
  * tracked. It also added the `assumptions` section to `capability.describe`, which is a local
  * caller's concern and is not typed here for the same reason the rest of discovery is not.
+ *
+ * 1.9 said what happens *on* a named boundary: a `load_case` workspace object, and
+ * `conditions` on a submission. Typed here on `JobRequest`, because the editor is the place
+ * a boundary gets named and it would be odd to let a page name one and not load it. The
+ * values are an open map of scalars per capability — deliberately not an enum, so a new
+ * physics is not a protocol change — which is why `ConditionValues` is `Record<string,
+ * number>` rather than a union this file would have to grow.
  */
-export const PROTOCOL_VERSION = '1.8';
+export const PROTOCOL_VERSION = '1.9';
 
 /** What `GET /api/v1/version` returns. The one endpoint that never requires a key. */
 export interface ProtocolVersion {
@@ -238,10 +245,28 @@ export function isTerminal(status: JobState): status is TerminalState {
   return (TERMINAL_STATES as readonly string[]).includes(status);
 }
 
+/**
+ * What a load case says on one boundary: an open map of scalars, per capability.
+ *
+ * Open on purpose (protocol 1.9). A typed union of condition kinds would put physics into
+ * the protocol, so every new physics would become a protocol change — the coupling the
+ * server has consistently refused. Read `capability.describe(["conditions"])` for the keys a
+ * given capability accepts and their units; a key it does not declare is refused at submit
+ * rather than ignored, which is what keeps the openness from costing a silent typo.
+ */
+export type ConditionValues = Record<string, number>;
+
 export interface JobRequest {
   solver: string;
   geometry: Geometry;
   params?: Record<string, unknown>;
+  /**
+   * An inline load case (protocol 1.9): boundary name to the scalars in force there. Every
+   * name must be one this geometry's `boundaries` declares — the refusal is a 422, not a
+   * silent no-op, because a condition applied to nothing produces a solve that runs and
+   * answers a different problem.
+   */
+  conditions?: Record<string, ConditionValues>;
 }
 
 export interface JobCreated {

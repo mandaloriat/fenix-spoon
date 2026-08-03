@@ -4,9 +4,9 @@ Solves the equilibrium of a linear-elastic body,
 
     div(sigma) = 0 ,   sigma = D : eps(u) ,   eps = sym(grad u) ,
 
-with one edge of the bounding rectangle clamped and a uniform traction applied to another.
-The unknown is a **displacement vector** `u = (u_x, u_y)` — the first vector unknown in this
-repository, which is most of why #81 chose this physics.
+restrained and loaded on boundaries the geometry names, or — as a shorthand — on edges of the
+bounding rectangle. The unknown is a **displacement vector** `u = (u_x, u_y)` — the first
+vector unknown in this repository, which is most of why #81 chose this physics.
 
 ## Discretization
 
@@ -30,11 +30,21 @@ from the constraint.
 
 ## Where the boundary conditions come from
 
-From **parameters**: `fixed_edge` and `load_edge` name edges of the bounding rectangle.
-This is deliberately the cheapest of the three options weighed in #81, and it is declared as
-an assumption rather than hidden — an arbitrary boundary cannot be selected, because no
-geometry kind here can name one. Choosing between boundary tags in the geometry and a
-boundary-condition block in the design is the follow-up that this adapter exists to inform.
+Two routes, and the second replaces the first rather than adding to it.
+
+**A load case** (#85), when one is supplied: `ctx.conditions` maps a boundary the geometry
+*names* to the scalars in force there, and this adapter turns each name into a predicate
+with :func:`fenixspoon.boundaries.predicate`. That reaches part of an edge, the hole
+boundary, or any outline the geometry declares — which is what #81 could not express and
+what the `edge_aligned_boundary_conditions` assumption used to exclude.
+
+**The `fixed_edge` / `load_edge` parameters** otherwise. Kept rather than deleted, because
+they are the shorthand for the common case and a caller with a bare rectangle should not
+have to author a geometry with named boundaries to clamp one end of it.
+
+The precedence is total on purpose: with a load case the two parameters are **not consulted
+at all**. Merging them would mean a caller who named every boundary explicitly still got an
+invisible clamp on `xmin` from a default it never set.
 
 Material keys read from a `regions2d` geometry (everything else ignored):
 
@@ -51,7 +61,12 @@ from pydantic import BaseModel, Field, model_validator
 
 from ..geometry import Domain2D, Regions2D
 from .base import CapabilityExample, ProgressEvent, Solver, SolverContext, SolverResult
-from .declarations import ELASTICITY_ASSUMPTIONS, ELASTICITY_METRICS, VTK_ARTIFACT
+from .declarations import (
+    ELASTICITY_ASSUMPTIONS,
+    ELASTICITY_CONDITIONS,
+    ELASTICITY_METRICS,
+    VTK_ARTIFACT,
+)
 from .mock_laplace import _grid_shape, grid_to_mesh2d, polygon_mask, write_vtk_structured_points
 from .registry import register
 
@@ -174,6 +189,80 @@ def edge_nodes(points: np.ndarray, bounds, edge: str, tol: float) -> np.ndarray:
     return on_edge[np.argsort(points[on_edge, along])]
 
 
+def boundary_segments(triangles: np.ndarray) -> np.ndarray:
+    """The edges of the triangulation that belong to exactly one triangle, as `(ns, 2)`.
+
+    That is the whole boundary — the outer rectangle *and* the rim of any hole — found by
+    counting rather than by geometry, so it needs no tolerance and does not care what shape
+    the obstacle is. It is what a traction is integrated over once the loaded boundary can
+    be an arbitrary named piece rather than one side of the bounding box.
+    """
+    edges = np.concatenate(
+        [triangles[:, [0, 1]], triangles[:, [1, 2]], triangles[:, [2, 0]]], axis=0
+    )
+    unique, counts = np.unique(np.sort(edges, axis=1), axis=0, return_counts=True)
+    return unique[counts == 1]
+
+
+def apply_conditions(
+    geometry, conditions: dict[str, dict[str, float]], points, triangles, n_dof: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """A load case as the two arrays the solve needs: the free mask, and the load vector.
+
+    One boundary at a time, each resolved to a node mask through the geometry's own
+    selector. Restraints zero the mask; tractions are integrated over the boundary segments
+    whose **both** endpoints are selected, each carrying `traction * length` split evenly
+    between its ends — the exact consistent load for a linear element, and the reason a
+    refined mesh converges to the same total force rather than a different one.
+
+    Both endpoints rather than either, deliberately: a segment with one end inside the
+    selection and one outside straddles the edge of the named boundary, and counting it
+    would apply the load slightly beyond where the caller put it.
+
+    A condition that selects nothing raises rather than contributing nothing. It is the
+    failure #85 exists to prevent, one level down from the boundary-name check: the name
+    resolved, the predicate was fine, and the mesh is simply too coarse to have a node
+    there — which produces a solve that runs and answers a different problem.
+    """
+    from ..boundaries import predicate
+
+    free = np.ones(n_dof)
+    rhs = np.zeros(n_dof)
+    segments = boundary_segments(triangles)
+    coords = np.ascontiguousarray(points.T)
+
+    for name, values in conditions.items():
+        selected = np.asarray(predicate(geometry, name)(coords), dtype=bool)
+        nodes = np.nonzero(selected)[0]
+        if nodes.size == 0:
+            raise ValueError(
+                f"the boundary {name!r} selects no node of this mesh; raise `resolution` or "
+                "widen the selector, because the condition on it would apply to nothing"
+            )
+        if values.get("fixed"):
+            free[2 * nodes] = 0.0
+            free[2 * nodes + 1] = 0.0
+        if values.get("fixed_x"):
+            free[2 * nodes] = 0.0
+        if values.get("fixed_y"):
+            free[2 * nodes + 1] = 0.0
+
+        traction = (values.get("traction_x", 0.0), values.get("traction_y", 0.0))
+        if not any(traction):
+            continue
+        loaded = segments[selected[segments[:, 0]] & selected[segments[:, 1]]]
+        if len(loaded) == 0:
+            raise ValueError(
+                f"the boundary {name!r} carries a traction but spans no edge of this mesh; "
+                "it selects isolated nodes, and a traction is a load per unit length"
+            )
+        length = np.hypot(*(points[loaded[:, 1]] - points[loaded[:, 0]]).T)
+        np.add.at(rhs, 2 * loaded, (traction[0] * length / 2.0)[:, None])
+        np.add.at(rhs, 2 * loaded + 1, (traction[1] * length / 2.0)[:, None])
+
+    return free, rhs
+
+
 def conjugate_gradients(apply, rhs, diagonal, free, ctx, iterations, report_every):
     """Jacobi-preconditioned CG on the free degrees of freedom.
 
@@ -219,7 +308,8 @@ class MockElasticity2D(Solver):
     title = "Linear elasticity (mock, NumPy)"
     description = (
         "2D linear elasticity of a plate: displacement and von Mises stress under a uniform "
-        "edge traction, with one edge clamped. Constant-strain triangles solved by "
+        "traction, with a clamp. Restraints and loads go on boundaries the geometry names, "
+        "or on edges of the bounding rectangle as a shorthand. Constant-strain triangles solved by "
         "preconditioned conjugate gradients. Development stand-in that runs anywhere NumPy "
         "does; exact for uniform tension and stiff in bending, as CST always is."
     )
@@ -228,7 +318,10 @@ class MockElasticity2D(Solver):
     availability = "mock"
     metrics = ELASTICITY_METRICS
     assumptions = ELASTICITY_ASSUMPTIONS
+    conditions = ELASTICITY_CONDITIONS
     #: CG to a fixed tolerance with no randomness: same inputs, same array. Safe to cache (#47).
+    #: The load case is part of the key (#85), so two load cases on one shape are two
+    #: entries rather than one answer served to both.
     deterministic = True
     artifacts = [VTK_ARTIFACT]
     examples = [
@@ -270,15 +363,26 @@ class MockElasticity2D(Solver):
             ),
         )
         fixed_edge: Edge = Field(
-            default="xmin", description="Edge of the bounding rectangle clamped in both directions."
+            default="xmin",
+            description=(
+                "Edge of the bounding rectangle clamped in both directions. **Ignored when a "
+                "load case is supplied** (#85): conditions on named boundaries replace this "
+                "and `load_edge` entirely rather than adding to them."
+            ),
         )
         load_edge: Edge = Field(
             default="xmax",
-            description="Edge the traction is applied to; must differ from `fixed_edge`.",
+            description=(
+                "Edge the traction is applied to; must differ from `fixed_edge`. Ignored "
+                "when a load case is supplied."
+            ),
         )
         traction: tuple[float, float] = Field(
             default=(0.0, -1.0e6),
-            description="Uniform traction on `load_edge` as [tx, ty] in Pa (force per unit area).",
+            description=(
+                "Uniform traction on `load_edge` as [tx, ty] in Pa (force per unit area). "
+                "Ignored when a load case is supplied; use `traction_x` / `traction_y` there."
+            ),
         )
         iterations: int = Field(default=4000, ge=10, le=60000)
         report_every: int = Field(default=100, ge=1)
@@ -345,15 +449,32 @@ class MockElasticity2D(Solver):
         )
 
         tolerance = 1e-9 * min(xmax - xmin, ymax - ymin)
-        free = np.ones(n_dof)
-        clamped = edge_nodes(points, geometry.bounds, params.fixed_edge, tolerance)
-        free[2 * clamped] = 0.0
-        free[2 * clamped + 1] = 0.0
+        if ctx.conditions:
+            # Total precedence, not a merge: see the module docstring. The two edge
+            # parameters keep their defaults and go unread.
+            free, rhs = apply_conditions(
+                geometry, ctx.conditions, points, triangles, n_dof
+            )
+        else:
+            free = np.ones(n_dof)
+            clamped = edge_nodes(points, geometry.bounds, params.fixed_edge, tolerance)
+            free[2 * clamped] = 0.0
+            free[2 * clamped + 1] = 0.0
+            rhs = self._edge_traction(points, geometry.bounds, params, tolerance, n_dof)
 
-        rhs = self._edge_traction(points, geometry.bounds, params, tolerance, n_dof)
+        # Both checks apply to either route, and both catch a well-posedness failure that
+        # would otherwise come back as a plausible-looking field. Without a restraint the
+        # stiffness matrix is singular and CG wanders off along a rigid-body mode; without a
+        # load the answer is zero everywhere, which reads as "this structure is fine".
+        if np.all(free > 0):
+            raise ValueError(
+                "nothing is restrained, so the problem is singular and only a rigid-body "
+                "motion satisfies it; fix at least one boundary"
+            )
         if not np.any(rhs[free > 0]):
             raise ValueError(
-                "the traction produced no load on any free node; check `load_edge` and `traction`"
+                "the traction produced no load on any free node; check the loaded boundary "
+                "and its traction"
             )
 
         solution, residual, iterations = conjugate_gradients(

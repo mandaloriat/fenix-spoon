@@ -94,12 +94,22 @@ def cache_key(
     geometry: dict[str, Any],
     params: dict[str, Any],
     environment: dict[str, str],
+    conditions: dict[str, dict[str, float]] | None = None,
 ) -> str:
     """The identity of one solve: a hex digest over its canonical inputs.
 
     Labelled with :data:`SCHEME` and with each part named, so the digest cannot collide
     between two different arrangements of the same bytes — `{"a": "bc"}` and `{"ab": "c"}`
     serialise differently here even though a naive concatenation would not distinguish them.
+
+    ``conditions`` is the resolved load case (#85), and it is **part of the identity, not
+    metadata**. Two solves of one geometry with one parameter set and two different load
+    cases are two different problems, and leaving them out here would serve the clamped
+    answer to the caller who asked about the free one — a wrong answer delivered instantly,
+    which is the single worst thing a cache can do. Omitted from the payload entirely when
+    empty, so every key computed before #85 is still the key that solve gets today: a
+    condition-free solve is what "no conditions" has always meant, and cooling the whole
+    cache to record that would buy nothing.
     """
     payload = canonical(
         {
@@ -109,6 +119,7 @@ def cache_key(
             "geometry": geometry,
             "params": params,
             "environment": environment,
+            **({"conditions": conditions} if conditions else {}),
         }
     )
     return hashlib.sha256(payload.encode()).hexdigest()[:DIGEST_CHARS]

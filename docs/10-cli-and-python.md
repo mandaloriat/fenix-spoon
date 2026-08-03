@@ -45,6 +45,18 @@ $ echo '[{"op":"replace","path":"/params/resolution","value":128}]' \
     | fenix-spoon object patch design:d-1
 ```
 
+The document an inline `job submit` reads is the whole request, so a load case travels with
+the geometry it applies to:
+
+```console
+$ cat cantilever.json
+{"geometry": {"type": "regions2d", "bounds": [0, -0.05, 1, 0.05], "...": "...",
+              "boundaries": [{"name": "root", "select": {"type": "near", "axis": "x", "value": 0}},
+                             {"name": "tip",  "select": {"type": "near", "axis": "x", "value": 1}}]},
+ "conditions": {"root": {"fixed": 1}, "tip": {"traction_y": -1.0e6}}}
+$ fenix-spoon job submit --solver mock.elasticity2d --json < cantilever.json
+```
+
 ### `job submit` waits
 
 **By default, `job submit` and `study run` block until the work is finished.** That is not a
@@ -123,7 +135,9 @@ session is not held open by it; `close()` (or the context manager) stops it dete
 Every method is a call into the same core with a loop around it where one is needed. The
 validation, the errors, the object ids, the quotas and the result cache are the ones every
 other transport gets, because they are the same objects — which is why
-`fs.submit(...)` twice with the same inputs returns the same job the second time.
+`fs.submit(...)` twice with the same inputs returns the same job the second time — and the
+load case is one of those inputs, so two load cases on one shape are two jobs rather than one
+answer served to both.
 
 Identity is not bypassed in-process either: `open_workspace(principal="alice")` and
 `principal="bob"` cannot see each other's objects.

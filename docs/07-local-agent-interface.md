@@ -154,8 +154,8 @@ The workspace holds typed objects with stable identifiers of the form `<type>:<i
 |---|---|---|
 | `geometry` | a payload of a protocol geometry kind (`domain2d`, `regions2d`, …) | validated by the existing pydantic models |
 | `material` | named scalar properties (`mu_r`, `k`, `rho`, …) | the open-dict convention of `regions2d.material`, promoted to a reusable object |
-| `boundary_condition` | a named condition bound to a boundary tag | today implicit in each solver's params; needs a schema before it can be an object |
-| `load_case` | a set of sources/loads applied to a design | groups current densities, inlet velocities, thermal loads |
+| `boundary_condition` | a named condition bound to a boundary tag | still thin: what this was reaching for turned out to be `load_case`, and nothing reads this type |
+| `load_case` | what happens on each boundary the geometry names — `{"root": {"fixed": 1}}` | validated since #85; the keys are open per capability, and each capability declares the ones it reads |
 | `design` | a geometry reference + material/BC/load-case references + solver params | the unit an iteration patches |
 | `study` | a study kind + its base design + a variation spec | orchestrates several jobs |
 | `job` | one submitted solve | **already exists and is already durable** (`JobRecord` in `store.py`) |
@@ -288,15 +288,16 @@ Unchanged in substance from the HTTP path — the same execution backend, the sa
 wall-clock timeout, cell budget and sequence-numbered event replay. What changes for a local
 caller:
 
-- **Submission takes references.** `job.submit` with a `design` id resolves geometry, materials and
-  params from the workspace; an inline geometry is still accepted for one-shot use.
+- **Submission takes references.** `job.submit` with a `design` id resolves geometry, materials,
+  load cases and params from the workspace; an inline geometry — with an inline `conditions` map
+  beside it, since #85 — is still accepted for one-shot use.
 - **Progress is opt-in.** An agent that does not want twenty progress ticks in its context submits,
   then polls `job.get`, or subscribes with a coarser cadence. The stream exists; it is not pushed
   at a caller that did not ask.
 - **Completion produces a `result` object**, not a payload. `job.get` on a finished job returns
   status, the result id, its metrics and diagnostics — not fields.
 - **Equivalent jobs may not run at all.** *(Implemented, #47.)* With a content-addressed identity
-  (geometry + solver + its declared version + params + environment), a resubmission of something
+  (geometry + solver + its declared version + params + load case + environment), a resubmission of something
   already computed returns the job that already ran and says so in the provenance
   (`cached: true`). This is the single biggest lever on both compute cost and context cost in an
   iterative loop. Two departures from the sketch above, both deliberate: **caching is opt-in per
@@ -495,7 +496,15 @@ know whether the decision still holds.
 | **MCP resource exposure** *(both shipped, question still open)* | artifacts as MCP resources vs tool-returned paths vs both | #49 ships **both** and deliberately does not close this. The deciding evidence this row asks for — real host behaviour — is precisely what a test suite cannot produce, so closing it on the specification alone would be answering a different question. What is settled is one sub-case, on grounds that do not need a host: **a large artifact is described, not base64-encoded**. Base64 makes a file a third larger and delivers it into a context window that cannot use it, so a resource read returns path, size and content type; small text artifacts (<64 kB) arrive inline. What remains open is whether hosts in practice reach for the resource or the path, and that wants a host to watch. |
 | ~~**Study vs optimization boundary**~~ **→ a study's job list is a pure function of its object revision** | how much belongs in the M2.5 study service | settled by the first study kind, as this row asked. The test is not "does it enumerate" — that is a description, and descriptions blur — but a property you can check: given `study:s-1@2` you can say which solves it implies **without running any of them**. An optimizer cannot promise that, because its second point depends on the first one's answer. The line lands where this row wanted it: everything an external driver would otherwise reimplement (fan-out, cache reuse, per-job budget and quota, collecting compact results) is inside, and choosing the next point is outside. It also does real work — it is why a study stays reproducible under §8's rules while overriding a design's parameters, which `job.submit` may not do: the override is `values[i]` applied to `parameter`, both frozen in the study revision, so a rung's parameters are a pure function of *(study revision, rung index)*. |
 
-Two further questions are worth naming even though they are not blocking: how a capability declares
-its metrics without every adapter reimplementing the plumbing, and whether `boundary_condition` and
-`load_case` can be schematized generically or must stay solver-specific for now. Both are answered
-by the next physics capability that has to be modelled, not by argument.
+Two further questions were worth naming even though they were not blocking: how a capability
+declares its metrics without every adapter reimplementing the plumbing, and whether
+`boundary_condition` and `load_case` can be schematized generically or must stay solver-specific
+for now. Both said they would be answered by the next physics capability that had to be modelled,
+and both were: #46 for the metrics, and the elasticity pair (#81) for the load case, whose
+conditions were the first that could not be inferred from the shape.
+
+The answer to the second is a split rather than a yes or a no. The **structure** generalises — a
+map of boundary name to scalars, resolved against boundaries the geometry names — and the
+**vocabulary** does not, so it stays per capability and each one declares its own keys (#85). A
+typed enum of condition kinds would have been the generic schema this row was asking after, and
+it would have made every new physics a protocol change.

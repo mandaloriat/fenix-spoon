@@ -241,19 +241,20 @@ class Session:
         solver: str | None = None,
         geometry: Geometry | dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
+        conditions: dict[str, dict[str, float]] | None = None,
     ) -> Job:
-        """Solve a design by reference, or an inline solver + geometry.
+        """Solve a design by reference, or an inline solver + geometry and load case.
 
         Returns as soon as the work is accepted — call :meth:`Job.wait` to block. The two
         forms are mutually exclusive for the reason the JSON-RPC binding gives: a caller that
         passes both has two intents in one request, and honouring one silently produces a job
         whose inputs are not what it thinks.
         """
-        inline = solver is not None or geometry is not None
+        inline = solver is not None or geometry is not None or bool(conditions)
         if design is not None and inline:
             raise ValueError(
-                "pass either `design` or `solver` + `geometry`, not both: a design already "
-                "names its solver and geometry"
+                "pass either `design` or `solver` + `geometry` + `conditions`, not both: a "
+                "design already names its solver, its geometry and its load cases"
             )
         if design is not None:
             return Job(self, self._run(self.core.submit_design(design, self.principal)).id)
@@ -268,7 +269,9 @@ class Session:
             else TypeAdapter(Geometry).validate_python(geometry)
         )
         job = self._run(
-            self.core.submit(solver, parsed, params or {}, self.principal)
+            self.core.submit(
+                solver, parsed, params or {}, self.principal, conditions=conditions
+            )
         )
         return Job(self, job.id)
 

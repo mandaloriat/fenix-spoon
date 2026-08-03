@@ -211,6 +211,39 @@ class MetricSpec(BaseModel):
         return self
 
 
+class ConditionSpec(BaseModel):
+    """A boundary-condition key this capability reads from a load case (issue #85).
+
+    A load case is an open map of scalars, exactly like ``Region2D.material``, because a
+    typed enum of condition kinds would put physics into the protocol and every new physics
+    would become a protocol change. That openness has one cost #85 named explicitly: **a
+    material key typo is silently ignored today, and a boundary-condition typo must not
+    be.** So an adapter declares the keys it reads, the way it already declares its metrics
+    and its assumptions, and a key nothing declares is refused at submit.
+
+    That makes the declaration load-bearing rather than documentation: it is the *only*
+    thing standing between `traction_y: -1e6` and `tracton_y: -1e6`, and the second one
+    would otherwise produce an unloaded structure that solves perfectly happily and reports
+    zero stress.
+
+    ``kind`` is the discretization classification — imposed value, imposed flux, or a mix —
+    rather than a physics vocabulary. It is what lets a form builder group restraints apart
+    from loads without knowing what elasticity is.
+    """
+
+    name: str = Field(description="Key as it appears in a load case, e.g. `traction_x`.")
+    unit: str = Field(description='Unit as a display string — `"Pa"`, `"K"`; `"1"` for a flag.')
+    description: str = Field(description="What setting it does, in one line.")
+    kind: Literal["dirichlet", "neumann", "robin"] = Field(
+        description=(
+            "How it enters the problem: `dirichlet` imposes the unknown itself, `neumann` "
+            "imposes its flux, `robin` relates the two. A classification of the condition, "
+            "not of the physics — which is why it can be a closed set here when the keys "
+            "themselves deliberately are not."
+        )
+    )
+
+
 class Assumption(BaseModel):
     """A modelling assumption in force, and where it stops applying (issue #70).
 
@@ -419,11 +452,30 @@ class SolverContext:
         progress_cb: Callable[[ProgressEvent], None],
         cancel_event: threading.Event | None = None,
         artifact_dir: Path | None = None,
+        conditions: dict[str, dict[str, float]] | None = None,
     ) -> None:
         self._progress_cb = progress_cb
         self._cancel_event = cancel_event or threading.Event()
         self._artifact_dir = artifact_dir
         self._artifacts: list[dict[str, Any]] = []
+        self.conditions: dict[str, dict[str, float]] = dict(conditions or {})
+        """What the load case says happens on each named boundary (issue #85).
+
+        Keyed by a boundary name the geometry declares, so an adapter turns one into a
+        predicate with :func:`fenixspoon.boundaries.predicate` and hands *that* to whatever
+        it uses to select entities. Empty — the default, and the only thing every adapter
+        shipped before #85 ever saw — means the caller supplied no load case and the
+        adapter's own parameters govern.
+
+        Here rather than in ``params`` because a load case is a workspace object of its own
+        and a design references it the way it references a geometry: putting it in the
+        params model would make it part of each adapter's schema, so two adapters for one
+        physics would spell it two ways, and a caller could not reuse one set of restraints
+        across a family of shapes without rewriting it per capability.
+
+        Already validated by the time it arrives: every boundary named here is one the
+        geometry declares, and every key is one this capability declared in
+        :attr:`Solver.conditions`. An adapter reads it without re-checking."""
 
     def progress(self, event: ProgressEvent) -> None:
         self._progress_cb(event)
@@ -559,6 +611,14 @@ class Solver(ABC):
     #: `test_every_shipped_adapter_declares_its_assumptions` refuses it for the adapters in
     #: this repository.
     assumptions: ClassVar[list[Assumption]] = []
+
+    #: Boundary-condition keys it reads from a load case. See :class:`ConditionSpec`.
+    #:
+    #: Empty means this capability takes no load case at all, and that is enforced rather
+    #: than merely reported: submitting one to a capability that declares nothing is
+    #: refused. Silently ignoring it would answer a different problem than the caller
+    #: described — the failure #85 exists to make impossible.
+    conditions: ClassVar[list[ConditionSpec]] = []
 
     #: Files it may write. See :class:`ArtifactSpec`.
     artifacts: ClassVar[list[ArtifactSpec]] = []

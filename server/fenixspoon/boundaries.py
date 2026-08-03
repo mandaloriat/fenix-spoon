@@ -10,6 +10,13 @@ mock working on a raster. One resolution, two consumers, no chance of the pair d
 about which edge was meant — which is the same reasoning that put the elasticity stress
 post-processing in one place.
 
+**`(2, N)` is the minimum, not the requirement.** dolfinx hands its locators a `(3, N)`
+array — every mesh is embedded in three dimensions there, whatever its topological
+dimension — so every predicate built here reads the first two rows and ignores anything
+below them. Getting this wrong is not a subtle error: a `(3, N)` array reaches a two-row
+subtraction and raises, so the FEniCSx half of a pair would fail on the geometry the mock
+half solved.
+
 ## Why a predicate rather than a list of entities
 
 A list would have to be a list *of something*: vertex indices on the raster, facet tags on
@@ -114,7 +121,7 @@ def _segments_predicate(ids: list[str], geometry):
     span = _extent(geometry)
 
     def test(x):
-        coords = np.asarray(x, dtype=float)
+        coords = _planar(x)
         hit = np.zeros(coords.shape[1], dtype=bool)
         for start, end in segments:
             hit |= _distance_to_segment(coords, start, end) <= SEGMENT_TOLERANCE * span
@@ -153,13 +160,23 @@ def _outline_predicate(polygon: Polygon2D, span: float):
     edges = [(points[i], points[(i + 1) % len(points)]) for i in range(len(points))]
 
     def test(x):
-        coords = np.asarray(x, dtype=float)
+        coords = _planar(x)
         hit = np.zeros(coords.shape[1], dtype=bool)
         for start, end in edges:
             hit |= _distance_to_segment(coords, start, end) <= SEGMENT_TOLERANCE * span
         return hit
 
     return test
+
+
+def _planar(x) -> np.ndarray:
+    """The first two rows of a coordinate array, as float.
+
+    dolfinx passes `(3, N)` to a locator and this package's mocks pass `(2, N)`; both mean
+    the same points to a 2-D geometry. Taken in one helper so the two callers that do
+    per-point arithmetic cannot disagree about it.
+    """
+    return np.asarray(x, dtype=float)[:2]
 
 
 def _extent(geometry) -> float:

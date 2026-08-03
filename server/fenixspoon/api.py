@@ -58,6 +58,16 @@ class JobRequest(BaseModel):
     params: dict[str, Any] = Field(
         default={}, description="Solver parameters, validated against that solver's schema."
     )
+    conditions: dict[str, dict[str, float]] = Field(
+        default={},
+        description=(
+            "An inline load case (protocol 1.9, #85): boundary name to the condition keys "
+            "in force there. Every name must be one this geometry's `boundaries` declares, "
+            "and every key one the capability declares in its `conditions` section — both "
+            "are refused rather than ignored. Omit it to let the solver's own parameters "
+            "govern, which is what every capability shipped before #85 does."
+        ),
+    )
 
 
 class JobCreated(BaseModel):
@@ -195,7 +205,9 @@ async def create_job(
     request: Request,
     principal: CurrentPrincipal,
 ) -> JobCreated:
-    job = await _core(request).submit(req.solver, req.geometry, req.params, principal)
+    job = await _core(request).submit(
+        req.solver, req.geometry, req.params, principal, conditions=req.conditions
+    )
     return JobCreated(job_id=job.id, status=job.status, cached=job.reused > 0)
 
 

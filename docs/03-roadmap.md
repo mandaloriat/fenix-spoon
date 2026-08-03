@@ -126,7 +126,10 @@ the seams a second caller needs. The design specification is
       workspace outlives the results computed from it, and keeps enough to recompute.
       *`boundary_condition`, `load_case` and `study` stay **thin and unvalidated**.* No shipped
       solver has a boundary condition separable from its params, so a generic schema today
-      would generalise from zero examples. Said out loud rather than invented.
+      would generalise from zero examples. Said out loud rather than invented. (Two of the
+      three have since left that list, each when a capability arrived that needed it: `study`
+      in #48, `load_case` in #85. `boundary_condition` is still thin — and now the type with
+      no user, since a load case is what it was reaching for.)
       *Scope: core only, no HTTP routes.* The workspace's first transport is #45; binding it to
       HTTP now would mean designing an object API that JSON-RPC may want differently, so
       `/api/v1` is unchanged apart from `environment.inspect` gaining the workspace path #43

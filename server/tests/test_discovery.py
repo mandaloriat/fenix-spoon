@@ -507,6 +507,16 @@ def test_paired_adapters_declare_the_same_metrics():
             f"adapters for {physics} declare different metrics: "
             + ", ".join(f"{cls.name}={[m.name for m in cls.metrics]}" for cls in adapters)
         )
+        # Same argument, one level further in (#85). A load case is authored against a
+        # capability's declared keys, so a pair that spelled `traction_y` two ways would
+        # make switching adapters mean rewriting the load case — and the refusal for an
+        # undeclared key would turn a working design into a 422 on the other half of a
+        # pair the gallery calls interchangeable.
+        spellings = {tuple(c.name for c in cls.conditions) for cls in adapters}
+        assert len(spellings) == 1, (
+            f"adapters for {physics} read different condition keys: "
+            + ", ".join(f"{cls.name}={[c.name for c in cls.conditions]}" for cls in adapters)
+        )
 
 
 # ---------------------------------------------------------------------- assumptions (#70)

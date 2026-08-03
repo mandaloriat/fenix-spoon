@@ -68,9 +68,16 @@ class ExecutionBackend(ABC):
         solver_cls: type[Solver],
         geometry: Geometry,
         params: BaseModel,
+        conditions: dict[str, dict[str, float]],
         on_finish=None,
     ) -> None:
-        """Begin executing a job that has already been persisted as ``queued``."""
+        """Begin executing a job that has already been persisted as ``queued``.
+
+        ``conditions`` is the resolved load case (#85): a third input to the solve beside
+        the geometry and the params, and passed alongside them rather than stored on the
+        record for the same reason they are not — the record says what a job *is*, and
+        these three say what it runs on.
+        """
 
     @abstractmethod
     async def cancel(self, job_id: str) -> None:
@@ -112,7 +119,9 @@ class InProcessBackend(ExecutionBackend):
         self._cancels: dict[str, threading.Event] = {}
         self._tasks: set[asyncio.Task] = set()
 
-    async def start(self, record, solver_cls, geometry, params, on_finish=None) -> None:
+    async def start(
+        self, record, solver_cls, geometry, params, conditions=None, on_finish=None
+    ) -> None:
         cancel_event = threading.Event()
         self._cancels[record.id] = cancel_event
         sink = EventSink(self._store, self._bus, record.id, mirror=record.events)
@@ -124,6 +133,7 @@ class InProcessBackend(ExecutionBackend):
                     solver_cls,
                     geometry,
                     params,
+                    conditions=conditions or {},
                     store=self._store,
                     sink=sink,
                     artifact_dir=self._data_dir / record.id,
@@ -176,7 +186,9 @@ class ArqBackend(ExecutionBackend):
             self._pool = await create_pool(RedisSettings.from_dsn(self.redis_url))
         return self._pool
 
-    async def start(self, record, solver_cls, geometry, params, on_finish=None) -> None:
+    async def start(
+        self, record, solver_cls, geometry, params, conditions=None, on_finish=None
+    ) -> None:
         del on_finish  # nothing to hand back: the outcome lands in the shared store
         pool = await self._ensure_pool()
         # Send the geometry and params as JSON rather than pickled models: the worker
@@ -188,6 +200,9 @@ class ArqBackend(ExecutionBackend):
             solver_cls.name,
             geometry.model_dump(mode="json"),
             json.loads(params.model_dump_json()),
+            # Trailing rather than inserted, and defaulted on the worker side, so a message
+            # enqueued by an API that predates #85 still runs on a worker that does not.
+            conditions or {},
             _job_id=record.id,
         )
 

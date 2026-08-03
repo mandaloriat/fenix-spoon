@@ -99,7 +99,7 @@ vocabulary costs a few hundred bytes rather than every method's schema.
 | `object.revisions` | which revisions exist |
 | `object.patch` | apply an RFC 6902 patch, return the new revision |
 | `design.resolve` | what a design resolves to, without submitting |
-| `job.submit` | solve a design, or an inline solver + geometry |
+| `job.submit` | solve a design, or an inline solver + geometry + load case |
 | `job.get` | status, and metrics once finished |
 | `job.list` | this principal's history |
 | `job.cancel` | cooperative cancellation |

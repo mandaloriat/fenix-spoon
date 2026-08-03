@@ -19,6 +19,7 @@ import numpy as np
 import pytest
 from geometries import BEAM, PLATE_WITH_HOLE, UNIFORM_BEAM
 
+from fenixspoon.geometry import BoundarySpec, BoxSelector, NearSelector, PartSelector
 from fenixspoon.solvers import fill_declared_metrics, get_solver
 from fenixspoon.solvers.base import SolverContext
 from fenixspoon.solvers.mock_elasticity import MockElasticity2D
@@ -29,13 +30,20 @@ LENGTH = 1.0
 DEPTH = 0.1
 
 
-def run(solver_cls, geometry, **params):
-    """Solve directly and fill the declared metrics, which is what a caller would receive."""
+def run(solver_cls, geometry, conditions=None, **params):
+    """Solve directly and fill the declared metrics, which is what a caller would receive.
+
+    ``conditions`` is the resolved load case (#85), handed over on the context exactly as the
+    job runner hands it over — so a test that supplies one exercises the same path a
+    submission does, minus the transport.
+    """
     import tempfile
     from pathlib import Path
 
     ctx = SolverContext(
-        progress_cb=lambda event: None, artifact_dir=Path(tempfile.mkdtemp())
+        progress_cb=lambda event: None,
+        artifact_dir=Path(tempfile.mkdtemp()),
+        conditions=conditions,
     )
     result = solver_cls().solve(
         geometry, solver_cls.Params(write_vtk=False, **params), ctx
@@ -179,20 +187,27 @@ def test_the_same_edge_cannot_be_clamped_and_loaded():
 
 
 def test_the_declared_assumptions_say_where_the_load_can_go():
-    """#81's open question, declared rather than left in the source.
+    """#81's open question, declared rather than left in the source — and #85's answer to it.
 
-    A caller has no other way to discover that a load cannot be put on a hole boundary or on
-    part of an edge — and the whole point of the `assumptions` section is that such a limit
-    is discoverable before a solve, not after a surprising result.
+    A caller has no other way to discover where a load may be put, and the whole point of the
+    `assumptions` section is that such a limit is discoverable before a solve rather than
+    after a surprising result. So when #85 *removed* two of those limits, this declaration had
+    to move with the code: `partial_edge_load` and `hole_boundary_load` are reachable through
+    a load case, and leaving them in `excludes` would tell a caller no about something the
+    server will now do.
+
+    `point_load` stayed, because neither route offers it: a traction is a load per unit
+    length, and a concentrated force is not expressible either way.
     """
-    names = {assumption.name for assumption in MockElasticity2D.assumptions}
-    assert "edge_aligned_boundary_conditions" in names
     edge_rule = next(
         assumption
         for assumption in MockElasticity2D.assumptions
         if assumption.name == "edge_aligned_boundary_conditions"
     )
-    assert {"partial_edge_load", "hole_boundary_load", "point_load"} <= set(edge_rule.excludes)
+    assert set(edge_rule.excludes) == {"point_load"}
+    # Narrowed rather than deleted, which means the statement now has to describe both
+    # regimes — `Assumption.when` gates on a param, and a load case is not one.
+    assert "load case" in edge_rule.statement
 
 
 # ------------------------------------------------------------------ the FEniCSx adapter
@@ -249,3 +264,120 @@ def test_the_pair_agrees_on_a_case_neither_of_them_defines():
 
     assert mock.metrics["u_max"] == pytest.approx(fenics.metrics["u_max"], rel=0.1)
     assert set(mock.metrics) == set(fenics.metrics)
+
+
+# ------------------------------------------------------------------- load cases (#85)
+
+
+def named(geometry, *boundaries):
+    """The same geometry with named boundaries, so a load case has something to refer to."""
+    return geometry.model_copy(update={"boundaries": list(boundaries)})
+
+
+def edge(name: str, axis: str, value: float) -> BoundarySpec:
+    return BoundarySpec(name=name, select=NearSelector(axis=axis, value=value, tol=1e-9))
+
+
+@pytest.mark.fenics
+def test_the_fenicsx_load_case_reproduces_its_own_edge_shorthand():
+    """The claim that keeps `fixed_edge` / `load_edge` defensible on this half of the pair.
+
+    #85 kept the two parameters as the shorthand for the common case, which is only honest if
+    they mean the same thing as naming the same boundaries explicitly. The two routes take
+    genuinely different paths through dolfinx — a `conditional` in the form against facet
+    tags and a tagged `ds` measure, `locate_dofs_geometrical` on an edge locator against the
+    same call on a selector-built predicate — so agreement is a real check rather than a
+    tautology, and the tolerance can be tight because the mesh and the space are identical.
+    """
+    beam = named(UNIFORM_BEAM, edge("root", "x", 0.0), edge("tip", "x", 1.0))
+    shared = dict(mesh_size=0.02, degree=2)
+    shorthand = run(
+        fenicsx(), beam, traction=(0.0, -1.0e6), fixed_edge="xmin", load_edge="xmax", **shared
+    )
+    load_case = run(
+        fenicsx(),
+        beam,
+        conditions={"root": {"fixed": 1}, "tip": {"traction_y": -1.0e6}},
+        **shared,
+    )
+    assert load_case.metrics["u_max"] == pytest.approx(shorthand.metrics["u_max"], rel=1e-9)
+    assert load_case.metrics["sigma_vm_max"] == pytest.approx(
+        shorthand.metrics["sigma_vm_max"], rel=1e-9
+    )
+
+
+@pytest.mark.fenics
+def test_the_fenicsx_adapter_can_hang_a_plate_from_its_hole():
+    """The limit `edge_aligned_boundary_conditions` used to exclude, on the adapter that can
+    actually honour it.
+
+    A plate suspended from a pin is the commonest lug in existence and was inexpressible
+    before #85: the restraint had to be a side of the bounding rectangle. The mock cannot
+    check this — it masks the hole out of a Cartesian grid, so no node lies on the rim — and
+    that asymmetry is the reason this test lives here rather than beside the others.
+
+    Asserted where it is decisive: zero displacement on the hole, non-zero on the loaded
+    edge. Anything less would pass for a condition that landed somewhere else.
+    """
+    plate = named(
+        PLATE_WITH_HOLE,
+        BoundarySpec(name="pin", select=PartSelector(of="obstacle")),
+        edge("right", "x", 1.0),
+    )
+    result = run(
+        fenicsx(),
+        plate,
+        mesh_size=0.05,
+        degree=2,
+        conditions={"pin": {"fixed": 1}, "right": {"traction_x": 1.0e6}},
+    )
+    points = np.asarray(result.data["points"], dtype=float)
+    magnitude = np.asarray(result.data["point_fields"]["u_mag"], dtype=float)
+    on_the_rim = np.hypot(points[:, 0], points[:, 1]) < 0.105
+    assert on_the_rim.any(), "the mesh must have nodes on the hole"
+    assert magnitude[on_the_rim].max() == pytest.approx(0.0, abs=1e-15)
+    assert magnitude[points[:, 0] > 0.99].min() > 0.0
+
+
+@pytest.mark.fenics
+def test_a_fenicsx_roller_leaves_the_uniform_tension_field_uniform():
+    """`fixed_x` through a dolfinx sub-space, checked by the state it is supposed to permit.
+
+    Holding both components of a symmetry plane forbids the Poisson contraction along it and
+    stiffens the answer; holding only the normal one does not. Uniform tension is the state
+    that makes the difference visible, because the exact solution is a constant and any
+    over-constraint shows up as a peak at the restraint.
+
+    Loose relative to the mock's version of this test — a quadratic space on an unstructured
+    mesh reports the constant field to solver tolerance, but `sigma_vm_max` is recovered
+    through the P1 nodal averaging both adapters share, which smooths across cells of
+    unequal size.
+    """
+    stress = 1.0e6
+    plate = named(
+        UNIFORM_BEAM,
+        edge("left", "x", 0.0),
+        edge("right", "x", 1.0),
+        BoundarySpec(name="anchor", select=BoxSelector(bounds=(-1e-9, -0.051, 1e-9, -0.049))),
+    )
+    rolled = run(
+        fenicsx(),
+        plate,
+        mesh_size=0.02,
+        degree=2,
+        conditions={
+            "left": {"fixed_x": 1},
+            "anchor": {"fixed_y": 1},
+            "right": {"traction_x": stress},
+        },
+    )
+    assert rolled.metrics["sigma_vm_max"] == pytest.approx(stress, rel=0.02)
+
+    clamped = run(
+        fenicsx(),
+        plate,
+        mesh_size=0.02,
+        degree=2,
+        conditions={"left": {"fixed": 1}, "right": {"traction_x": stress}},
+    )
+    assert clamped.metrics["sigma_vm_max"] > 1.05 * stress
