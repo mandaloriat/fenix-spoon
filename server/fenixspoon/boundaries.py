@@ -90,8 +90,11 @@ def governed_by_load_case(ctx, params, shorthand: tuple[str, ...]) -> bool:
         return False
     stated = [name for name in shorthand if name in params.model_fields_set]
     if stated:
+        # Joined by hand rather than interpolated: this string reaches a caller as a job's
+        # `error`, and `['load_edge']` is a Python repr leaking into an engineering message.
+        named = ", ".join(f"`{name}`" for name in stated)
         raise ValueError(
-            f"this job carries a load case and also sets {stated}: the load case puts the "
+            f"this job carries a load case and also sets {named}: the load case puts the "
             "conditions on boundaries the geometry names, and those parameters put them on "
             "edges of the bounding rectangle. Send one or the other."
         )

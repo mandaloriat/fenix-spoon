@@ -47,10 +47,11 @@ and the FEniCSx solver.
 > 50 concurrent clients. What remains for M3 is deployment packaging — see the
 > [roadmap](docs/03-roadmap.md).
 >
-> **The wire protocol is at 1.8.** The last three minors came from adding physics rather than
+> **The wire protocol is at 1.9.** The last four minors came from adding physics rather than
 > from planning: a transient needed a metric to say what it is taken over (1.6) and a way to
 > index its instants (1.7), and elasticity needed a geometry that can *name* pieces of its own
-> boundary (1.8). Every one is additive — a 1.0 client still works.
+> boundary (1.8) and a load case to say what happens there (1.9). Every one is additive — a
+> 1.0 client still works.
 
 ## Why
 

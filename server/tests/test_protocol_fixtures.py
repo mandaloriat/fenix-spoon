@@ -62,26 +62,36 @@ def test_the_corpus_and_the_server_agree_on_the_protocol_version():
     )
 
 
-def test_the_changelog_states_the_current_protocol():
-    """The number in the changelog's preamble is the one the server speaks.
+#: Prose that states the protocol version, and the pattern that reads the number out of it.
+#: Every entry is a place a *person* learns what this server speaks, which is exactly the kind
+#: of claim nothing else checks — no code imports a markdown preamble.
+#:
+#: The list has two entries because one was not enough, and the way that was discovered is
+#: worth keeping: the CHANGELOG check was added *because* its number had drifted three minors
+#: behind, and the README then drifted one commit later, in the very change that introduced the
+#: check. A guard aimed at one file taught nothing about the others. Anything that says the
+#: version in words belongs here.
+PROSE_CLAIMS = {
+    "CHANGELOG.md": r"`MAJOR\.MINOR`, currently ([0-9]+\.[0-9]+)\)",
+    "README.md": r"\*\*The wire protocol is at ([0-9]+\.[0-9]+)\.\*\*",
+}
 
-    A fourth place the version lives, and the one with no reader to keep it honest: nothing
-    imports a markdown preamble, so it drifted three minors behind — 1.5 while the server was
-    at 1.8 — with every other tripwire green. Somebody arriving at the repository reads that
-    line before any of the others, which is exactly why it was the one worth checking.
 
-    Deliberately a regex over the sentence rather than a whole-line match: the prose around it
-    should be free to change, and only the number is the claim.
+@pytest.mark.parametrize("filename", sorted(PROSE_CLAIMS))
+def test_the_prose_states_the_current_protocol(filename):
+    """A file that tells a reader the protocol version must tell them the right one.
+
+    Deliberately a regex over the sentence rather than a whole-line match: the prose around the
+    number should stay free to change, and only the number is the claim being checked.
     """
-    changelog = (FIXTURES.parents[1] / "CHANGELOG.md").read_text()
-    stated = re.search(r"`MAJOR\.MINOR`, currently ([0-9]+\.[0-9]+)\)", changelog)
+    text = (FIXTURES.parents[1] / filename).read_text()
+    stated = re.search(PROSE_CLAIMS[filename], text)
     assert stated is not None, (
-        "CHANGELOG.md no longer states the protocol version in the form this test reads; "
+        f"{filename} no longer states the protocol version in the form this test reads; "
         "restore the phrasing or update the pattern, but do not delete the claim"
     )
     assert stated.group(1) == PROTOCOL_VERSION, (
-        f"CHANGELOG.md says the protocol is {stated.group(1)}, the server says "
-        f"{PROTOCOL_VERSION}"
+        f"{filename} says the protocol is {stated.group(1)}, the server says {PROTOCOL_VERSION}"
     )
 
 
