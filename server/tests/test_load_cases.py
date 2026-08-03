@@ -235,6 +235,72 @@ def test_a_capability_that_reads_no_conditions_refuses_a_load_case(core, me):
     assert "no boundary-condition keys at all" in caught.value.detail
 
 
+def test_two_loaded_boundaries_cannot_claim_the_same_stretch(core, me):
+    """Found by review of #85, and it is the pair disagreeing that made it visible.
+
+    Selectors are not required to be disjoint — `near` and `part` will happily both find a
+    corner — so a caller reaches this by accident rather than by trying. The FEniCSx adapter
+    already refused an overlap; the mock silently *summed*, so the shared stretch carried a
+    load that was the sum of two the caller never asked to add, with nothing saying so.
+
+    Refused rather than summed, because superposition is a real thing to want and this is not
+    it: the intent "`traction_x` on this stretch" has one value, so two is a contradiction
+    rather than a total. Both adapters now refuse in the same words, from one constant.
+    """
+    overlapping = named_beam(
+        near("root", "x", 0.0),
+        near("tip", "x", LENGTH),
+        # The whole outer boundary, which includes the tip. Legal, and a natural thing to
+        # write for "pressurise the outside" — right up until the tip is also loaded.
+        BoundarySpec(name="skin", select=PartSelector(of="outer")),
+    )
+    with pytest.raises(ValueError, match="cannot carry two tractions"):
+        solve(
+            overlapping,
+            {
+                "root": {"fixed": 1},
+                "tip": {"traction_y": -TRACTION},
+                "skin": {"traction_x": TRACTION},
+            },
+        )
+
+    # Restraints are exempt, and deliberately: they do not accumulate. Clamping a node
+    # through two overlapping boundaries clamps it once, so refusing that would reject a
+    # caller who named the same edge twice for readability. `foot` is a box over the root
+    # end, so it overlaps `root` node for node — and the answer is the plain cantilever.
+    doubled = named_beam(
+        near("root", "x", 0.0),
+        near("tip", "x", LENGTH),
+        BoundarySpec(name="foot", select=BoxSelector(bounds=(-0.01, -0.06, 0.01, 0.06))),
+    )
+    load = {"tip": {"traction_y": -TRACTION}}
+    both = solve(doubled, {"root": {"fixed": 1}, "foot": {"fixed_y": 1}, **load})
+    once = solve(doubled, {"root": {"fixed": 1}, **load})
+    assert tip_displacement(both) == pytest.approx(tip_displacement(once), rel=1e-12)
+
+
+def test_a_load_case_that_is_not_one_is_refused_by_shape_before_anything_else(core, me):
+    """The payload has to *be* a load case before "does this geometry declare `root`" is a
+    question, and two doors reach the check with an unvalidated map: the in-process Python
+    API, and the worker unpacking a queue message.
+
+    Without this, `{"root": 5}` reaches an adapter as an integer and raises a `TypeError`
+    from somewhere deep in NumPy — a server-shaped failure for a caller-shaped mistake.
+    Raised in review of #85; `InvalidObject` because the thing that failed is a load-case
+    body whether it arrived inline or as an object, and it already carries pydantic's
+    structured list to every transport.
+    """
+    for malformed in ({"root": 5}, {"root": {"fixed": "clamped"}}, {"root": ["fixed"]}):
+        with pytest.raises(errors.InvalidObject) as caught:
+            submit(core, me, CANTILEVER, malformed)
+        assert caught.value.object_type == "load_case"
+
+    # A string that *is* a number still parses, because pydantic coerces it — and what the
+    # solve and the cache key see is the scalar, not the string.
+    coerced = submit(core, me, CANTILEVER, {"root": {"fixed": "1"}, "tip": {"traction_y": -1e6}})
+    assert coerced.status == "done", coerced.error
+
+
 def test_a_boundary_that_selects_no_node_of_the_mesh_fails_the_solve():
     """The same failure one level down, where a name check cannot reach it.
 

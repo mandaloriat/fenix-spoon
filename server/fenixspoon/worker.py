@@ -92,9 +92,10 @@ async def solve_job(
     # Re-checked here for the same reason the geometry and params are re-validated: the API
     # checked them, but the two processes are separately deployable and can drift, and a
     # load case naming a boundary this worker's geometry model does not know about should
-    # fail loudly rather than reach an adapter that would apply it to nothing.
-    conditions = {key: dict(value) for key, value in (conditions_payload or {}).items()}
-    check_conditions(solver_cls, geometry, conditions)
+    # fail loudly rather than reach an adapter that would apply it to nothing. The shape is
+    # validated too — `check_conditions` returns the parsed mapping — so a malformed payload
+    # fails the same way a malformed geometry does instead of raising from inside an adapter.
+    conditions = check_conditions(solver_cls, geometry, conditions_payload or {})
 
     cancel_event = threading.Event()
     watcher = asyncio.create_task(_watch_for_cancel(ctx["redis"], job_id, cancel_event))

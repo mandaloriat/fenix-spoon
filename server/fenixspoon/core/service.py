@@ -252,8 +252,9 @@ class FenixSpoonCore:
         # After the params and before the cost estimate, following the order the docstring
         # sets out: a caller whose load case names a boundary that does not exist should
         # hear about that rather than about a cell budget it also happens to exceed.
-        conditions = conditions or {}
-        conditions_module.check_conditions(solver_cls, geometry, conditions)
+        # Reassigned rather than merely checked: the returned mapping is the validated one,
+        # which is what makes the cache key a digest over scalars whatever the caller sent.
+        conditions = conditions_module.check_conditions(solver_cls, geometry, conditions or {})
 
         estimate = solver_cls.estimate_cells(geometry, parsed)
         limit = self.jobs.max_cells

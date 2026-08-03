@@ -84,8 +84,9 @@ class SubmitParams(BaseModel):
         inline = self.solver is not None or self.geometry is not None or bool(self.conditions)
         if self.design is not None and inline:
             raise ValueError(
-                "pass either `design` or `solver` + `geometry` + `conditions`, not both: a "
-                "design already names its solver, its geometry and its load cases"
+                "pass either `design` or `solver` + `geometry` (with `conditions` if the "
+                "solve needs a load case), not both: a design already names its solver, its "
+                "geometry and its load cases"
             )
         if self.design is None and not (self.solver and self.geometry):
             raise ValueError("pass a `design`, or both `solver` and `geometry`")

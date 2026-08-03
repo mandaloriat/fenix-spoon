@@ -73,6 +73,23 @@ from .registry import register
 #: Which edge of the bounding rectangle a boundary condition applies to.
 Edge = Literal["xmin", "xmax", "ymin", "ymax"]
 
+#: Refused by both adapters, in the same words, when two loaded boundaries of one load case
+#: claim the same piece of the boundary.
+#:
+#: Shared as a constant rather than written twice, for the reason the metric declarations are
+#: shared: a pair that refuses the same input with two different sentences is a pair a caller
+#: has to learn twice. The FEniCSx half imports this.
+#:
+#: Refused rather than summed. Superposition is a real thing to want and this is not it — a
+#: caller who names two boundaries that happen to overlap gets a load on the shared stretch
+#: that is the sum of two it never asked to add, and nothing anywhere says so. The intent
+#: (`traction_x` on this stretch) has one value, so two is a contradiction rather than a
+#: total. Found by review of #85, where the mock summed and the FEniCSx twin already refused.
+OVERLAPPING_TRACTIONS = (
+    "two loaded boundaries of this load case claim the same piece of the boundary; a "
+    "surface cannot carry two tractions, so name them so they do not overlap"
+)
+
 
 def constitutive(e: np.ndarray, nu: np.ndarray, plane: str) -> np.ndarray:
     """The 3x3 stress-strain matrix per element, in Voigt order (xx, yy, xy).
@@ -223,6 +240,10 @@ def apply_conditions(
     failure #85 exists to prevent, one level down from the boundary-name check: the name
     resolved, the predicate was fine, and the mesh is simply too coarse to have a node
     there — which produces a solve that runs and answers a different problem.
+
+    Two *loaded* boundaries claiming one segment raise as well; see
+    :data:`OVERLAPPING_TRACTIONS`. Restraints need no such check because they do not
+    accumulate: clamping a node twice clamps it once.
     """
     from ..boundaries import predicate
 
@@ -230,6 +251,11 @@ def apply_conditions(
     rhs = np.zeros(n_dof)
     segments = boundary_segments(triangles)
     coords = np.ascontiguousarray(points.T)
+    # Which boundary has already loaded each segment, so an overlap is caught rather than
+    # summed. Selectors are not required to be disjoint — `near` and `part` will happily
+    # both find a corner — so this is a case a caller reaches by accident.
+    claimed = np.full(len(segments), -1, dtype=np.int64)
+    loaded_by: list[str] = []
 
     for name, values in conditions.items():
         selected = np.asarray(predicate(geometry, name)(coords), dtype=bool)
@@ -250,12 +276,20 @@ def apply_conditions(
         traction = (values.get("traction_x", 0.0), values.get("traction_y", 0.0))
         if not any(traction):
             continue
-        loaded = segments[selected[segments[:, 0]] & selected[segments[:, 1]]]
-        if len(loaded) == 0:
+        spans = selected[segments[:, 0]] & selected[segments[:, 1]]
+        if not spans.any():
             raise ValueError(
                 f"the boundary {name!r} carries a traction but spans no edge of this mesh; "
                 "it selects isolated nodes, and a traction is a load per unit length"
             )
+        overlap = np.nonzero(spans & (claimed >= 0))[0]
+        if overlap.size:
+            other = loaded_by[claimed[overlap[0]]]
+            raise ValueError(f"{OVERLAPPING_TRACTIONS} ({other!r} and {name!r} do)")
+        claimed[spans] = len(loaded_by)
+        loaded_by.append(name)
+
+        loaded = segments[spans]
         length = np.hypot(*(points[loaded[:, 1]] - points[loaded[:, 0]]).T)
         np.add.at(rhs, 2 * loaded, (traction[0] * length / 2.0)[:, None])
         np.add.at(rhs, 2 * loaded + 1, (traction[1] * length / 2.0)[:, None])

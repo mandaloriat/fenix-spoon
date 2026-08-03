@@ -28,18 +28,24 @@ stress, which is a wrong answer wearing a right answer's clothes.
 
 ## What is checked, and where
 
-Both refusals happen at **submit**, before a job exists, because both are the caller's
-mistake and neither is discoverable afterwards:
+Three refusals happen at **submit**, before a job exists, because each is the caller's
+mistake and none is discoverable afterwards:
 
+- a payload that is not a map of boundaries to scalars at all
+  (:class:`~fenixspoon.core.errors.InvalidObject`)
 - a boundary the geometry does not declare (:class:`~fenixspoon.core.errors.UnknownBoundary`)
 - a key the capability does not read (:class:`~fenixspoon.core.errors.UnknownConditionKey`)
 
 They are checked together in :func:`check_conditions`, which is called from
 `FenixSpoonCore.submit` — the single door every transport goes through, so an inline load
-case over JSON-RPC and a design-referenced one over HTTP are refused identically.
+case over JSON-RPC and a design-referenced one over HTTP are refused identically. The worker
+calls it too, on the payload it unpacks from the queue, for the same reason it revalidates
+the geometry and the params: the two processes are separately deployable and can drift.
 """
 
-from pydantic import BaseModel, Field
+import json
+
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
 from ..geometry import Geometry
 from ..solvers.base import Solver
@@ -50,6 +56,13 @@ from . import errors
 #: goes into the cache key — plain data, so the digest is over what was *meant* rather than
 #: over which objects happened to spell it.
 Conditions = dict[str, dict[str, float]]
+
+#: Built once, and used to check that an inbound load case *is* one. Two doors reach
+#: :func:`check_conditions` with an unvalidated payload — the in-process Python API, where
+#: the caller passes a plain dict, and the worker, which unpacks a queue message — and
+#: `{"root": 5}` reaching an adapter as an integer produces a `TypeError` from somewhere
+#: deep rather than a refusal naming the field. Raised in review of #85.
+_CONDITIONS = TypeAdapter(Conditions)
 
 
 class LoadCaseBody(BaseModel):
@@ -98,16 +111,26 @@ def merge_load_cases(cases: list[tuple[str, LoadCaseBody]]) -> Conditions:
 
 def check_conditions(
     solver_cls: type[Solver], geometry: Geometry, conditions: Conditions
-) -> None:
+) -> Conditions:
     """Refuse a load case this geometry and this capability cannot honour.
 
-    Boundaries first, then keys, because a caller that named the wrong boundary has usually
-    also written the wrong keys for it and should hear about the cause rather than the
-    symptom. Both messages name what is on offer — the geometry's declared boundaries, the
-    capability's declared keys — so the fix is visible from the error alone.
+    Returns the validated mapping, so a caller that starts from an untyped payload ends with
+    scalars rather than with whatever it was handed. Shape first — a load case has to *be*
+    one before "does this geometry declare `root`" is even a question — then boundaries, then
+    keys, because a caller that named the wrong boundary has usually also written the wrong
+    keys for it and should hear about the cause rather than the symptom. Every message names
+    what is on offer, so the fix is visible from the error alone.
     """
     if not conditions:
-        return
+        return {}
+
+    try:
+        conditions = _CONDITIONS.validate_python(conditions)
+    except ValidationError as exc:
+        # `InvalidObject` rather than a new error class: the thing that failed is a load-case
+        # body, whether it arrived as a workspace object or inline, and this already carries
+        # pydantic's structured list to every transport.
+        raise errors.InvalidObject("load_case", json.loads(exc.json())) from exc
 
     declared = [entry.name for entry in getattr(geometry, "boundaries", [])]
     for boundary in conditions:
@@ -119,3 +142,4 @@ def check_conditions(
         for key in values:
             if key not in accepted:
                 raise errors.UnknownConditionKey(solver_cls.name, boundary, key, accepted)
+    return conditions

@@ -253,8 +253,9 @@ class Session:
         inline = solver is not None or geometry is not None or bool(conditions)
         if design is not None and inline:
             raise ValueError(
-                "pass either `design` or `solver` + `geometry` + `conditions`, not both: a "
-                "design already names its solver, its geometry and its load cases"
+                "pass either `design` or `solver` + `geometry` (with `conditions` if the "
+                "solve needs a load case), not both: a design already names its solver, its "
+                "geometry and its load cases"
             )
         if design is not None:
             return Job(self, self._run(self.core.submit_design(design, self.principal)).id)

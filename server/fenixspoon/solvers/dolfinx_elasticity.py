@@ -73,6 +73,7 @@ from .dolfinx_poisson import (
     estimate_triangles,
 )
 from .mock_elasticity import (
+    OVERLAPPING_TRACTIONS,
     Edge,
     constitutive,
     nodal_average,
@@ -201,10 +202,9 @@ def traction_measure(msh, geometry, conditions) -> tuple[ufl.Measure, dict[str, 
     order = np.argsort(indices)
     indices, values_array = indices[order], np.concatenate(marks)[order]
     if len(indices) > 1 and np.any(indices[1:] == indices[:-1]):
-        raise ValueError(
-            "two loaded boundaries of this load case claim the same facet; a surface "
-            "cannot carry two tractions, so name them so they do not overlap"
-        )
+        # The same refusal the mock makes, in the same words, from the same constant: a pair
+        # that says no to one input two different ways is a pair a caller has to learn twice.
+        raise ValueError(OVERLAPPING_TRACTIONS)
     meshtags = dolfinx_mesh.meshtags(
         msh, dimension, indices.astype(np.int32), values_array
     )
