@@ -41,6 +41,38 @@ class Polygon2D(BaseModel):
             ),
         ),
     ]
+    point_ids: list[str] | None = Field(
+        default=None,
+        description=(
+            "Stable identifiers for the vertices, one per point, in the same order. Optional "
+            "and absent by default — a geometry that never names a boundary has no use for "
+            "them (protocol 1.8, #85).\n\n"
+            "They exist because *indices* cannot survive editing: insert a control point and "
+            "every index after it shifts, moving a named boundary onto a different edge with "
+            "nothing to notice. An id follows the point it was given to, which is what makes "
+            "`select: {type: points}` mean the same edge after a shape change. The same idea "
+            "the workspace already applies to objects, one level down."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _check_point_ids(self) -> "Polygon2D":
+        """One id per point, all distinct — the two properties a selector relies on.
+
+        Length is not a formality: an id list that has fallen out of step with the points is
+        worse than none at all, because a selector would resolve to the wrong vertex rather
+        than failing. Distinctness matters for the same reason.
+        """
+        if self.point_ids is None:
+            return self
+        if len(self.point_ids) != len(self.points):
+            raise ValueError(
+                f"point_ids has {len(self.point_ids)} entries for {len(self.points)} points; "
+                "there must be exactly one per point, in the same order"
+            )
+        if len(set(self.point_ids)) != len(self.point_ids):
+            raise ValueError("point_ids must be unique within one polygon")
+        return self
 
     @model_validator(mode="after")
     def _check_simple(self) -> "Polygon2D":
@@ -58,6 +90,148 @@ class Polygon2D(BaseModel):
                         f"polygon must not self-intersect (edges {i} and {j} cross)"
                     )
         return self
+
+
+class PartSelector(BaseModel):
+    """A named piece of the geometry's topology: the outer boundary, the hole, a region.
+
+    The cheapest of the three and the one that needed no invention — it is what the existing
+    adapters already do implicitly. Potential flow puts the free stream on the outer boundary
+    and a streamline on the obstacle; heat convects from every exposed face. Writing that down
+    costs nothing and makes it addressable.
+    """
+
+    type: Literal["part"] = "part"
+    of: str = Field(
+        description=(
+            "`outer` for the bounding rectangle, `obstacle` for a `domain2d` hole, or "
+            "`region:<name>` for the boundary of a named `regions2d` region."
+        )
+    )
+
+
+class PointsSelector(BaseModel):
+    """The edges spanned by named vertices — the selector that survives editing.
+
+    Vertex *indices* would not: insert a control point and every index after it shifts. An id
+    follows the point it was given to, so a clamped root stays on the same physical edge after
+    the profile changes. Requires the polygon to carry `point_ids`; a geometry without them
+    cannot be selected this way, and says so rather than guessing.
+    """
+
+    type: Literal["points"] = "points"
+    ids: Annotated[
+        list[str],
+        Field(min_length=1, description="Point ids, from the polygon's `point_ids`."),
+    ]
+
+
+class NearSelector(BaseModel):
+    """Everything within `tol` of a coordinate value — the dolfinx idiom, as data.
+
+    `np.isclose(x[0], 0.0)` is how a FEniCSx user says "the left edge", and it is the right
+    tool when the boundary is a statement about *space* rather than about the shape: a
+    symmetry plane stays the symmetry plane whatever profile is put on it.
+    """
+
+    type: Literal["near"] = "near"
+    axis: Literal["x", "y"] = Field(description="Which coordinate is being tested.")
+    value: float = Field(description="The value it must be near.")
+    tol: float = Field(default=1e-9, gt=0.0, description="Half-width of the band, in metres.")
+
+
+class BoxSelector(BaseModel):
+    """Everything inside an axis-aligned rectangle. `near` for a strip, this for a corner."""
+
+    type: Literal["box"] = "box"
+    bounds: tuple[float, float, float, float] = Field(
+        description="Inclusive `[xmin, ymin, xmax, ymax]`."
+    )
+
+    @model_validator(mode="after")
+    def _check(self) -> "BoxSelector":
+        _check_bounds(self.bounds)
+        return self
+
+
+class AllOfSelector(BaseModel):
+    """Intersection of the selectors it holds: the loaded edge *and* only its upper half.
+
+    An intersection rather than an expression language, and the difference is the point.
+    Accepting arbitrary predicates would be the UFL-over-the-wire argument again in
+    miniature — a small closed set of primitives says what the cases here need and nothing a
+    client could turn into code.
+    """
+
+    type: Literal["all_of"] = "all_of"
+    of: Annotated[
+        list["BoundarySelector"],
+        Field(min_length=2, description="Selectors that must all hold."),
+    ]
+
+
+#: How a boundary is picked out. Three families, deliberately: `part` follows the topology,
+#: `points` follows the *shape* through an edit, and `near`/`box` follow the *space*. Neither
+#: of the last two can express the other honestly — a clamped root should stay on the same
+#: physical edge when the profile changes, while a symmetry plane is a statement about
+#: position — which is why both are here rather than one of them being the winner.
+BoundarySelector = Annotated[
+    PartSelector | PointsSelector | NearSelector | BoxSelector | AllOfSelector,
+    Field(discriminator="type"),
+]
+
+
+class BoundarySpec(BaseModel):
+    """A named piece of a geometry's boundary (protocol 1.8, #85).
+
+    The geometry says *where*; a load case says what happens there. That split is what lets
+    three load cases share one shape — putting the conditions here would mint a new geometry
+    revision for every load change, and turn comparing two load cases into comparing two
+    shapes.
+    """
+
+    name: str = Field(
+        min_length=1,
+        description=(
+            "What a load case refers to. Unique within one geometry, and worth choosing as a "
+            "convention — `root`/`tip` across a family of shapes is what makes one load case "
+            "reusable on all of them."
+        ),
+    )
+    select: BoundarySelector = Field(description="Which part of the boundary this names.")
+    description: str | None = Field(
+        default=None, description="What this boundary is, for a caller reading the geometry."
+    )
+
+
+def _check_boundaries(boundaries: list[BoundarySpec], polygons: list[Polygon2D]) -> None:
+    """Names are unique, and a `points` selector names ids the geometry actually carries.
+
+    The second is the one that earns its keep: a selector referring to an id no polygon
+    declares is a boundary that silently matches nothing, and a condition applied to nothing
+    is a solve that runs and answers the wrong problem.
+    """
+    names = [entry.name for entry in boundaries]
+    if len(set(names)) != len(names):
+        raise ValueError("boundary names must be unique within one geometry")
+    known = {pid for polygon in polygons if polygon.point_ids for pid in polygon.point_ids}
+    for entry in boundaries:
+        for wanted in _selected_ids(entry.select):
+            if wanted not in known:
+                raise ValueError(
+                    f"boundary {entry.name!r} selects point id {wanted!r}, which no polygon "
+                    f"in this geometry declares"
+                    + ("" if known else " (no polygon carries `point_ids` at all)")
+                )
+
+
+def _selected_ids(selector) -> list[str]:
+    """Every point id a selector mentions, including inside an `all_of`."""
+    if isinstance(selector, PointsSelector):
+        return list(selector.ids)
+    if isinstance(selector, AllOfSelector):
+        return [pid for inner in selector.of for pid in _selected_ids(inner)]
+    return []
 
 
 def _check_bounds(bounds: tuple[float, float, float, float]) -> None:
@@ -86,11 +260,21 @@ class Domain2D(BaseModel):
             "The hole cut out of the domain. Its points must lie strictly inside `bounds`."
         )
     )
+    boundaries: list[BoundarySpec] = Field(
+        default=[],
+        description=(
+            "Named pieces of the boundary a load case can refer to (protocol 1.8, #85). "
+            "Empty by default: every adapter shipped today puts its conditions where the "
+            "outer/obstacle split implies them, and naming is for the physics where that is "
+            "not enough."
+        ),
+    )
 
     @model_validator(mode="after")
     def _check(self) -> "Domain2D":
         _check_bounds(self.bounds)
         _check_inside(self.obstacle, self.bounds, "obstacle")
+        _check_boundaries(self.boundaries, [self.obstacle])
         return self
 
 
@@ -147,6 +331,13 @@ class Regions2D(BaseModel):
     background: dict[str, float] = Field(
         default={}, description="Material outside every region (typically air)"
     )
+    boundaries: list[BoundarySpec] = Field(
+        default=[],
+        description=(
+            "Named pieces of the boundary a load case can refer to (protocol 1.8, #85). "
+            "Empty by default."
+        ),
+    )
 
     @model_validator(mode="after")
     def _check(self) -> "Regions2D":
@@ -163,6 +354,7 @@ class Regions2D(BaseModel):
                         f"regions {a.name!r} and {b.name!r} overlap partially; regions must be "
                         "disjoint or fully nested"
                     )
+        _check_boundaries(self.boundaries, [region.shape for region in self.regions])
         return self
 
 

@@ -35,7 +35,7 @@
  * tracked. It also added the `assumptions` section to `capability.describe`, which is a local
  * caller's concern and is not typed here for the same reason the rest of discovery is not.
  */
-export const PROTOCOL_VERSION = '1.7';
+export const PROTOCOL_VERSION = '1.8';
 
 /** What `GET /api/v1/version` returns. The one endpoint that never requires a key. */
 export interface ProtocolVersion {
@@ -110,20 +110,83 @@ export function checkProtocolCompatibility(
 
 // ---------------------------------------------------------------- geometry
 
+/** `[xmin, ymin, xmax, ymax]` */
+export type Bounds2D = [number, number, number, number];
+
 export interface Polygon2D {
   type: 'polygon2d';
   /** At least 3 vertices, implicitly closed, and non-self-intersecting. */
   points: [number, number][];
+  /**
+   * Stable identifiers for the vertices, one per point in the same order (protocol 1.8).
+   *
+   * Optional, and absent unless a boundary is being named. They exist because *indices*
+   * cannot survive editing: insert a control point and every index after it shifts, moving a
+   * named boundary onto a different edge with nothing to notice. An editor that carries these
+   * through an edit is what makes `PointsSelector` mean the same edge afterwards.
+   */
+  point_ids?: string[];
 }
 
-/** `[xmin, ymin, xmax, ymax]` */
-export type Bounds2D = [number, number, number, number];
+/** The outer rectangle, a hole, or a named region's outline. */
+export interface PartSelector {
+  type: 'part';
+  /** `outer`, `obstacle`, or `region:<name>`. */
+  of: string;
+}
+
+/** The edges spanned by named vertices — the selector that follows the shape. */
+export interface PointsSelector {
+  type: 'points';
+  ids: string[];
+}
+
+/** Everything within `tol` of a coordinate value — the selector that follows the space. */
+export interface NearSelector {
+  type: 'near';
+  axis: 'x' | 'y';
+  value: number;
+  tol?: number;
+}
+
+/** Everything inside an axis-aligned rectangle. */
+export interface BoxSelector {
+  type: 'box';
+  bounds: Bounds2D;
+}
+
+/** Intersection of the selectors it holds. Deliberately not an expression language. */
+export interface AllOfSelector {
+  type: 'all_of';
+  of: BoundarySelector[];
+}
+
+export type BoundarySelector =
+  | PartSelector
+  | PointsSelector
+  | NearSelector
+  | BoxSelector
+  | AllOfSelector;
+
+/**
+ * A named piece of a geometry's boundary (protocol 1.8).
+ *
+ * The geometry says *where*; what happens there belongs to a load case, so that three load
+ * cases can share one shape instead of minting a geometry revision per load change.
+ */
+export interface BoundarySpec {
+  name: string;
+  select: BoundarySelector;
+  description?: string;
+}
 
 /** A rectangular domain with an obstacle cut out of it (flow around a body). */
 export interface Domain2D {
   type: 'domain2d';
   bounds: Bounds2D;
   obstacle: Polygon2D;
+  /** Named pieces of the boundary a load case can refer to; empty unless used. */
+  boundaries?: BoundarySpec[];
 }
 
 /**
@@ -145,6 +208,8 @@ export interface Regions2D {
   bounds: Bounds2D;
   regions: Region2D[];
   background?: Record<string, number>;
+  /** Named pieces of the boundary a load case can refer to; empty unless used. */
+  boundaries?: BoundarySpec[];
 }
 
 export type Geometry = Domain2D | Regions2D;

@@ -25,6 +25,7 @@ A closed *simple* polygon; the last point connects back to the first implicitly.
 |---|---|---|---|---|
 | `type` | `'polygon2d'` | no | `'polygon2d'` |  |
 | `points` | `list[tuple[float, float]]` | yes |  | Outline vertices in order, as [x, y] pairs. The closing edge is implicit; do not repeat the first point. |
+| `point_ids` | `list[str] \| null` | no | `None` | Stable identifiers for the vertices, one per point, in the same order. Optional and absent by default — a geometry that never names a boundary has no use for them (protocol 1.8, #85).  They exist because *indices* cannot survive editing: insert a control point and every index after it shifts, moving a named boundary onto a different edge with nothing to notice. An id follows the point it was given to, which is what makes `select: {type: points}` mean the same edge after a shape change. The same idea the workspace already applies to objects, one level down. |
 
 ## `Domain2D`
 
@@ -35,6 +36,7 @@ A rectangular computational domain with a polygonal obstacle (hole) inside it.
 | `type` | `'domain2d'` | yes |  |  |
 | `bounds` | `tuple[float, float, float, float]` | no | `(-2.0, -1.5, 4.0, 1.5)` | Outer rectangle as [xmin, ymin, xmax, ymax], in metres. |
 | `obstacle` | `Polygon2D` | yes |  | The hole cut out of the domain. Its points must lie strictly inside `bounds`. |
+| `boundaries` | `list[BoundarySpec]` | no | `[]` | Named pieces of the boundary a load case can refer to (protocol 1.8, #85). Empty by default: every adapter shipped today puts its conditions where the outer/obstacle split implies them, and naming is for the physics where that is not enough. |
 
 ## `Region2D`
 
@@ -56,6 +58,64 @@ A rectangular domain filled with material regions over a background material.
 | `bounds` | `tuple[float, float, float, float]` | no | `(-0.1, -0.1, 0.1, 0.1)` | Outer rectangle as [xmin, ymin, xmax, ymax], in metres. |
 | `regions` | `list[Region2D]` | yes |  | Material regions in painter's order: where two nest, the later one wins. Partially overlapping outlines are rejected. |
 | `background` | `dict[str, float]` | no | `{}` | Material outside every region (typically air) |
+| `boundaries` | `list[BoundarySpec]` | no | `[]` | Named pieces of the boundary a load case can refer to (protocol 1.8, #85). Empty by default. |
+
+## `BoundarySpec`
+
+A named piece of a geometry's boundary (protocol 1.8, #85).
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `name` | `str` | yes |  | What a load case refers to. Unique within one geometry, and worth choosing as a convention — `root`/`tip` across a family of shapes is what makes one load case reusable on all of them. |
+| `select` | `PartSelector \| PointsSelector \| NearSelector \| BoxSelector \| AllOfSelector` | yes |  | Which part of the boundary this names. |
+| `description` | `str \| null` | no | `None` | What this boundary is, for a caller reading the geometry. |
+
+## `PartSelector`
+
+A named piece of the geometry's topology: the outer boundary, the hole, a region.
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `type` | `'part'` | no | `'part'` |  |
+| `of` | `str` | yes |  | `outer` for the bounding rectangle, `obstacle` for a `domain2d` hole, or `region:<name>` for the boundary of a named `regions2d` region. |
+
+## `PointsSelector`
+
+The edges spanned by named vertices — the selector that survives editing.
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `type` | `'points'` | no | `'points'` |  |
+| `ids` | `list[str]` | yes |  | Point ids, from the polygon's `point_ids`. |
+
+## `NearSelector`
+
+Everything within `tol` of a coordinate value — the dolfinx idiom, as data.
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `type` | `'near'` | no | `'near'` |  |
+| `axis` | `'x' \| 'y'` | yes |  | Which coordinate is being tested. |
+| `value` | `float` | yes |  | The value it must be near. |
+| `tol` | `float` | no | `1e-09` | Half-width of the band, in metres. |
+
+## `BoxSelector`
+
+Everything inside an axis-aligned rectangle. `near` for a strip, this for a corner.
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `type` | `'box'` | no | `'box'` |  |
+| `bounds` | `tuple[float, float, float, float]` | yes |  | Inclusive `[xmin, ymin, xmax, ymax]`. |
+
+## `AllOfSelector`
+
+Intersection of the selectors it holds: the loaded edge *and* only its upper half.
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `type` | `'all_of'` | no | `'all_of'` |  |
+| `of` | `list[BoundarySelector]` | yes |  | Selectors that must all hold. |
 
 
 # Jobs
@@ -113,7 +173,7 @@ One tick of solver progress, streamed to WebSocket subscribers.
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `type` | `str` | no | `'progress'` |  |
+| `type` | `str` | no | `'progress'` | Discriminates this from a `status` event on the same stream. Fixed by default rather than by annotation, which is why it needs saying: a subscriber branches on it to tell a tick of work from a change of state. |
 | `iteration` | `int` | yes |  | How far the solve has got, in solver-defined units. |
 | `total` | `int \| null` | no | `None` | Expected final `iteration`, when the solver can predict it. |
 | `residual` | `float \| null` | no | `None` | Convergence measure for iterative solvers; null otherwise. |
