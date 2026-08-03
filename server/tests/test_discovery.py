@@ -346,6 +346,56 @@ def test_declared_metrics_reduce_a_field_the_solver_emits(core, me, solver):
             )
 
 
+def test_a_run_metric_cannot_also_be_a_reduction_of_the_payload():
+    """The invariant behind `over` (#86), checked where a future edit would break it.
+
+    A metric with a `field` is computed by the runtime from the result payload. A transient's
+    payload is one instant, so a quantity taken over the whole run cannot have one. Allowing
+    both would produce the failure this exists to prevent: `t_peak` silently reporting the
+    final instant, which agrees with the truth on every monotonic case anyone would check by
+    hand.
+
+    Enforced in the constructor rather than only over `registered_solvers()`, because the
+    declaration system exists for adapters this repository does not contain — the loop below
+    covers the ones it does.
+    """
+    with pytest.raises(ValidationError, match="declared over the run"):
+        MetricSpec(
+            name="t_peak", unit="degC", description="...",
+            field="T", reduction="max", over="run",
+        )
+
+    for cls in registered_solvers():
+        for metric in cls.metrics:
+            if metric.over == "run":
+                assert metric.field is None, f"{cls.name}.{metric.name}"
+
+
+def test_the_transient_pair_declares_which_metrics_are_over_the_run():
+    """The reason #86 exists, asserted on the capability that found it.
+
+    Before this, `t_final_max` and `t_peak` were distinguishable only by their names. Two
+    adapter authors would spell that convention differently and both would look right; a
+    caller reading the declaration would have no way to tell which number it was getting.
+    """
+    transient = [cls for cls in registered_solvers() if cls.physics.endswith("-transient")]
+    assert transient, "no transient capability is installed, so this checks nothing"
+    # Compared as a whole mapping rather than metric by metric, so a metric added later
+    # cannot slip in undeclared: the assertion fails on the new name until someone decides
+    # what it is taken over, which is the decision this field exists to force.
+    for cls in transient:
+        assert {metric.name: metric.over for metric in cls.metrics} == {
+            "t_final_max": "payload",
+            "t_rise": "payload",
+            "t_peak": "run",
+            "time_to_90pc": "run",
+            # The one that drove the naming: a lumped time constant is a property of the
+            # configuration, not of a history — and it is the likeliest of the three to be
+            # "corrected" back to the default by someone reading only its closed form.
+            "time_constant": "run",
+        }, cls.name
+
+
 @pytest.mark.parametrize(
     "solver",
     sorted(SMOKE)

@@ -131,9 +131,14 @@ def test_the_peak_over_time_cannot_be_a_declared_reduction():
     """
     declared = {metric.name: metric for metric in MockTransientHeat2D.metrics}
     assert declared["t_final_max"].field == "T"
+    assert declared["t_final_max"].over == "payload"
     assert declared["t_peak"].field is None, (
         "t_peak became a reduction of the payload, which holds one instant, not the history"
     )
+    # Since #86 the distinction is declared rather than implied by the names, and the
+    # constructor refuses the combination — so this is now checkable by a caller, not only
+    # by whoever reads the source.
+    assert declared["t_peak"].over == "run"
 
     result = run(MockTransientHeat2D, resolution=48, duration=2000.0, steps=20)
     assert result.metrics["t_peak"] >= result.metrics["t_final_max"] - 1e-9
