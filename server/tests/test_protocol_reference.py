@@ -7,6 +7,7 @@ skipped a model would produce a reference that passes its own freshness check wh
 being incomplete.
 """
 
+import re
 import sys
 from pathlib import Path
 
@@ -115,6 +116,19 @@ def test_descriptions_are_not_silently_missing():
 
 
 def _is_discriminator(row: str) -> bool:
-    """A `type` field whose type column is the single literal it is fixed to."""
+    """A `type` field fixed to *one* literal — by annotation, or by an unannotated default.
+
+    "Starts with a quote" was too loose, and the looseness pointed the wrong way: a
+    `Literal['x', 'y']` field with no description is a real omission, and would have been
+    waved through as a discriminator. A discriminator selects one member of a union, so it is
+    fixed to exactly one value; anything offering a choice is a field with meaning to explain.
+
+    Raised in review of #85, where the rule had just replaced a numeric budget — a helper that
+    exempts too much is the same failure as a budget nobody enforces, only harder to see.
+    """
     cells = [cell.strip() for cell in row.strip("|").split("|")]
-    return len(cells) >= 2 and cells[0] == "`type`" and cells[1].startswith("`'")
+    if len(cells) < 4 or cells[0] != "`type`":
+        return False
+    fixed_by_annotation = re.fullmatch(r"`'[^']*'`", cells[1]) is not None
+    fixed_by_default = cells[1] == "`str`" and re.fullmatch(r"`'[^']*'`", cells[3]) is not None
+    return fixed_by_annotation or fixed_by_default

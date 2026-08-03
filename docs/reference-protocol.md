@@ -86,7 +86,7 @@ The edges spanned by named vertices — the selector that survives editing.
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `type` | `'points'` | no | `'points'` |  |
-| `ids` | `list[str]` | yes |  | Point ids, from the polygon's `point_ids`. |
+| `ids` | `list[str]` | yes |  | Point ids, from the polygon's `point_ids`. At least two, and at least two of them adjacent in the outline: this selects the *edges* they span, and one vertex spans none. The geometry checks the adjacency, since ids can be two apart and satisfy a length rule while selecting nothing. |
 
 ## `NearSelector`
 
