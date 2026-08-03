@@ -931,9 +931,12 @@ second protocol. Each is driven by
 - ~~**One-dimensional results.**~~ Landed in 1.5 — see
   [one-dimensional results](#one-dimensional-results).
 - ~~**Declared assumptions.**~~ Landed in 1.5 — see [assumptions](#assumptions).
-- **A curve widget.** `series1d` has no browser renderer yet; the protocol carries the shape and
-  every consumer still writes its own plot. Axes, a legend, a hover readout and an inverted `y`
-  for `C_p`.
+- ~~**A curve widget.**~~ Shipped as [`@fenix-spoon/plot`](../client/packages/plot/) — axes with
+  round ticks, a legend, a hover readout and an opt-in inverted `y`. **No protocol change**: it
+  draws numbers 1.5 already carried, which is the same relationship `<fs-viewer>`'s explorable
+  tools have to 1.1. `invert-y` is an attribute rather than something inferred from a trace
+  called `cp_upper`, on the grounds [ADR 0001](adr/0001-explorable-viewer.md) records — a name is
+  not a quantity.
 - **Boundary integrals in general.** `MetricSpec.boundary` names the boundary a metric integrates
   over, and today `body` is the only name any adapter uses. Gap force in magnetostatics, reaction
   forces in elasticity and wall heat flux in conduction are the same shape, and whether the

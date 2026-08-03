@@ -1,0 +1,50 @@
+{
+  "name": "@fenix-spoon/plot",
+  "version": "0.1.0",
+  "description": "Custom element plotting Fenix Spoon series1d curves — surface distributions, sweeps, convergence histories",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./element": {
+      "types": "./dist/element.d.ts",
+      "default": "./dist/element.js"
+    },
+    "./scale": {
+      "types": "./dist/scale.d.ts",
+      "default": "./dist/scale.js"
+    },
+    "./curves": {
+      "types": "./dist/curves.d.ts",
+      "default": "./dist/curves.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@fenix-spoon/client": "^0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "jsdom": "^25.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mandaloriat/fenix-spoon.git",
+    "directory": "client/packages/plot"
+  }
+}

@@ -314,8 +314,8 @@ from [`physics-lab`](https://github.com/mandaloriat/physics-lab), and all three 
       history. `series1d` is the third member of the union, with a `series` key so a field result
       can carry curves beside it — one solve legitimately answers both. Bounded three ways, so a
       curve cannot become the field arrays under a different key, and outside the default
-      response level for exactly that reason. *No curve widget yet: the protocol carries the
-      shape and each consumer still draws it.* (#69)
+      response level for exactly that reason. *The curve widget that was missing here has since
+      shipped as `@fenix-spoon/plot` — see M4 below.* (#69)
 - [x] **Declared assumptions.** #43 gave `capability.describe` eight sections and every one
       described what a capability *does*. None said what its model *assumes*, which is what a
       caller needs before trusting a number. `excludes` is the field that earns it: a caller
@@ -510,6 +510,24 @@ Goal: adoption. People find, run, and copy examples.
       and a physical name for an integrated curve. Navigation is opt-in and the gesture meaning
       is an explicit `mode`, so the airfoil demo's layered geometry editor keeps working and
       can now coordinate with the viewer rather than merely sit on top of it.*
+- [x] A curve widget — `@fenix-spoon/plot`, the fourth browser package. *The one extension the
+      wire-protocol document had listed as unfinished since 1.5: the protocol carried curves and
+      every consumer wrote its own plot. **No protocol change**, exactly like the explorable
+      viewer above — it draws numbers that have been on the wire since 1.5. A separate package
+      rather than a second element in the viewer, because the two share a canvas and nothing
+      else: colormaps, viewports and contour extraction do not help draw an axis, and folding
+      them together would make every page showing a temperature map carry plot code it never
+      calls.*
+      *`invert-y` is an attribute and not an inference*, on ADR 0001's grounds — noticing a trace
+      called `cp_upper` and flipping the axis would be reading a quantity off a name.
+      *Two things writing it found.* A guard against a zero-width domain in the projection was
+      unreachable, because the domain repair upstream already prevents one — two defences that
+      could disagree, so one went. And the accessible description was being skipped whenever the
+      canvas had no 2D context, since it sat after the early return: the name of an element is a
+      function of its data, not of whether the environment can rasterise.
+      *Wired into the airfoil demo*, which had been computing a surface `C_p` since #68 and
+      throwing it away. Its saw-toothed appearance is the mock's staircased body, not the plot —
+      said on the page, because a first-time visitor would otherwise read it as a broken widget.
 - [ ] "Deploy to Fly.io/Render/self-host" one-clickish guides (#19)
 - [x] A protocol version on the wire, a compatibility rule, and a bump procedure (#58) —
       `GET /api/v1/version`, the one route outside the auth gate, because a client has to
