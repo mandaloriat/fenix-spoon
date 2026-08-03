@@ -32,7 +32,9 @@ from ..jobs import TERMINAL, Job, JobManager
 from ..objects import ObjectFileStore, parse_ref
 from ..solvers import available_solvers, get_solver, registered_solvers
 from ..solvers.base import Solver, SolverInfo
+from . import conditions as conditions_module
 from . import discovery, errors, results, studies
+from .conditions import Conditions
 from .discovery import (
     CapabilityDescription,
     CapabilitySummary,
@@ -216,6 +218,7 @@ class FenixSpoonCore:
         params: dict[str, Any],
         principal: Principal,
         inputs: dict[str, Any] | None = None,
+        conditions: Conditions | None = None,
     ) -> Job:
         """Validate, authorize, and hand the job to the execution backend.
 
@@ -229,6 +232,12 @@ class FenixSpoonCore:
         from any. It is metadata rather than a second submission path: an inline geometry
         and a resolved design reach the backend identically, which is what stops the
         workspace becoming a parallel job system (#44).
+
+        ``conditions`` is the resolved load case (#85) — unlike ``inputs`` it is *not*
+        metadata: it is an input to the solve beside the geometry and the params, and it is
+        checked here for the same reason they are. This is the single door every transport
+        goes through, so an inline load case over JSON-RPC and a design-referenced one over
+        HTTP are refused identically.
         """
         solver_cls = self.capability(solver)
 
@@ -239,6 +248,13 @@ class FenixSpoonCore:
             parsed = solver_cls.Params.model_validate(params)
         except ValidationError as exc:
             raise errors.InvalidParams(json.loads(exc.json())) from exc
+
+        # After the params and before the cost estimate, following the order the docstring
+        # sets out: a caller whose load case names a boundary that does not exist should
+        # hear about that rather than about a cell budget it also happens to exceed.
+        # Reassigned rather than merely checked: the returned mapping is the validated one,
+        # which is what makes the cache key a digest over scalars whatever the caller sent.
+        conditions = conditions_module.check_conditions(solver_cls, geometry, conditions or {})
 
         estimate = solver_cls.estimate_cells(geometry, parsed)
         limit = self.jobs.max_cells
@@ -252,7 +268,9 @@ class FenixSpoonCore:
         fingerprint = cache.environment_fingerprint(list(solver_cls.requires))
         provenance = {"solver_version": solver_cls.version, "environment": fingerprint}
 
-        key = self.cache_key_for(solver_cls, geometry, parsed, environment=fingerprint)
+        key = self.cache_key_for(
+            solver_cls, geometry, parsed, environment=fingerprint, conditions=conditions
+        )
         if key is not None:
             reusable = self.jobs.store.find_cached(key, principal.id)
             if reusable is not None:
@@ -277,6 +295,7 @@ class FenixSpoonCore:
             inputs=inputs,
             cache_key=key,
             provenance=provenance,
+            conditions=conditions,
         )
 
     def cache_key_for(
@@ -286,6 +305,7 @@ class FenixSpoonCore:
         params: Any,
         *,
         environment: dict[str, str] | None = None,
+        conditions: Conditions | None = None,
     ) -> str | None:
         """This solve's content-addressed identity, or None if it must not be cached.
 
@@ -312,6 +332,7 @@ class FenixSpoonCore:
             geometry=geometry.model_dump(mode="json"),
             params=params.model_dump(mode="json"),
             environment=environment,
+            conditions=conditions,
         )
 
     def jobs_for_object(
@@ -345,7 +366,14 @@ class FenixSpoonCore:
             geometry,
             resolved.params,
             principal,
-            inputs=resolved.model_dump(exclude={"params"}),
+            # `conditions` is excluded from `inputs` alongside `params` and for the same
+            # reason: `inputs` is the list of object *references* this job came from, and
+            # `find_by_input` walks it looking for them. The load cases are already there
+            # by reference; their merged content is an input to the solve, not a reference
+            # to record, and putting it in both places would make the same fact answerable
+            # two ways that could disagree.
+            inputs=resolved.model_dump(exclude={"params", "conditions"}),
+            conditions=resolved.conditions,
         )
 
     # -------------------------------------------------------------------- studies (#48)
@@ -421,6 +449,11 @@ class FenixSpoonCore:
                     {**resolved.params, body.parameter: value},
                     principal,
                     inputs=studies.variation_inputs(record.pinned, index, value, resolved),
+                    # A study varies one parameter of a design; everything else it holds
+                    # fixed, and the load case is part of everything else. Omitting it here
+                    # would sweep the mesh of an *unclamped* cantilever and report a table
+                    # of rigid-body motions converging beautifully to nothing.
+                    conditions=resolved.conditions,
                 )
             except errors.CoreError:
                 refused += 1
@@ -495,7 +528,9 @@ class FenixSpoonCore:
             # Reported as a missing rung rather than raised, because one bad value must not
             # take the whole table with it.
             return None
-        key = self.cache_key_for(solver_cls, geometry, parsed)
+        # The same conditions `run_study` submitted with, or this looks up an address no
+        # rung was ever stored at and reports a complete study as entirely missing.
+        key = self.cache_key_for(solver_cls, geometry, parsed, conditions=resolved.conditions)
         if key is None:
             return None
         found = self.jobs.store.find_cached(key, principal.id)

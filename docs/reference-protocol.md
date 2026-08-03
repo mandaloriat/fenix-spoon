@@ -117,6 +117,14 @@ Intersection of the selectors it holds: the loaded edge *and* only its upper hal
 | `type` | `'all_of'` | no | `'all_of'` |  |
 | `of` | `list[BoundarySelector]` | yes |  | Selectors that must all hold. |
 
+## `LoadCaseBody`
+
+A `load_case` workspace object: what happens on each named boundary.
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `conditions` | `dict[str, dict[str, float]]` | yes |  | Boundary name to the condition keys in force there, e.g. `{"root": {"fixed": 1}, "tip": {"traction_y": -1.0e6}}`. Keys are open and per-capability — read `capability.describe(sections=["conditions"])` for the ones a given capability accepts, and their units. |
+
 
 # Jobs
 
@@ -129,6 +137,7 @@ What `POST /api/v1/jobs` accepts.
 | `solver` | `str` | yes |  | A `name` from `GET /solvers`. |
 | `geometry` | `Domain2D \| Regions2D` | yes |  | Geometry to solve on; its `type` must be one the solver accepts. |
 | `params` | `dict[str, Any]` | no | `{}` | Solver parameters, validated against that solver's schema. |
+| `conditions` | `dict[str, dict[str, float]]` | no | `{}` | An inline load case (protocol 1.9, #85): boundary name to the condition keys in force there. Every name must be one this geometry's `boundaries` declares, and every key one the capability declares in its `conditions` section — both are refused rather than ignored. Omit it to let the solver's own parameters govern, which is what every capability shipped before #85 does. |
 
 ## `JobCreated`
 
@@ -526,6 +535,7 @@ What `capability.describe` returns. Every section is optional and omitted unless
 | `params` | `ParamsSection \| null` | no | `None` | Section `params`: the parameters, and a schema reference. |
 | `metrics` | `list[MetricSpec] \| null` | no | `None` | Section `metrics`: the engineering scalars it reports. |
 | `assumptions` | `list[Assumption] \| null` | no | `None` | Section `assumptions`: the modelling assumptions in force, and the quantities they put out of reach. Next to `metrics` because it is what qualifies them. |
+| `conditions` | `list[ConditionSpec] \| null` | no | `None` | Section `conditions`: the boundary-condition keys this capability reads from a load case, and their units (#85). An empty list means it takes no load case at all — and that is enforced rather than merely reported, so it reads as a refusal a caller can plan around rather than as an omission. |
 | `artifacts` | `list[ArtifactSpec] \| null` | no | `None` | Section `artifacts`: files a solve may write. |
 | `cost` | `CostSection \| null` | no | `None` | Section `cost`: whether a request can be sized in advance. |
 | `features` | `CapabilityFeatures \| null` | no | `None` | Section `features`: sweep, gradient and MPI support. |
@@ -594,6 +604,17 @@ A modelling assumption in force, and where it stops applying (issue #70).
 | `excludes` | `list[str]` | no | `[]` | Quantities this assumption puts out of reach entirely — `drag` for an inviscid model. A caller asking for one of these should be told no, not given a zero. |
 | `when` | `str \| null` | no | `None` | Name of the boolean param that puts this assumption in force. Null — the usual case — means it always applies. Read `when_value` for which setting arms it. |
 | `when_value` | `bool` | no | `True` | The value of `when` that puts this assumption in force. `false` is how an assumption in force when a feature is *disabled* is declared. Ignored when `when` is null. |
+
+## `ConditionSpec`
+
+A boundary-condition key this capability reads from a load case (issue #85).
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `name` | `str` | yes |  | Key as it appears in a load case, e.g. `traction_x`. |
+| `unit` | `str` | yes |  | Unit as a display string — `"Pa"`, `"K"`; `"1"` for a flag. |
+| `description` | `str` | yes |  | What setting it does, in one line. |
+| `kind` | `'dirichlet' \| 'neumann' \| 'robin'` | yes |  | How it enters the problem: `dirichlet` imposes the unknown itself, `neumann` imposes its flux, `robin` relates the two. A classification of the condition, not of the physics — which is why it can be a closed set here when the keys themselves deliberately are not. |
 
 ## `ArtifactSpec`
 

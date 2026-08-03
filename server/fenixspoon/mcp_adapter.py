@@ -133,8 +133,8 @@ TOOLS: dict[str, tuple[str, str, dict[str, Any]]] = {
     "describe_capability": (
         "capability.describe",
         "Selected sections of one capability. Ask for the sections you need — `params`, "
-        "`metrics`, `geometries`, `cost`, `assumptions`, `examples` — rather than all of "
-        "them; omitting `sections` returns everything and is rarely what you want.",
+        "`metrics`, `geometries`, `cost`, `assumptions`, `conditions`, `examples` — rather "
+        "than all of them; omitting `sections` returns everything and is rarely what you want.",
         _schema(
             {
                 "name": {"type": "string", "description": "Capability name."},

@@ -16,7 +16,7 @@ adapter writes `float(T.max())` twice; the ones with neither are the adapter's o
 they need a parameter and a parameter is not in the result payload.
 """
 
-from .base import ArtifactSpec, Assumption, MetricSpec
+from .base import ArtifactSpec, Assumption, ConditionSpec, MetricSpec
 
 #: Every capability in this repository is a cross-section of a body infinitely long in z, and
 #: not one of them said so before #70. Shared rather than repeated per physics because it is
@@ -420,15 +420,83 @@ ELASTICITY_ASSUMPTIONS = [
     Assumption(
         name="edge_aligned_boundary_conditions",
         statement=(
-            "The clamped and loaded boundaries are named as edges of the bounding rectangle "
-            "(`xmin`, `xmax`, `ymin`, `ymax`) and the traction is uniform along the loaded "
-            "one. A load on part of an edge, on the hole boundary, or on an arbitrary curve "
-            "cannot be expressed — no geometry kind here can name such a boundary, which is "
-            "the open design question in issue #81."
+            "Without a load case, the clamped and loaded boundaries are named as edges of "
+            "the bounding rectangle (`xmin`, `xmax`, `ymin`, `ymax`) by the `fixed_edge` "
+            "and `load_edge` parameters, and the traction is uniform along the loaded one. "
+            "**A load case lifts this**: conditions supplied for the geometry's named "
+            "boundaries (#85) reach part of an edge, the hole boundary or an arbitrary "
+            "outline, and they replace the two parameters entirely rather than adding to "
+            "them. What neither route expresses is a concentrated force: a traction is per "
+            "unit length, so a point load has to be approximated by a short loaded stretch."
         ),
-        excludes=["partial_edge_load", "hole_boundary_load", "point_load"],
+        # Narrowed rather than deleted, as #85 asked. `partial_edge_load` and
+        # `hole_boundary_load` left the list because a load case genuinely reaches them and
+        # a caller filtering on `excludes` would otherwise be told no about something the
+        # server will do. `point_load` stayed because neither route offers it.
+        #
+        # Stated in prose rather than through `when`, and that is a real limit worth naming:
+        # `Assumption.when` gates on a *parameter*, and "a load case was supplied" is not a
+        # parameter — it arrives beside the params rather than inside them. So a caller
+        # reading this statically cannot be told which of the two regimes it is in, and the
+        # statement has to describe both.
+        excludes=["point_load"],
     ),
     TWO_DIMENSIONAL,
+]
+
+
+#: What an elasticity load case may say on a named boundary (#85).
+#:
+#: Shared by the pair for the same reason the metrics are: a caller that swaps
+#: `mock.elasticity2d` for `dolfinx.elasticity2d` must find the same vocabulary, or the two
+#: are interchangeable only in principle. `test_paired_adapters_declare_the_same_conditions`
+#: fails if a new adapter for an existing physics invents its own spelling.
+#:
+#: Deliberately small. Five keys cover clamped, rolled and loaded — the restraints and loads
+#: a plane problem actually needs — and each new one has to earn its place by being something
+#: an adapter can honour on *any* selected boundary, not just on an edge of the bounding box.
+ELASTICITY_CONDITIONS = [
+    ConditionSpec(
+        name="fixed",
+        unit="1",
+        description=(
+            "Nonzero clamps this boundary in both directions. The usual restraint, and the "
+            "one a cantilever's root needs: with nothing fixed anywhere the problem is "
+            "singular and the solve reports a rigid-body motion rather than a deflection."
+        ),
+        kind="dirichlet",
+    ),
+    ConditionSpec(
+        name="fixed_x",
+        unit="1",
+        description=(
+            "Nonzero holds x while leaving y free — a roller, and the honest way to model a "
+            "symmetry plane normal to x. Clamping such a plane in both directions instead "
+            "would suppress the Poisson contraction along it and overstate the stiffness."
+        ),
+        kind="dirichlet",
+    ),
+    ConditionSpec(
+        name="fixed_y",
+        unit="1",
+        description="Nonzero holds y while leaving x free; the other roller.",
+        kind="dirichlet",
+    ),
+    ConditionSpec(
+        name="traction_x",
+        unit="Pa",
+        description=(
+            "Uniform surface traction along x on this boundary, force per unit area, "
+            "positive towards +x. Per unit depth in z like everything else here."
+        ),
+        kind="neumann",
+    ),
+    ConditionSpec(
+        name="traction_y",
+        unit="Pa",
+        description="Uniform surface traction along y, positive towards +y.",
+        kind="neumann",
+    ),
 ]
 
 

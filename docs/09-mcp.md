@@ -50,7 +50,7 @@ turn*, which makes this the one surface where exposing everything is actively wr
 | `create_object` | create a geometry, material, design or study |
 | `get_object` | one object revision |
 | `patch_object` | apply an RFC 6902 patch, write the next revision |
-| `submit_job` | solve a design, or an inline solver + geometry |
+| `submit_job` | solve a design, or an inline solver + geometry + load case |
 | `inspect_job` | status, and metrics once finished |
 | `get_result` | the answer at the levels you ask for |
 | `query_result` | one bounded question about one field |

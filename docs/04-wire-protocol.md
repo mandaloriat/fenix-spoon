@@ -302,6 +302,63 @@ Everything here is **additive and empty by default**: `point_ids` is absent unle
 is named, and every adapter shipped today puts its conditions where the outer/obstacle split
 implies them.
 
+### Saying what happens there: the load case
+
+Protocol 1.9 is the other half of the same issue. A **`load_case`** workspace object maps a
+boundary name to the scalars in force on it, and a design references it the way it already
+references a geometry:
+
+```jsonc
+// load_case object
+{"conditions": {
+   "root": {"fixed": 1},
+   "tip":  {"traction_x": 0.0, "traction_y": -1.0e6}
+}}
+
+// design — the reproducible route
+{"solver": "dolfinx.elasticity2d", "geometry": "geometry:g-7f3a",
+ "load_cases": ["load_case:lc-91bd"], "params": {"plane": "stress"}}
+
+// job.submit — the inline route, for one-shot use
+{"solver": "mock.elasticity2d", "geometry": {...},
+ "conditions": {"root": {"fixed": 1}, "tip": {"traction_y": -1.0e6}}}
+```
+
+A separate object rather than a block in the design, because an engineer reuses one set of
+restraints and loads across a family of shapes and that reuse is the whole argument. Two load
+cases on one design are merged per key, and a disagreement — both setting the same key on the
+same boundary — is refused rather than resolved by list order.
+
+**The values are an open map of scalars, exactly like `Region2D.material`.** A typed enum of
+condition kinds would put physics into the protocol, so every new physics would become a
+protocol change. What keeps that openness from costing a caller a silent typo is that each
+capability **declares** the keys it reads, in the `conditions` section of
+`capability.describe`:
+
+```json
+{"name": "traction_y", "unit": "Pa", "kind": "neumann",
+ "description": "Uniform surface traction along y, positive towards +y."}
+```
+
+Two refusals follow from the pair, and both are **422 at submit rather than a silent no-op**
+— a condition applied to nothing produces a solve that runs, converges, and answers a
+different problem:
+
+| Refusal | When |
+|---|---|
+| `UnknownBoundary` | the load case names a boundary the geometry does not declare |
+| `UnknownConditionKey` | the key is one the capability does not read — including every key, for a capability that reads none |
+| `ConflictingConditions` | two of a design's load cases set the same key on the same boundary |
+
+The load case is also part of a solve's **content address**: two load cases on one shape are
+two cache entries. Leaving them out of the key would serve the clamped answer to the caller
+who asked about the free one.
+
+Adapters that had boundary conditions as *parameters* keep them. `fixed_edge` / `load_edge`
+on the elasticity pair remain the shorthand for the common case; a load case, when one is
+supplied, replaces them entirely rather than merging with them, so a caller who named every
+boundary never inherits an invisible clamp from a default it did not set.
+
 ### Time: an index over the artifacts
 
 A time-dependent solve produces two things of different natures, and 1.7 keeps them apart

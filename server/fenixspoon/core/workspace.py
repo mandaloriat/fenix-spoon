@@ -14,19 +14,24 @@ Six object types, and they are deliberately not equal:
 | `material` | name + property map | mirrors what `regions2d` regions already carry |
 | `design` | :class:`DesignBody` | the load-bearing one — what `job.submit` resolves |
 | `boundary_condition` | *nothing* | see below |
-| `load_case` | *nothing* | see below |
+| `load_case` | :class:`~fenixspoon.core.conditions.LoadCaseBody` | #85 defined it |
 | `study` | :class:`~fenixspoon.core.studies.StudyBody` | #48 defined it |
 
-**`boundary_condition` and `load_case` are stored as opaque JSON on purpose.** Issue #44 asked
-for that to be said out loud rather than papered over with an invented schema, so: no shipped
-solver has a boundary condition that is separable from its params. `mock.heat2d` expresses
-convective cooling as `h` and `t_ambient`; `dolfinx.magnetostatics2d` puts A = 0 on the outer
-boundary and offers no choice about it. A generic schema written today would be a guess
-generalising from zero examples. The types exist so that ids and references are consistent when
-a capability finally needs them; until then the body is whatever the caller puts there and the
-workspace stores it faithfully. `study` *was* the same until #48, which gave it a body — the
-difference being that a study had a concrete first use case to generalise from, and these two
-still do not.
+**`boundary_condition` is stored as opaque JSON on purpose.** Issue #44 asked for that to be
+said out loud rather than papered over with an invented schema, so: no shipped solver has a
+boundary condition that is separable from its params in a way this type would capture.
+`mock.heat2d` expresses convective cooling as `h` and `t_ambient`;
+`dolfinx.magnetostatics2d` puts A = 0 on the outer boundary and offers no choice about it. A
+generic schema written today would be a guess generalising from zero examples. The type
+exists so that ids and references are consistent when a capability finally needs them; until
+then the body is whatever the caller puts there and the workspace stores it faithfully.
+
+`study` and `load_case` *were* the same, and each left the thin list the moment a concrete
+use case arrived to generalise from — #48 for the first, #85 and the elasticity pair for the
+second. That is the rule this table is keeping: a body gets a schema when something needs to
+read it, not when someone can imagine reading it. Note that `load_case` is the one that
+turned out to carry the physics; `boundary_condition` is now the type with no user, and the
+honest reading of #85 is that a load case is what a boundary condition was reaching for.
 
 ## Versioning and patching
 
@@ -70,6 +75,7 @@ from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 from ..geometry import Geometry
 from ..objects import OBJECT_TYPES, ObjectFileStore, ObjectRecord, parse_ref
 from . import errors
+from .conditions import Conditions, LoadCaseBody, merge_load_cases
 from .studies import StudyBody
 
 #: Built once. The union is fixed at import time, and constructing a `TypeAdapter` per
@@ -174,9 +180,11 @@ VALIDATED: dict[str, type[BaseModel] | Literal["geometry"]] = {
     "geometry": "geometry",
     "material": MaterialBody,
     "design": DesignBody,
-    # #48 gave `study` a body, so it left the thin list. The other two are still thin, and
-    # still for the reason above rather than for want of attention.
+    # #48 gave `study` a body and #85 gave `load_case` one, so both left the thin list.
+    # `boundary_condition` is still thin, and still for the reason above rather than for
+    # want of attention.
     "study": StudyBody,
+    "load_case": LoadCaseBody,
 }
 
 
@@ -313,17 +321,31 @@ class Workspace:
         # otherwise resolve happily and write provenance that is wrong in a way nothing
         # would ever surface — and the thin types are the ones most likely to be miswired,
         # because nothing validates their bodies either.
-        def pin(refs: list[str], expected: str) -> list[str]:
-            return [self._record(item, owner, expected=expected).pinned for item in refs]
+        def resolve(refs: list[str], expected: str) -> list[ObjectRecord]:
+            return [self._record(item, owner, expected=expected) for item in refs]
+
+        # The load cases are the one set of references whose *bodies* are read here rather
+        # than only pinned: they say what happens on each named boundary, and that has to
+        # reach the solver. Merged now, at the moment the revisions are frozen, so the
+        # conditions a job runs with and the revisions its provenance names are one reading
+        # of the workspace rather than two that could differ.
+        cases = resolve(body.load_cases, "load_case")
+        conditions = merge_load_cases(
+            [(record.pinned, LoadCaseBody.model_validate(record.body)) for record in cases]
+        )
 
         return geometry, ResolvedDesign(
             solver=body.solver,
             params=dict(body.params),
+            conditions=conditions,
             design=design.pinned,
             geometry=geometry_record.pinned,
-            materials=pin(body.materials, "material"),
-            boundary_conditions=pin(body.boundary_conditions, "boundary_condition"),
-            load_cases=pin(body.load_cases, "load_case"),
+            materials=[record.pinned for record in resolve(body.materials, "material")],
+            boundary_conditions=[
+                record.pinned
+                for record in resolve(body.boundary_conditions, "boundary_condition")
+            ],
+            load_cases=[record.pinned for record in cases],
         )
 
     # ---------------------------------------------------------------------- internals
@@ -366,6 +388,16 @@ class ResolvedDesign(BaseModel):
 
     solver: str = Field(description="Capability the job will run.")
     params: dict[str, Any] = Field(description="Parameters from the design, before validation.")
+    conditions: Conditions = Field(
+        default={},
+        description=(
+            "The design's load cases merged into one mapping of boundary name to the "
+            "scalars in force there (#85). Empty when the design names none, which is "
+            "every design written before the elasticity pair. Not a reference like the "
+            "fields below — it is the *content* those references resolved to, because it "
+            "is what the solve actually runs with."
+        ),
+    )
     design: str = Field(description="Design revision used, pinned: `design:d-1@2`.")
     geometry: str = Field(description="Geometry revision used, pinned.")
     materials: list[str] = Field(default=[], description="Material revisions used, pinned.")

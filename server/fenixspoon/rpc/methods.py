@@ -71,14 +71,22 @@ class SubmitParams(BaseModel):
     solver: str | None = Field(default=None, description="A capability name, for inline use.")
     geometry: dict[str, Any] | None = Field(default=None, description="Inline geometry object.")
     params: dict[str, Any] = Field(default_factory=dict, description="Solver parameters.")
+    conditions: dict[str, dict[str, float]] = Field(
+        default_factory=dict,
+        description=(
+            "An inline load case (#85), for the inline form. A design names its load cases "
+            "the way it names its geometry, so passing both is refused for the same reason."
+        ),
+    )
 
     @model_validator(mode="after")
     def _one_form_only(self) -> "SubmitParams":
-        inline = self.solver is not None or self.geometry is not None
+        inline = self.solver is not None or self.geometry is not None or bool(self.conditions)
         if self.design is not None and inline:
             raise ValueError(
-                "pass either `design` or `solver` + `geometry`, not both: a design already "
-                "names its solver and geometry"
+                "pass either `design` or `solver` + `geometry` (with `conditions` if the "
+                "solve needs a load case), not both: a design already names its solver, its "
+                "geometry and its load cases"
             )
         if self.design is None and not (self.solver and self.geometry):
             raise ValueError("pass a `design`, or both `solver` and `geometry`")
@@ -313,7 +321,11 @@ async def job_submit(core: FenixSpoonCore, principal: Principal, params: dict) -
         job = await core.submit_design(request.design, principal)
     else:
         job = await core.submit(
-            request.solver, _geometry(request.geometry), request.params, principal
+            request.solver,
+            _geometry(request.geometry),
+            request.params,
+            principal,
+            conditions=request.conditions,
         )
     # Field-for-field what `POST /api/v1/jobs` answers, including `cached`. Built as a dict
     # rather than by importing `api.JobCreated`, because that module imports FastAPI and

@@ -67,6 +67,7 @@ async def run_solve(
     geometry: Geometry,
     params: BaseModel,
     *,
+    conditions: dict[str, dict[str, float]] | None = None,
     store: JobStore,
     sink: EventSink,
     artifact_dir: Path,
@@ -98,7 +99,10 @@ async def run_solve(
         loop.call_soon_threadsafe(schedule)
 
     ctx = SolverContext(
-        progress_cb=on_progress, cancel_event=cancel_event, artifact_dir=artifact_dir
+        progress_cb=on_progress,
+        cancel_event=cancel_event,
+        artifact_dir=artifact_dir,
+        conditions=conditions,
     )
     started = time.monotonic()
     try:

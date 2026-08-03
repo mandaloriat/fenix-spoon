@@ -104,9 +104,13 @@ air as a conducting region instead and the fins stop working entirely: air condu
 `dolfinx.elasticity2d` solve a clamped, loaded plate — displacement, von Mises stress, the
 classical `K_t = 3` around a hole — and they are the first capabilities here whose unknown is a
 *vector*. What they do not have is a demo: a structural page wants to draw a deformed shape and
-to place a load somewhere other than a whole edge, and the second of those is the open design
-question in [#81](https://github.com/mandaloriat/fenix-spoon/issues/81). The capability is
-usable from every transport today; it is the browser story that is missing.
+to place a load somewhere other than a whole edge. The second of those was the open design
+question in [#81](https://github.com/mandaloriat/fenix-spoon/issues/81) and is now answered —
+[#85](https://github.com/mandaloriat/fenix-spoon/issues/85) lets the geometry name a boundary
+and a load case say what happens on it, so a load can go on part of an edge, on a hole, or on
+an interior outline. What is left is browser-side: the editor has to let a user click an edge,
+name it, and keep that name across an edit. The capability is usable from every transport
+today; it is the browser story that is missing.
 
 **Transient heat** has adapters and no page for a specific reason worth reading. `mock.transient_heat2d`
 and `dolfinx.transient_heat2d` answer the question the steady pair cannot — *when* does the sink

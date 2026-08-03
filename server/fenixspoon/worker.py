@@ -9,9 +9,9 @@ directory, or eventually a database) and Redis. The API never solves; the worker
 serves HTTP. That split is what lets the worker image carry dolfinx while the API image
 stays small, and what makes it possible to give a solve a memory limit or kill it.
 
-A worker validates the geometry and params it receives against the solver's own schema
-rather than trusting the payload. The API validated them too — but the two processes are
-separately deployable and can drift, and a mismatch should fail loudly at validation
+A worker validates the geometry, params and load case it receives against the solver's own
+schema rather than trusting the payload. The API validated them too — but the two processes
+are separately deployable and can drift, and a mismatch should fail loudly at validation
 instead of reaching a solver as nonsense.
 """
 
@@ -25,6 +25,7 @@ from typing import Any
 from pydantic import TypeAdapter
 
 from .backends import cancel_key
+from .core.conditions import check_conditions
 from .execution import EventSink, run_solve
 from .geometry import Geometry
 from .jobs import _default_data_dir, _default_store, _default_timeout
@@ -61,6 +62,7 @@ async def solve_job(
     solver_name: str,
     geometry_payload: dict,
     params_payload: dict,
+    conditions_payload: dict | None = None,
 ) -> str:
     """Run one job. Returns its terminal status, mostly so arq's log says something useful."""
     store = ctx["store"]
@@ -87,6 +89,13 @@ async def solve_job(
 
     geometry = _GEOMETRY.validate_python(geometry_payload)
     params = solver_cls.Params.model_validate(params_payload)
+    # Re-checked here for the same reason the geometry and params are re-validated: the API
+    # checked them, but the two processes are separately deployable and can drift, and a
+    # load case naming a boundary this worker's geometry model does not know about should
+    # fail loudly rather than reach an adapter that would apply it to nothing. The shape is
+    # validated too — `check_conditions` returns the parsed mapping — so a malformed payload
+    # fails the same way a malformed geometry does instead of raising from inside an adapter.
+    conditions = check_conditions(solver_cls, geometry, conditions_payload or {})
 
     cancel_event = threading.Event()
     watcher = asyncio.create_task(_watch_for_cancel(ctx["redis"], job_id, cancel_event))
@@ -96,6 +105,7 @@ async def solve_job(
             solver_cls,
             geometry,
             params,
+            conditions=conditions,
             store=store,
             sink=EventSink(store, bus, job_id),
             artifact_dir=data_dir / job_id,
