@@ -58,6 +58,18 @@ class JobRequest(BaseModel):
     params: dict[str, Any] = Field(
         default={}, description="Solver parameters, validated against that solver's schema."
     )
+    conditions: dict[str, dict[str, float]] = Field(
+        default={},
+        description=(
+            "The load case: boundary name to the conditions applied there, e.g. "
+            '`{"root": {"fixed": 1}, "tip": {"traction_y": -1.0e6}}` (protocol 1.9, #85). '
+            "Names must be ones the geometry declares in its `boundaries`, keys must be ones "
+            "the capability declares in its `conditions`, and a capability that declares none "
+            "refuses a job that carries any — it would otherwise solve as though the load case "
+            "had not been sent. Inline here; a workspace caller references a `load_case` object "
+            "instead and the server merges it."
+        ),
+    )
 
 
 class JobCreated(BaseModel):
@@ -195,7 +207,9 @@ async def create_job(
     request: Request,
     principal: CurrentPrincipal,
 ) -> JobCreated:
-    job = await _core(request).submit(req.solver, req.geometry, req.params, principal)
+    job = await _core(request).submit(
+        req.solver, req.geometry, req.params, principal, conditions=req.conditions
+    )
     return JobCreated(job_id=job.id, status=job.status, cached=job.reused > 0)
 
 

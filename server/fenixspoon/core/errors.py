@@ -72,6 +72,99 @@ class InvalidParams(CoreError):
         self.errors = errors
 
 
+class CapabilityTakesNoConditions(CoreError):
+    """A load case was submitted to a capability that declares no condition keys (#85).
+
+    Refused rather than ignored, and this is the refusal the whole load-case design turns on.
+    A capability that reads no conditions and is handed some would solve exactly the problem
+    it would have solved without them — converged, plausible, and answering a question the
+    caller did not ask. The failure has no symptom, which is why it has to be an error.
+    """
+
+    def __init__(self, solver: str) -> None:
+        super().__init__(
+            f"capability {solver!r} declares no boundary conditions, so it cannot honour a "
+            "load case; it would solve as if none had been sent. Its boundary conditions come "
+            "from its params — see `capability.describe` section `params`."
+        )
+        self.solver = solver
+
+
+class UnknownBoundary(CoreError):
+    """A load case named a boundary the geometry does not declare (#85).
+
+    Names both sides on purpose. The caller's mistake is usually a typo or a load case written
+    against a different geometry, and both are diagnosed instantly by seeing the two lists
+    together — where "no such boundary" alone sends someone to read a geometry file.
+    """
+
+    def __init__(self, boundary: str, solver: str, declared: list[str]) -> None:
+        super().__init__(
+            f"the load case applies conditions to boundary {boundary!r}, which this geometry "
+            + (
+                f"does not declare; it names {declared}"
+                if declared
+                else "does not declare — it names no boundaries at all, so add a `boundaries` "
+                "entry to the geometry before a load case can refer to one"
+            )
+        )
+        self.boundary = boundary
+        self.solver = solver
+        self.declared = declared
+
+
+class UnknownConditionKey(CoreError):
+    """A load case used a condition key the capability does not read (#85).
+
+    The counterpart to a material key, and deliberately not treated like one. An unread
+    material key leaves the solve using a default; an unread condition key leaves a constraint
+    or a load *out of the assembly*, so the mesh is under-constrained or unloaded and the
+    answer is for a different problem. Issue #85 asked for exactly this asymmetry.
+    """
+
+    def __init__(self, key: str, boundary: str, solver: str, declared: list[str]) -> None:
+        super().__init__(
+            f"capability {solver!r} does not read the condition {key!r} applied to boundary "
+            f"{boundary!r}"
+            + (f"; it reads {declared}" if declared else "")
+        )
+        self.key = key
+        self.boundary = boundary
+        self.solver = solver
+        self.declared = declared
+
+
+class ConditionNeedsCompanion(CoreError):
+    """A condition key was applied without another key it declares it requires (#85)."""
+
+    def __init__(self, key: str, boundary: str, missing: list[str]) -> None:
+        super().__init__(
+            f"condition {key!r} on boundary {boundary!r} needs {missing} on the same boundary; "
+            "the capability declares it as incomplete on its own"
+        )
+        self.key = key
+        self.boundary = boundary
+        self.missing = missing
+
+
+class ConflictingLoadCases(CoreError):
+    """Two load cases on one design apply conditions to the same boundary (#85).
+
+    Refused rather than merged by precedence. A design naming two load cases that both speak
+    for `root` has two intents in it, and picking the later one silently would make which
+    conditions applied a function of list order — reproducible, and impossible to notice.
+    """
+
+    def __init__(self, boundary: str, first: str, second: str) -> None:
+        super().__init__(
+            f"load cases {first} and {second} both apply conditions to boundary {boundary!r}; "
+            "a design may name several load cases only while they cover different boundaries"
+        )
+        self.boundary = boundary
+        self.first = first
+        self.second = second
+
+
 class CellBudgetExceeded(CoreError):
     """The job would exceed the server's submit-time cell budget."""
 

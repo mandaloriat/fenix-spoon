@@ -69,8 +69,15 @@ class ExecutionBackend(ABC):
         geometry: Geometry,
         params: BaseModel,
         on_finish=None,
+        conditions: dict[str, dict[str, float]] | None = None,
     ) -> None:
-        """Begin executing a job that has already been persisted as ``queued``."""
+        """Begin executing a job that has already been persisted as ``queued``.
+
+        ``conditions`` is the load case (#85), already checked against the geometry and the
+        adapter's declaration by the caller. It travels as a plain JSON dict rather than as a
+        model, which is what lets the arq backend put it on the queue beside the geometry and
+        the params with no encoding of its own.
+        """
 
     @abstractmethod
     async def cancel(self, job_id: str) -> None:
@@ -112,7 +119,9 @@ class InProcessBackend(ExecutionBackend):
         self._cancels: dict[str, threading.Event] = {}
         self._tasks: set[asyncio.Task] = set()
 
-    async def start(self, record, solver_cls, geometry, params, on_finish=None) -> None:
+    async def start(
+        self, record, solver_cls, geometry, params, on_finish=None, conditions=None
+    ) -> None:
         cancel_event = threading.Event()
         self._cancels[record.id] = cancel_event
         sink = EventSink(self._store, self._bus, record.id, mirror=record.events)
@@ -130,6 +139,7 @@ class InProcessBackend(ExecutionBackend):
                     executor=self._executor,
                     timeout=self._timeout,
                     cancel_event=cancel_event,
+                    conditions=conditions,
                 )
                 if on_finish is not None:
                     on_finish(finished)
@@ -176,18 +186,27 @@ class ArqBackend(ExecutionBackend):
             self._pool = await create_pool(RedisSettings.from_dsn(self.redis_url))
         return self._pool
 
-    async def start(self, record, solver_cls, geometry, params, on_finish=None) -> None:
+    async def start(
+        self, record, solver_cls, geometry, params, on_finish=None, conditions=None
+    ) -> None:
         del on_finish  # nothing to hand back: the outcome lands in the shared store
         pool = await self._ensure_pool()
         # Send the geometry and params as JSON rather than pickled models: the worker
         # revalidates them against the solver's own schema, so a version skew between
         # API and worker fails loudly at validation instead of unpickling into nonsense.
+        #
+        # The load case rides along as the dict it already is. It is *not* re-checked in the
+        # worker, and that is deliberate: the checks in `_check_conditions` are refusals a
+        # caller must hear at submit, and a worker discovering one has nobody to tell but the
+        # job's error field. What the worker does re-validate is the geometry, so a boundary
+        # the conditions name is still resolvable there.
         await pool.enqueue_job(
             "solve_job",
             record.id,
             solver_cls.name,
             geometry.model_dump(mode="json"),
             json.loads(params.model_dump_json()),
+            conditions or {},
             _job_id=record.id,
         )
 

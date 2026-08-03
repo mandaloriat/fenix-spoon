@@ -354,6 +354,46 @@ class ArtifactSpec(BaseModel):
         )
 
 
+class ConditionSpec(BaseModel):
+    """A boundary-condition key this capability reads from a load case (#85).
+
+    The geometry names *where* a boundary is; a load case says *what happens there*, as an
+    open dict of scalars per boundary — `{"root": {"fixed": 1}, "tip": {"traction_y": -1e6}}`.
+    Open, because a typed enum of condition kinds would put physics into the protocol and make
+    every new physics a protocol change, which is the thing this codebase has consistently
+    refused. `Region2D.material` is the same shape for the same reason.
+
+    **What is closed is the vocabulary of one adapter**, and that is what this declares. The
+    difference from a material key is worth stating, because it is the whole argument for this
+    class existing: a material key the solver does not read is *ignored*, and the answer is
+    merely computed with a default. A boundary condition the solver does not read is a
+    **missing constraint** — the clamp is simply absent, the solve runs, converges, and answers
+    a different problem. So a key no adapter declares is refused at submit, and the refusal
+    names what the capability does accept.
+
+    Declaring them also makes them discoverable, which is the other half: a caller can ask what
+    a capability wants on its boundaries before it writes a load case, rather than reading an
+    adapter's source or finding out from a solve that ran.
+    """
+
+    key: str = Field(description="The key as it appears in a load case, e.g. `traction_y`.")
+    unit: str = Field(
+        description='Unit as a display string — `"Pa"`, `"W/m^2"`; `"1"` if dimensionless.'
+    )
+    description: str = Field(description="What the number does to the boundary, in one line.")
+    requires: list[str] = Field(
+        default=[],
+        description=(
+            "Other keys that must appear on the *same* boundary for this one to mean "
+            "anything. Empty for the ordinary case. It exists because a component is only "
+            "half a vector: an adapter that reads `traction_x` and `traction_y` treats an "
+            "absent component as zero, which is correct, so neither requires the other — but "
+            "a key that genuinely needs a companion can say so rather than defaulting it to "
+            "something the caller did not choose."
+        ),
+    )
+
+
 class CapabilityFeatures(BaseModel):
     """What a capability supports beyond a single solve (issue #43).
 
@@ -419,11 +459,29 @@ class SolverContext:
         progress_cb: Callable[[ProgressEvent], None],
         cancel_event: threading.Event | None = None,
         artifact_dir: Path | None = None,
+        conditions: dict[str, dict[str, float]] | None = None,
     ) -> None:
         self._progress_cb = progress_cb
         self._cancel_event = cancel_event or threading.Event()
         self._artifact_dir = artifact_dir
         self._artifacts: list[dict[str, Any]] = []
+        #: The load case, as `{boundary name: {key: value}}` (#85). Empty when none was
+        #: submitted, which is every job against a capability that declares no conditions.
+        #:
+        #: **Here rather than as a fourth argument to `solve`**, and the reason is not
+        #: reluctance to change a signature — it is that a fourth argument would have to be
+        #: added to every adapter, including the four that have no conditions, and each of
+        #: them would then be a place where ignoring it looks deliberate. On the context it is
+        #: absent unless the adapter reaches for it, and the server has already guaranteed
+        #: that a capability declaring no `conditions` never receives one. An adapter that
+        #: declares a key is the only kind that can be handed values, so "read it or you are
+        #: solving the wrong problem" is a rule with exactly one audience.
+        #:
+        #: Only the values are here. *Where* each boundary is comes from the geometry the
+        #: adapter already has — :func:`fenixspoon.boundaries.predicate` turns a name into the
+        #: `f(x) -> bool` mask both halves of a pair consume — which is what keeps this a
+        #: plain JSON dict that crosses a queue to a worker unchanged.
+        self.conditions: dict[str, dict[str, float]] = conditions or {}
 
     def progress(self, event: ProgressEvent) -> None:
         self._progress_cb(event)
@@ -559,6 +617,17 @@ class Solver(ABC):
     #: `test_every_shipped_adapter_declares_its_assumptions` refuses it for the adapters in
     #: this repository.
     assumptions: ClassVar[list[Assumption]] = []
+
+    #: Boundary-condition keys it reads from a load case. See :class:`ConditionSpec`.
+    #:
+    #: **Empty means this capability takes no load case at all**, and a job that carries one
+    #: is refused rather than solved without it. That is the opposite of the other
+    #: declarations, where an empty list costs a caller information and nothing else, and the
+    #: asymmetry is deliberate: every other declaration describes the *answer*, while this one
+    #: describes an *input the solve would otherwise silently ignore*. A clamp that never
+    #: reached the assembly does not produce a worse number, it produces the number for a
+    #: different problem.
+    conditions: ClassVar[list[ConditionSpec]] = []
 
     #: Files it may write. See :class:`ArtifactSpec`.
     artifacts: ClassVar[list[ArtifactSpec]] = []

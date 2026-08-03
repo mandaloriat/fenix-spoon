@@ -565,19 +565,68 @@ def test_assumption_names_are_unique_within_a_capability():
         assert len(names) == len(set(names)), f"{cls.name} declares an assumption name twice"
 
 
-def test_paired_adapters_declare_the_same_assumptions():
+#: Assumptions a pair is allowed to differ on, by name, because they are about the
+#: *discretisation* rather than about the physics. Deliberately a short allowlist rather than a
+#: relaxed comparison: anything not named here still has to be shared, so the test keeps
+#: catching a modelling assumption that landed on one half by accident.
+DISCRETISATION_ONLY = {"raster_conforming_boundary"}
+
+
+def test_paired_adapters_declare_the_same_physics_assumptions():
     """Same argument as the metrics: a mock and its FEniCSx counterpart solve the same equations,
     so they are valid over the same domain. A pair whose declared validity differed would mean
-    switching one for the other silently changed what the answer was good for."""
+    switching one for the other silently changed what the answer was good for.
+
+    **One category is exempt, and #85 is what found it.** A mock meshes a raster and a FEniCSx
+    adapter meshes the outline, so a condition on a boundary that follows the *shape* is
+    expressible on one and not always on the other. That difference is real and a caller has to
+    be told about it — which is precisely what this section is for — but it is not a difference
+    about the equations. Sharing it would have made it false for the FEniCSx half; dropping it
+    would have hidden it on the mock. It is named in `DISCRETISATION_ONLY` instead, so allowing
+    it took an edit somebody had to justify.
+    """
     by_physics: dict[str, list[type[Solver]]] = {}
     for cls in registered_solvers():
         by_physics.setdefault(cls.physics, []).append(cls)
     for physics, adapters in by_physics.items():
-        vocabularies = {tuple(a.name for a in cls.assumptions) for cls in adapters}
+        vocabularies = {
+            tuple(a.name for a in cls.assumptions if a.name not in DISCRETISATION_ONLY)
+            for cls in adapters
+        }
         assert len(vocabularies) == 1, (
             f"adapters for {physics} declare different assumptions: "
             + ", ".join(f"{cls.name}={[a.name for a in cls.assumptions]}" for cls in adapters)
         )
+
+
+def test_a_discretisation_only_assumption_is_declared_by_exactly_one_half():
+    """The allowlist above is an exemption, so it must not become a place to hide things.
+
+    An entry that appears on *both* halves of a pair is not discretisation-specific and belongs
+    in the shared list; one that appears on neither is a stale name nobody removed. Either way
+    the allowlist has stopped describing anything, and this fails rather than letting the
+    exemption widen quietly.
+    """
+    def carries(cls, name: str) -> bool:
+        return any(assumption.name == name for assumption in cls.assumptions)
+
+    for name in DISCRETISATION_ONLY:
+        adapters = [cls for cls in registered_solvers() if carries(cls, name)]
+        assert adapters, f"{name} is allowlisted as discretisation-only but no adapter declares it"
+        for physics in {cls.physics for cls in adapters}:
+            halves = [cls for cls in registered_solvers() if cls.physics == physics]
+            # Only meaningful where both halves are installed. In a plain virtualenv the
+            # FEniCSx adapters never register, so "every adapter for this physics declares it"
+            # is trivially true of the one that is there — and asserting on that would make
+            # this test say something different depending on the environment, which is the
+            # opposite of what a guard against a widening exemption is for.
+            if len(halves) < 2:
+                continue
+            carrying = [cls for cls in halves if carries(cls, name)]
+            assert len(carrying) < len(halves), (
+                f"every {physics} adapter declares {name}, so it is not discretisation-specific "
+                "and belongs in the pair's shared assumptions"
+            )
 
 
 def test_a_comparator_is_declared_exactly_when_a_limit_is():

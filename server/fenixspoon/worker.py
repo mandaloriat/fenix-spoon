@@ -61,8 +61,17 @@ async def solve_job(
     solver_name: str,
     geometry_payload: dict,
     params_payload: dict,
+    conditions: dict[str, dict[str, float]] | None = None,
 ) -> str:
-    """Run one job. Returns its terminal status, mostly so arq's log says something useful."""
+    """Run one job. Returns its terminal status, mostly so arq's log says something useful.
+
+    ``conditions`` (the load case, #85) is defaulted rather than required because the queue
+    outlives a deployment: a job enqueued by an API that predates #85 arrives with four
+    arguments, and a worker that insisted on five would fail it for a reason having nothing to
+    do with the solve. The default cannot lose a constraint: a four-argument message can only
+    have come from an API with no way to accept a load case in the first place, and any API
+    that can accept one always sends the argument, empty or not.
+    """
     store = ctx["store"]
     bus: RedisEventBus = ctx["bus"]
     data_dir: Path = ctx["data_dir"]
@@ -102,6 +111,7 @@ async def solve_job(
             executor=None,  # arq runs one job at a time per worker; the default pool is fine
             timeout=_default_timeout(),
             cancel_event=cancel_event,
+            conditions=conditions,
         )
     finally:
         cancel_event.set()  # stop the watcher whatever happened

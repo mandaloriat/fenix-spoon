@@ -495,7 +495,22 @@ know whether the decision still holds.
 | **MCP resource exposure** *(both shipped, question still open)* | artifacts as MCP resources vs tool-returned paths vs both | #49 ships **both** and deliberately does not close this. The deciding evidence this row asks for — real host behaviour — is precisely what a test suite cannot produce, so closing it on the specification alone would be answering a different question. What is settled is one sub-case, on grounds that do not need a host: **a large artifact is described, not base64-encoded**. Base64 makes a file a third larger and delivers it into a context window that cannot use it, so a resource read returns path, size and content type; small text artifacts (<64 kB) arrive inline. What remains open is whether hosts in practice reach for the resource or the path, and that wants a host to watch. |
 | ~~**Study vs optimization boundary**~~ **→ a study's job list is a pure function of its object revision** | how much belongs in the M2.5 study service | settled by the first study kind, as this row asked. The test is not "does it enumerate" — that is a description, and descriptions blur — but a property you can check: given `study:s-1@2` you can say which solves it implies **without running any of them**. An optimizer cannot promise that, because its second point depends on the first one's answer. The line lands where this row wanted it: everything an external driver would otherwise reimplement (fan-out, cache reuse, per-job budget and quota, collecting compact results) is inside, and choosing the next point is outside. It also does real work — it is why a study stays reproducible under §8's rules while overriding a design's parameters, which `job.submit` may not do: the override is `values[i]` applied to `parameter`, both frozen in the study revision, so a rung's parameters are a pure function of *(study revision, rung index)*. |
 
-Two further questions are worth naming even though they are not blocking: how a capability declares
-its metrics without every adapter reimplementing the plumbing, and whether `boundary_condition` and
-`load_case` can be schematized generically or must stay solver-specific for now. Both are answered
-by the next physics capability that has to be modelled, not by argument.
+Two further questions were worth naming even though they were not blocking: how a capability
+declares its metrics without every adapter reimplementing the plumbing, and whether
+`boundary_condition` and `load_case` can be schematized generically or must stay solver-specific.
+Both were to be answered by the next physics capability that had to be modelled, not by argument.
+Both have now been answered that way, and the answers came out differently:
+
+- **Metrics**: settled by #46. A metric declared as a reduction of a field is computed generically
+  from #43's declaration, so four adapters do not each write `float(T.max())`; only the derived
+  ones, which need a parameter, are adapter code.
+- **`load_case`**: settled by #85, and by elasticity being the capability that needed it. It is
+  schematized, but only *around* the values — conditions are keyed by a boundary name the geometry
+  declares, and what is applied there stays an open dict of scalars. A typed union of condition
+  kinds would have put physics into the protocol and made every new physics a protocol change.
+  What is closed is one adapter's vocabulary, declared per capability, which is enough to refuse a
+  key nobody reads without generalising over physics nobody has written yet.
+- **`boundary_condition`**: still thin, and still by this rule rather than by neglect. No shipped
+  capability has one separable from its params in the way that type would describe, and #85 did
+  not produce one — a load case turned out to be the thing elasticity wanted. The next capability
+  that needs it decides, as before.

@@ -1,7 +1,7 @@
 # Changelog
 
 Notable changes to Fenix Spoon. The **wire protocol** has a version of its own
-(`MAJOR.MINOR`, currently 1.8) and its history is in
+(`MAJOR.MINOR`, currently 1.9) and its history is in
 [docs/04-wire-protocol.md](docs/04-wire-protocol.md); this file records what changed for the
 people who build on the toolkit, protocol bump or not.
 
@@ -59,6 +59,30 @@ not a specification written forward.
   names real vertices spanning **no edge** is refused: a boundary that validates and then
   matches nothing is the one outcome the design is arranged to prevent. What happens *on* a
   named boundary is a load case, and lands separately. (#85, first half)
+- **Protocol 1.9 — a load case says what happens there.** `conditions` on a job request, and a
+  `load_case` workspace object a design references — its own object type, because reusing one
+  set of restraints and loads across a family of shapes is the whole argument for it not being
+  a block inside the design. Values stay an open dict of scalars, so a new physics is not a
+  protocol change; what a capability *declares* is the keys it reads, discoverable as a tenth
+  `capability.describe` section.
+  ***An unread condition is an error where an unread material key is not***, and that
+  asymmetry is the point of the release. An ignored material key leaves a property at its
+  default. An ignored condition leaves a clamp out of the assembly, and the solve converges and
+  answers a different problem with no symptom — so a capability declaring no conditions
+  **refuses** a load case, an unknown boundary name is refused with both lists in the message,
+  and an unknown key is refused rather than dropped. The conditions go into the cache key, since
+  two designs differing only in what is clamped are two different solves; an absent load case
+  hashes identically to an empty one, so existing keys are untouched.
+  *Both elasticity adapters read them*, keeping `fixed_edge`/`load_edge` as the shorthand for
+  the common case — and sending both is refused. The two paths are cross-checked against each
+  other: a load case clamping the boundary that *is* `xmin` reproduces the shorthand's answer to
+  1e-6, through completely different code on each side.
+  *One thing the implementation had to be honest about.* A mock meshes a raster and conforms to
+  an outline only where the outline lands on grid lines, while Gmsh meshes the outline itself.
+  So a mock **refuses** a boundary it cannot resolve rather than loading the band of nodes
+  nearby, and carries a `raster_conforming_boundary` assumption its FEniCSx twin does not — the
+  first time a pair's declared validity legitimately differs, which cost the pairing test a
+  narrow, named exemption for discretisation-only assumptions. (#85, second half)
 
 ### Added — an explorable field viewer (`@fenix-spoon/viewer`)
 

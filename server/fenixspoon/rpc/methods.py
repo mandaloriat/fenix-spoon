@@ -71,6 +71,13 @@ class SubmitParams(BaseModel):
     solver: str | None = Field(default=None, description="A capability name, for inline use.")
     geometry: dict[str, Any] | None = Field(default=None, description="Inline geometry object.")
     params: dict[str, Any] = Field(default_factory=dict, description="Solver parameters.")
+    conditions: dict[str, dict[str, float]] = Field(
+        default_factory=dict,
+        description=(
+            "Inline load case: boundary name to the conditions applied there (#85). For the "
+            "inline form only — a design names `load_cases` and the server merges them."
+        ),
+    )
 
     @model_validator(mode="after")
     def _one_form_only(self) -> "SubmitParams":
@@ -82,6 +89,17 @@ class SubmitParams(BaseModel):
             )
         if self.design is None and not (self.solver and self.geometry):
             raise ValueError("pass a `design`, or both `solver` and `geometry`")
+        if self.design is not None and self.conditions:
+            # Same rule as the one above, and the same reason. A design resolves its own load
+            # cases, so a request carrying both has two answers to "what is clamped" and
+            # honouring either silently would produce a job whose inputs are not what the
+            # caller thinks. To vary a load, patch the load case or name a different one:
+            # both are versioned, where an inline override would not be.
+            raise ValueError(
+                "pass `conditions` only with the inline form: a design's load case comes from "
+                "the `load_cases` it names, and an inline override would not be reproducible "
+                "from the workspace"
+            )
         return self
 
 
@@ -313,7 +331,11 @@ async def job_submit(core: FenixSpoonCore, principal: Principal, params: dict) -
         job = await core.submit_design(request.design, principal)
     else:
         job = await core.submit(
-            request.solver, _geometry(request.geometry), request.params, principal
+            request.solver,
+            _geometry(request.geometry),
+            request.params,
+            principal,
+            conditions=request.conditions,
         )
     # Field-for-field what `POST /api/v1/jobs` answers, including `cached`. Built as a dict
     # rather than by importing `api.JobCreated`, because that module imports FastAPI and

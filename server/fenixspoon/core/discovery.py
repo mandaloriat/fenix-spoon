@@ -39,6 +39,7 @@ from ..solvers.base import (
     Assumption,
     CapabilityExample,
     CapabilityFeatures,
+    ConditionSpec,
     MetricSpec,
     Solver,
 )
@@ -54,6 +55,7 @@ SECTIONS: tuple[str, ...] = (
     "params",
     "metrics",
     "assumptions",
+    "conditions",
     "artifacts",
     "cost",
     "features",
@@ -359,6 +361,17 @@ class CapabilityDescription(Selective):
             "they put out of reach. Next to `metrics` because it is what qualifies them."
         ),
     )
+    conditions: list[ConditionSpec] | None = Field(
+        default=None,
+        description=(
+            "Section `conditions`: the boundary-condition keys a load case may apply to this "
+            "capability (#85). **An empty list is the load-bearing answer here** — it means "
+            "this capability takes no load case at all and will refuse a job carrying one, "
+            "rather than meaning it has simply not said. Every other section reports something "
+            "about the answer; this one reports an input, and a caller has to be able to tell "
+            "'do not send me a load case' from 'undeclared'."
+        ),
+    )
     artifacts: list[ArtifactSpec] | None = Field(
         default=None, description="Section `artifacts`: files a solve may write."
     )
@@ -559,6 +572,11 @@ def describe_capability(
         # indistinguishable from a section that was never asked for. The route's
         # `response_model_exclude_none` drops `None`, not `[]`.
         out.assumptions = list(solver_cls.assumptions)
+    if "conditions" in wanted:
+        # Empty matters more here than in `assumptions`, where it means "not declared". Here
+        # it is a *rule the server enforces*: no declared keys means a load case is refused,
+        # so `[]` is the answer "this capability takes none" and a caller can act on it.
+        out.conditions = list(solver_cls.conditions)
     if "artifacts" in wanted:
         out.artifacts = list(solver_cls.artifacts)
     if "cost" in wanted:

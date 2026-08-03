@@ -303,6 +303,7 @@ class JobManager:
         inputs: dict[str, Any] | None = None,
         cache_key: str | None = None,
         provenance: dict[str, Any] | None = None,
+        conditions: dict[str, dict[str, float]] | None = None,
     ) -> Job:
         job = Job(
             id=f"j-{uuid.uuid4().hex[:12]}",
@@ -322,7 +323,9 @@ class JobManager:
             # store — the only thing both processes share — said `done`.
             self._jobs[job.id] = job
             on_finish = self._retire(job)
-        await self.backend.start(record, solver_cls, geometry, params, on_finish=on_finish)
+        await self.backend.start(
+            record, solver_cls, geometry, params, on_finish=on_finish, conditions=conditions
+        )
         return job
 
     def _retire(self, job: Job):

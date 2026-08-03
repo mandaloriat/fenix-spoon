@@ -302,6 +302,65 @@ Everything here is **additive and empty by default**: `point_ids` is absent unle
 is named, and every adapter shipped today puts its conditions where the outer/obstacle split
 implies them.
 
+### The load case: what happens on a named boundary
+
+Protocol 1.9 is the other half of that split
+([#85](https://github.com/mandaloriat/fenix-spoon/issues/85)). A job carries `conditions`,
+keyed by a name from the geometry's `boundaries`:
+
+```jsonc
+{
+  "solver": "dolfinx.elasticity2d",
+  "geometry": { "…": "as above" },
+  "conditions": {
+    "root": {"fixed": 1},
+    "tip":  {"traction_x": 0.0, "traction_y": -1.0e6}
+  }
+}
+```
+
+A local caller does not send this inline. It creates a **`load_case` object** in the workspace
+and a design references it, which is what makes one set of restraints and loads reusable across
+a family of shapes — the argument for the load case being its own object type rather than a
+block inside the design. A design may name several load cases while they cover *different*
+boundaries; two that both speak for `root` are refused rather than merged by list order.
+
+**Values are an open dict of scalars**, like a region's `material`. A typed union of condition
+kinds would put physics into the protocol and make every new physics a protocol change. What is
+closed is *one adapter's vocabulary*: a capability declares the keys it reads, discoverable as
+the `conditions` section of `capability.describe`.
+
+#### An unread condition is an error, and an unread material key is not
+
+This is the one place the protocol makes an ignored input a refusal, and the asymmetry is
+deliberate. A material key a solver does not read leaves a property at its default: the answer
+is merely computed with that default. A *condition* a solver does not read leaves a clamp or a
+load out of the assembly — the body is under-constrained or unloaded, and the solve runs,
+converges and answers a different problem under the caller's name for this one. There is no
+symptom, so there is a `422`:
+
+| Refusal | When |
+|---|---|
+| `CapabilityTakesNoConditions` | the capability declares no condition keys and a load case was sent |
+| `UnknownBoundary` | a name the geometry does not declare — the message lists both sides |
+| `UnknownConditionKey` | a key the capability does not read |
+| `ConditionNeedsCompanion` | a key sent without another its declaration requires |
+| `ConflictingLoadCases` | two of a design's load cases claim one boundary |
+
+The conditions go into the **result cache key**. Two designs differing only in what is clamped
+are two different solves, and a key blind to them would answer the second with the first one's
+numbers. An absent load case hashes identically to an empty one, so keys written before 1.9 are
+unaffected.
+
+**Where a condition is placed is resolved once, into a predicate over coordinates** —
+`f(x) -> bool` for points shaped `(2, N)`. That is exactly what `locate_entities_boundary` and
+`locate_dofs_geometrical` take, so a FEniCSx adapter passes it through while a mock consumes it
+as a NumPy mask, and the two halves of a pair cannot end up applying one load case to different
+edges. One consequence is worth knowing: a mock that meshes a raster resolves an outline only
+where the outline lands on grid lines, and **refuses** a boundary it cannot resolve rather than
+loading the nodes nearby. That is declared as the `raster_conforming_boundary` assumption on
+the adapters it applies to.
+
 ### Time: an index over the artifacts
 
 A time-dependent solve produces two things of different natures, and 1.7 keeps them apart

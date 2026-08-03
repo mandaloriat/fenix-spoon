@@ -204,11 +204,60 @@ export function validateJobRequest(value: unknown): JobRequest {
   }
   const geometry = validateGeometry(value.geometry);
   if (value.params !== undefined && !isRecord(value.params)) fail('params must be an object');
+  const conditions = validateConditions(value.conditions);
   return {
     solver: value.solver,
     geometry,
     params: (value.params as Record<string, unknown>) ?? {},
+    ...(conditions === undefined ? {} : { conditions }),
   };
+}
+
+/**
+ * The load case (protocol 1.9): boundary name → condition key → scalar.
+ *
+ * Shape only, which is all a client can check. Whether the geometry declares a boundary and
+ * whether the capability reads a key are decided at submit against things the browser does
+ * not have — the *installed* capability's declaration in particular — and the server refuses
+ * both with a 422. Guessing at them here would mean a client that rejects a load case a
+ * newer server would have accepted.
+ *
+ * Values are numbers, not booleans. `{fixed: true}` is the tempting spelling and is refused
+ * on a real ground rather than on taste: the conditions ride into the server's cache key, so
+ * a `true` and a `1` that mean the same clamp would be two different solves of one problem.
+ */
+function validateConditions(
+  value: unknown,
+): Record<string, Record<string, number>> | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!isRecord(value)) fail('conditions must be an object keyed by boundary name');
+  const out: Record<string, Record<string, number>> = {};
+  for (const [boundary, applied] of Object.entries(value)) {
+    if (!isRecord(applied)) {
+      fail(
+        `conditions for boundary ${JSON.stringify(boundary)} must be an object of ` +
+          'key/number pairs; a flat map loses which boundary a condition is on',
+      );
+    }
+    const values: Record<string, number> = {};
+    for (const [key, scalar] of Object.entries(applied)) {
+      if (typeof scalar !== 'number' || !Number.isFinite(scalar)) {
+        fail(
+          `condition ${JSON.stringify(key)} on boundary ${JSON.stringify(boundary)} must be ` +
+            'a finite number',
+        );
+      }
+      values[key] = scalar;
+    }
+    if (Object.keys(values).length === 0) {
+      fail(
+        `boundary ${JSON.stringify(boundary)} is listed with no conditions; omit it entirely ` +
+          'to leave that boundary free',
+      );
+    }
+    out[boundary] = values;
+  }
+  return out;
 }
 
 const JOB_STATES = new Set(['running', 'done', 'failed', 'cancelled']);

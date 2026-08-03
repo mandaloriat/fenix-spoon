@@ -216,19 +216,24 @@ class FenixSpoonCore:
         params: dict[str, Any],
         principal: Principal,
         inputs: dict[str, Any] | None = None,
+        conditions: dict[str, dict[str, float]] | None = None,
     ) -> Job:
         """Validate, authorize, and hand the job to the execution backend.
 
-        The order of the four checks is deliberate and was inherited from the routes:
+        The order of the checks is deliberate and was inherited from the routes:
         identity of the solver, then whether it accepts this geometry, then whether the
-        params parse, then cost, and only then quota. A request that is *malformed* should
-        hear about that rather than about a quota it also happens to be over — the
-        quota message would send the caller to fix the wrong thing.
+        params parse, then the load case, then cost, and only then quota. A request that is
+        *malformed* should hear about that rather than about a quota it also happens to be
+        over — the quota message would send the caller to fix the wrong thing.
 
         ``inputs`` records which workspace object revisions this job came from, when it came
         from any. It is metadata rather than a second submission path: an inline geometry
         and a resolved design reach the backend identically, which is what stops the
         workspace becoming a parallel job system (#44).
+
+        ``conditions`` is the load case, already merged (#85). It arrives here as values
+        rather than as a reference for the same reason: `submit_design` resolves, and this
+        method takes what a solve actually needs, so there is one submission path and not two.
         """
         solver_cls = self.capability(solver)
 
@@ -239,6 +244,8 @@ class FenixSpoonCore:
             parsed = solver_cls.Params.model_validate(params)
         except ValidationError as exc:
             raise errors.InvalidParams(json.loads(exc.json())) from exc
+
+        conditions = self._check_conditions(solver_cls, geometry, conditions)
 
         estimate = solver_cls.estimate_cells(geometry, parsed)
         limit = self.jobs.max_cells
@@ -252,7 +259,9 @@ class FenixSpoonCore:
         fingerprint = cache.environment_fingerprint(list(solver_cls.requires))
         provenance = {"solver_version": solver_cls.version, "environment": fingerprint}
 
-        key = self.cache_key_for(solver_cls, geometry, parsed, environment=fingerprint)
+        key = self.cache_key_for(
+            solver_cls, geometry, parsed, conditions=conditions, environment=fingerprint
+        )
         if key is not None:
             reusable = self.jobs.store.find_cached(key, principal.id)
             if reusable is not None:
@@ -277,7 +286,47 @@ class FenixSpoonCore:
             inputs=inputs,
             cache_key=key,
             provenance=provenance,
+            conditions=conditions,
         )
+
+    @staticmethod
+    def _check_conditions(
+        solver_cls: type[Solver],
+        geometry: Geometry,
+        conditions: dict[str, dict[str, float]] | None,
+    ) -> dict[str, dict[str, float]]:
+        """The three refusals a load case can earn, before anything is queued (#85).
+
+        All three exist because the failure they prevent is *silent*. A condition that does not
+        reach the assembly leaves the body under-constrained or unloaded, and the solve still
+        converges and still answers — for a different problem, under the caller's name for this
+        one. There is nothing downstream that can notice, which is why the checks are here and
+        why none of them is a warning.
+
+        Checked against the **validated** geometry and the adapter's declaration, so a boundary
+        renamed by a geometry patch fails the next submit rather than the next reading of the
+        numbers.
+        """
+        if not conditions:
+            return {}
+        if not solver_cls.conditions:
+            raise errors.CapabilityTakesNoConditions(solver_cls.name)
+
+        declared = {spec.key: spec for spec in solver_cls.conditions}
+        available = [entry.name for entry in getattr(geometry, "boundaries", [])]
+        for boundary, values in conditions.items():
+            if boundary not in available:
+                raise errors.UnknownBoundary(boundary, solver_cls.name, available)
+            for key in values:
+                if key not in declared:
+                    raise errors.UnknownConditionKey(
+                        key, boundary, solver_cls.name, list(declared)
+                    )
+            for key in values:
+                missing = [item for item in declared[key].requires if item not in values]
+                if missing:
+                    raise errors.ConditionNeedsCompanion(key, boundary, missing)
+        return {name: dict(values) for name, values in conditions.items()}
 
     def cache_key_for(
         self,
@@ -285,6 +334,7 @@ class FenixSpoonCore:
         geometry: Geometry,
         params: Any,
         *,
+        conditions: dict[str, dict[str, float]] | None = None,
         environment: dict[str, str] | None = None,
     ) -> str | None:
         """This solve's content-addressed identity, or None if it must not be cached.
@@ -311,6 +361,7 @@ class FenixSpoonCore:
             solver_version=solver_cls.version,
             geometry=geometry.model_dump(mode="json"),
             params=params.model_dump(mode="json"),
+            conditions=conditions or {},
             environment=environment,
         )
 
@@ -345,7 +396,13 @@ class FenixSpoonCore:
             geometry,
             resolved.params,
             principal,
-            inputs=resolved.model_dump(exclude={"params"}),
+            # `conditions` is excluded for the same reason `params` is: `inputs` is the map of
+            # *object references* this job ran on, and `jobs_for_object` reads it backwards
+            # looking for them. The conditions are recoverable from the pinned `load_cases`
+            # already in there, and putting a dict of floats beside the references would give
+            # that backwards scan strings to walk that are not references at all.
+            inputs=resolved.model_dump(exclude={"params", "conditions"}),
+            conditions=resolved.conditions,
         )
 
     # -------------------------------------------------------------------- studies (#48)

@@ -129,6 +129,7 @@ What `POST /api/v1/jobs` accepts.
 | `solver` | `str` | yes |  | A `name` from `GET /solvers`. |
 | `geometry` | `Domain2D \| Regions2D` | yes |  | Geometry to solve on; its `type` must be one the solver accepts. |
 | `params` | `dict[str, Any]` | no | `{}` | Solver parameters, validated against that solver's schema. |
+| `conditions` | `dict[str, dict[str, float]]` | no | `{}` | The load case: boundary name to the conditions applied there, e.g. `{"root": {"fixed": 1}, "tip": {"traction_y": -1.0e6}}` (protocol 1.9, #85). Names must be ones the geometry declares in its `boundaries`, keys must be ones the capability declares in its `conditions`, and a capability that declares none refuses a job that carries any — it would otherwise solve as though the load case had not been sent. Inline here; a workspace caller references a `load_case` object instead and the server merges it. |
 
 ## `JobCreated`
 
@@ -526,6 +527,7 @@ What `capability.describe` returns. Every section is optional and omitted unless
 | `params` | `ParamsSection \| null` | no | `None` | Section `params`: the parameters, and a schema reference. |
 | `metrics` | `list[MetricSpec] \| null` | no | `None` | Section `metrics`: the engineering scalars it reports. |
 | `assumptions` | `list[Assumption] \| null` | no | `None` | Section `assumptions`: the modelling assumptions in force, and the quantities they put out of reach. Next to `metrics` because it is what qualifies them. |
+| `conditions` | `list[ConditionSpec] \| null` | no | `None` | Section `conditions`: the boundary-condition keys a load case may apply to this capability (#85). **An empty list is the load-bearing answer here** — it means this capability takes no load case at all and will refuse a job carrying one, rather than meaning it has simply not said. Every other section reports something about the answer; this one reports an input, and a caller has to be able to tell 'do not send me a load case' from 'undeclared'. |
 | `artifacts` | `list[ArtifactSpec] \| null` | no | `None` | Section `artifacts`: files a solve may write. |
 | `cost` | `CostSection \| null` | no | `None` | Section `cost`: whether a request can be sized in advance. |
 | `features` | `CapabilityFeatures \| null` | no | `None` | Section `features`: sweep, gradient and MPI support. |

@@ -32,10 +32,26 @@ disagreement about the *solve*, which is the thing the cross-validation is meant
 
 ## Boundary conditions
 
-As in the mock: `fixed_edge` and `load_edge` name edges of the bounding rectangle, and the
+Two ways in, and a job uses exactly one of them.
+
+**The shorthand.** `fixed_edge` and `load_edge` name edges of the bounding rectangle, and the
 traction is uniform along the loaded one. The loaded edge is selected inside the form with a
 `conditional` on the spatial coordinate rather than with facet tags — one expression, no
 tag bookkeeping, and it cannot fall out of step with the locator used for the clamp.
+
+**A load case** (#85), which lifts the restriction to axis-aligned edges. The conditions go on
+boundaries the *geometry* names, and this is where the choice of resolution shape pays for
+itself: `fenixspoon.boundaries.predicate` returns `f(x) -> bool` over points shaped `(2, N)`,
+which is exactly the signature `locate_dofs_geometrical` and `locate_entities_boundary` take,
+so the clamp is a pass-through and the traction is a facet tag built from the same call. The
+mock consumes the identical predicate as a NumPy mask. Neither adapter has its own idea of
+where a named boundary is.
+
+Facet tags rather than a `conditional` on this path, and the reason is that the shorthand's
+argument does not carry over: a `conditional` can express "x is near xmax" and cannot express
+"on the two edges spanned by points p3 and p4", because the predicate is a Python callable
+rather than a UFL expression. Tagging the facets it selects is how a callable becomes a
+measure.
 """
 
 from typing import Literal
@@ -43,12 +59,19 @@ from typing import Literal
 import numpy as np
 import ufl
 from dolfinx import default_scalar_type, fem
+from dolfinx import mesh as dmesh
 from dolfinx.fem.petsc import LinearProblem
 from pydantic import BaseModel, Field, model_validator
 
+from ..boundaries import governed_by_load_case, predicate
 from ..geometry import Domain2D, Regions2D
 from .base import CapabilityExample, ProgressEvent, Solver, SolverContext, SolverResult
-from .declarations import ELASTICITY_ASSUMPTIONS, ELASTICITY_METRICS, VTK_ARTIFACT
+from .declarations import (
+    ELASTICITY_ASSUMPTIONS,
+    ELASTICITY_CONDITIONS,
+    ELASTICITY_METRICS,
+    VTK_ARTIFACT,
+)
 from .dolfinx_magnetostatics import _build_tagged_mesh
 from .dolfinx_poisson import (
     _build_mesh as _build_holed_mesh,
@@ -124,6 +147,7 @@ class DolfinxElasticity2D(Solver):
     requires = ["dolfinx", "gmsh", "mpi4py", "petsc4py"]
     metrics = ELASTICITY_METRICS
     assumptions = ELASTICITY_ASSUMPTIONS
+    conditions = ELASTICITY_CONDITIONS
     #: A direct LU solve of a linear system on a mesh Gmsh builds deterministically from the
     #: same geometry: same inputs, same answer. Safe to cache (#47).
     deterministic = True
@@ -176,6 +200,67 @@ class DolfinxElasticity2D(Solver):
             if self.fixed_edge == self.load_edge:
                 raise ValueError("fixed_edge and load_edge must be different edges")
             return self
+
+    @staticmethod
+    def _from_load_case(msh, V, geometry, conditions: dict[str, dict[str, float]], v):
+        """The linear form, the clamped dofs and a refusal message, from a load case (#85).
+
+        Both halves come from one call to :func:`fenixspoon.boundaries.predicate` per boundary,
+        which is the property the predicate signature was chosen for: `locate_dofs_geometrical`
+        and `locate_entities_boundary` take the same callable, so the clamp and the traction
+        cannot end up on different edges.
+
+        The traction needs a measure, and a measure needs tags. Facets are located per boundary
+        and given a tag each; boundaries with no traction are not tagged at all, so a load case
+        that only clamps builds no `meshtags` and no `ds` — a body in equilibrium under nothing
+        is a solve worth refusing, and the empty right-hand side is what makes it visible.
+        """
+        tdim = msh.topology.dim
+        clamped: list[np.ndarray] = []
+        indices: list[np.ndarray] = []
+        markers: list[np.ndarray] = []
+        tractions: dict[int, tuple[float, float]] = {}
+
+        for tag, (name, values) in enumerate(sorted(conditions.items()), start=1):
+            where = predicate(geometry, name)
+            if values.get("fixed"):
+                clamped.append(fem.locate_dofs_geometrical(V, where))
+            pull = (values.get("traction_x", 0.0), values.get("traction_y", 0.0))
+            if pull == (0.0, 0.0):
+                continue
+            facets = dmesh.locate_entities_boundary(msh, tdim - 1, where)
+            if len(facets) == 0:
+                continue
+            indices.append(facets)
+            markers.append(np.full(len(facets), tag, dtype=np.int32))
+            tractions[tag] = pull
+
+        rhs = None
+        if indices:
+            # `meshtags` wants the entities sorted; concatenating per-boundary results does not
+            # give that, and an unsorted array is accepted and then indexed wrongly.
+            flat = np.concatenate(indices).astype(np.int32)
+            order = np.argsort(flat)
+            tags = dmesh.meshtags(msh, tdim - 1, flat[order], np.concatenate(markers)[order])
+            ds = ufl.Measure("ds", domain=msh, subdomain_data=tags)
+            for tag, pull in tractions.items():
+                term = (
+                    ufl.dot(fem.Constant(msh, np.asarray(pull, dtype=default_scalar_type)), v)
+                    * ds(tag)
+                )
+                rhs = term if rhs is None else rhs + term
+        if rhs is None:
+            # A zero form rather than no form: the problem is still assembled, and a body that
+            # is clamped and unloaded fails on the emptiness rather than on a missing argument.
+            zero = fem.Constant(msh, np.zeros(2, dtype=default_scalar_type))
+            rhs = ufl.dot(zero, v) * ufl.ds
+
+        return (
+            rhs,
+            np.concatenate(clamped) if clamped else np.zeros(0, dtype=np.int32),
+            "the load case restrains no boundary that any mesh node lies on, so the body is "
+            "free to move; check that a `fixed` condition names a boundary the mesh reaches",
+        )
 
     @classmethod
     def estimate_cells(cls, geometry, params: "DolfinxElasticity2D.Params") -> int:
@@ -234,23 +319,28 @@ class DolfinxElasticity2D(Solver):
 
         xmin, ymin, xmax, ymax = geometry.bounds
         eps = 1e-9 * min(xmax - xmin, ymax - ymin)
-        traction = fem.Constant(msh, np.asarray(params.traction, dtype=default_scalar_type))
 
         a = ufl.inner(sigma(u), epsilon(v)) * ufl.dx
-        rhs = (
-            ufl.dot(traction, v)
-            * edge_indicator(msh, geometry.bounds, params.load_edge, eps)
-            * ufl.ds
-        )
 
-        clamped = fem.locate_dofs_geometrical(
-            V, edge_locator(geometry.bounds, params.fixed_edge, eps)
-        )
-        if len(clamped) == 0:
-            raise ValueError(
+        if governed_by_load_case(ctx, params, ("fixed_edge", "load_edge", "traction")):
+            rhs, clamped, restraint = self._from_load_case(msh, V, geometry, ctx.conditions, v)
+        else:
+            traction = fem.Constant(msh, np.asarray(params.traction, dtype=default_scalar_type))
+            rhs = (
+                ufl.dot(traction, v)
+                * edge_indicator(msh, geometry.bounds, params.load_edge, eps)
+                * ufl.ds
+            )
+            clamped = fem.locate_dofs_geometrical(
+                V, edge_locator(geometry.bounds, params.fixed_edge, eps)
+            )
+            restraint = (
                 f"no mesh node lies on the {params.fixed_edge!r} edge, so the body is not "
                 "restrained; with `regions2d` the material must reach the bounding rectangle"
             )
+
+        if len(clamped) == 0:
+            raise ValueError(restraint)
         bc = fem.dirichletbc(
             fem.Constant(msh, np.zeros(2, dtype=default_scalar_type)), clamped, V
         )

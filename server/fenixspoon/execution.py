@@ -73,6 +73,7 @@ async def run_solve(
     executor: Executor | None,
     timeout: float,
     cancel_event: threading.Event,
+    conditions: dict[str, dict[str, float]] | None = None,
 ) -> JobRecord:
     """Run one solve to a terminal status, persisting and publishing as it goes.
 
@@ -98,7 +99,10 @@ async def run_solve(
         loop.call_soon_threadsafe(schedule)
 
     ctx = SolverContext(
-        progress_cb=on_progress, cancel_event=cancel_event, artifact_dir=artifact_dir
+        progress_cb=on_progress,
+        cancel_event=cancel_event,
+        artifact_dir=artifact_dir,
+        conditions=conditions,
     )
     started = time.monotonic()
     try:

@@ -33,6 +33,15 @@ STATUS: dict[type[errors.CoreError], int] = {
     errors.UnknownLevel: 422,
     errors.FieldQueryFailed: 422,
     errors.RegionUnavailable: 422,
+    # The load-case refusals (#85). All 422, and all for the same reason as
+    # `GeometryKindMismatch` beside them: the request is well-formed JSON that this capability
+    # and this geometry cannot honour. A caller fixes them by changing what it sent, which is
+    # what separates a 422 from a 409 — nothing about the server's state will make them go away.
+    errors.CapabilityTakesNoConditions: 422,
+    errors.UnknownBoundary: 422,
+    errors.UnknownConditionKey: 422,
+    errors.ConditionNeedsCompanion: 422,
+    errors.ConflictingLoadCases: 422,
     errors.JobAlreadyFinished: 409,
     errors.JobNotFinished: 409,
     errors.JobDidNotSucceed: 409,

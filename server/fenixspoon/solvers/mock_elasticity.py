@@ -49,14 +49,36 @@ from typing import Literal
 import numpy as np
 from pydantic import BaseModel, Field, model_validator
 
+from ..boundaries import governed_by_load_case, predicate
 from ..geometry import Domain2D, Regions2D
 from .base import CapabilityExample, ProgressEvent, Solver, SolverContext, SolverResult
-from .declarations import ELASTICITY_ASSUMPTIONS, ELASTICITY_METRICS, VTK_ARTIFACT
+from .declarations import (
+    ELASTICITY_ASSUMPTIONS,
+    ELASTICITY_CONDITIONS,
+    ELASTICITY_METRICS,
+    RASTER_CONFORMING_BOUNDARY,
+    VTK_ARTIFACT,
+)
 from .mock_laplace import _grid_shape, grid_to_mesh2d, polygon_mask, write_vtk_structured_points
 from .registry import register
 
 #: Which edge of the bounding rectangle a boundary condition applies to.
 Edge = Literal["xmin", "xmax", "ymin", "ymax"]
+
+
+def boundary_edges(triangles: np.ndarray) -> np.ndarray:
+    """Mesh edges on the outside: the ones belonging to exactly one triangle.
+
+    Topology rather than geometry, which is what makes a load case work on a hole outline and
+    a curved profile with no special case per shape. An interior edge is shared by two
+    triangles and a boundary edge by one, and that is the whole test.
+    """
+    edges = np.sort(
+        np.concatenate([triangles[:, [0, 1]], triangles[:, [1, 2]], triangles[:, [2, 0]]]),
+        axis=1,
+    )
+    unique, counts = np.unique(edges, axis=0, return_counts=True)
+    return unique[counts == 1]
 
 
 def constitutive(e: np.ndarray, nu: np.ndarray, plane: str) -> np.ndarray:
@@ -227,7 +249,11 @@ class MockElasticity2D(Solver):
     physics = "elasticity"
     availability = "mock"
     metrics = ELASTICITY_METRICS
-    assumptions = ELASTICITY_ASSUMPTIONS
+    #: The pair's shared assumptions plus one this half alone carries — see
+    #: :data:`RASTER_CONFORMING_BOUNDARY` for why a discretisation limit is declared here
+    #: rather than shared with the FEniCSx twin that does not have it.
+    assumptions = [*ELASTICITY_ASSUMPTIONS, RASTER_CONFORMING_BOUNDARY]
+    conditions = ELASTICITY_CONDITIONS
     #: CG to a fixed tolerance with no randomness: same inputs, same array. Safe to cache (#47).
     deterministic = True
     artifacts = [VTK_ARTIFACT]
@@ -346,15 +372,21 @@ class MockElasticity2D(Solver):
 
         tolerance = 1e-9 * min(xmax - xmin, ymax - ymin)
         free = np.ones(n_dof)
-        clamped = edge_nodes(points, geometry.bounds, params.fixed_edge, tolerance)
-        free[2 * clamped] = 0.0
-        free[2 * clamped + 1] = 0.0
 
-        rhs = self._edge_traction(points, geometry.bounds, params, tolerance, n_dof)
-        if not np.any(rhs[free > 0]):
-            raise ValueError(
+        if governed_by_load_case(ctx, params, ("fixed_edge", "load_edge", "traction")):
+            clamped, rhs = self._from_load_case(geometry, ctx.conditions, points, triangles, n_dof)
+            unloaded = "no boundary in the load case carries a traction that loads a free node"
+        else:
+            clamped = edge_nodes(points, geometry.bounds, params.fixed_edge, tolerance)
+            rhs = self._edge_traction(points, geometry.bounds, params, tolerance, n_dof)
+            unloaded = (
                 "the traction produced no load on any free node; check `load_edge` and `traction`"
             )
+
+        free[2 * clamped] = 0.0
+        free[2 * clamped + 1] = 0.0
+        if not np.any(rhs[free > 0]):
+            raise ValueError(unloaded)
 
         solution, residual, iterations = conjugate_gradients(
             apply, rhs, diagonal, free, ctx, params.iterations, params.report_every
@@ -404,6 +436,66 @@ class MockElasticity2D(Solver):
                 "bounds": [xmin, ymin, xmax, ymax],
                 **grid_to_mesh2d(x, y, hole, grids, {"u": vectors}),
             },
+        )
+
+    @staticmethod
+    def _from_load_case(
+        geometry, conditions: dict[str, dict[str, float]], points, triangles, n_dof: int
+    ):
+        """Clamped nodes and nodal forces from a load case (#85).
+
+        The general form of what `_edge_traction` does for an axis-aligned edge, and it is
+        general because it works from the **mesh's own boundary** rather than from an axis.
+        Each boundary edge — an edge belonging to exactly one triangle — whose *both* endpoints
+        fall on the named boundary carries `traction * length`, split between its ends. That is
+        the same consistent load as before, so refining converges to the same total force, and
+        it now applies to a hole outline or a curved profile without a special case.
+
+        Why both endpoints rather than either: an edge with one end on the boundary is an edge
+        leaving it, and loading it would smear the traction into the body by half an element.
+        """
+        selected_edges = boundary_edges(triangles)
+        clamped: list[np.ndarray] = []
+        rhs = np.zeros(n_dof)
+
+        for name, values in conditions.items():
+            # The geometry declared this boundary — submit refused the job otherwise — so a
+            # KeyError here would be a bug rather than a caller's mistake.
+            on_boundary = predicate(geometry, name)(points.T)
+
+            if not on_boundary.any():
+                # The raster did not resolve this boundary: it follows an outline that does
+                # not land on grid lines. Refused here, naming the boundary, rather than left
+                # to the downstream "nothing was loaded" check — a clamp that selected nothing
+                # would not even reach that check, and would simply be missing from a solve
+                # that ran. See the `raster_conforming_boundary` assumption.
+                raise ValueError(
+                    f"no mesh node lies on boundary {name!r}: this solver meshes a raster, so "
+                    "it resolves an outline only where the outline lands on grid lines. Raise "
+                    "`resolution` until it does, move the boundary onto the grid, or use "
+                    "`dolfinx.elasticity2d`, which meshes the outline itself"
+                )
+
+            if values.get("fixed"):
+                clamped.append(np.flatnonzero(on_boundary))
+
+            traction = (values.get("traction_x", 0.0), values.get("traction_y", 0.0))
+            if traction == (0.0, 0.0):
+                continue
+            spanning = selected_edges[
+                on_boundary[selected_edges[:, 0]] & on_boundary[selected_edges[:, 1]]
+            ]
+            lengths = np.linalg.norm(points[spanning[:, 1]] - points[spanning[:, 0]], axis=1)
+            for axis, value in enumerate(traction):
+                if value == 0.0:
+                    continue
+                share = value * lengths / 2.0
+                np.add.at(rhs, 2 * spanning[:, 0] + axis, share)
+                np.add.at(rhs, 2 * spanning[:, 1] + axis, share)
+
+        return (
+            np.concatenate(clamped) if clamped else np.zeros(0, dtype=np.int64),
+            rhs,
         )
 
     @staticmethod

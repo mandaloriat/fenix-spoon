@@ -94,12 +94,23 @@ def cache_key(
     geometry: dict[str, Any],
     params: dict[str, Any],
     environment: dict[str, str],
+    conditions: dict[str, dict[str, float]] | None = None,
 ) -> str:
     """The identity of one solve: a hex digest over its canonical inputs.
 
     Labelled with :data:`SCHEME` and with each part named, so the digest cannot collide
     between two different arrangements of the same bytes — `{"a": "bc"}` and `{"ab": "c"}`
     serialise differently here even though a naive concatenation would not distinguish them.
+
+    ``conditions`` is the load case (#85), and it has to be in here for the reason the whole
+    cache is opt-in: two designs that differ *only* in what is clamped are two different
+    solves, and a key blind to them would answer the second from the first. That is the same
+    shape as #48's `resolutoin` guard — a fabricated agreement between runs that were never
+    the same run — and it is the version of it the cache could produce on its own.
+
+    Defaulted rather than required, because every caller that predates load cases passes a
+    solve that has none, and an absent load case must hash identically to an empty one or
+    every key in an existing store would change for no change in inputs.
     """
     payload = canonical(
         {
@@ -109,6 +120,9 @@ def cache_key(
             "geometry": geometry,
             "params": params,
             "environment": environment,
+            # Omitted when empty, so a store written before #85 keeps hitting: adding a key
+            # whose value is `{}` would change every existing digest.
+            **({"conditions": conditions} if conditions else {}),
         }
     )
     return hashlib.sha256(payload.encode()).hexdigest()[:DIGEST_CHARS]

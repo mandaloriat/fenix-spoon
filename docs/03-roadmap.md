@@ -389,13 +389,38 @@ capability first and the protocol change second.
       that validates and then matches nothing is precisely the failure the design exists to
       prevent — and it is refused through the same `spanned_edges` the resolver uses, so the check
       and the resolution cannot drift apart.
-- [ ] **A load case says what happens there** (#85 second half) — the *where* has landed and the
-      *what* has not. A fourth workspace object beside `geometry`, `material` and `design`, because
-      an engineer reuses one set of restraints and loads across a family of shapes, and that reuse
-      is the whole argument for it not being a block inside the design. Values stay an open dict
-      of scalars like `Region2D.material`, so a new physics is not a protocol change; what is new
-      is that an adapter **declares the condition keys it reads**, since a material key typo is
-      silently ignored today and a boundary-condition typo must not be.
+- [x] **A load case says what happens there** (#85 second half, protocol 1.9) — a fourth
+      workspace object beside `geometry`, `material` and `design`, because an engineer reuses one
+      set of restraints and loads across a family of shapes, and that reuse is the whole argument
+      for it not being a block inside the design. Values stay an open dict of scalars like
+      `Region2D.material`, so a new physics is not a protocol change; what an adapter
+      **declares** is the condition keys it reads.
+      ***The asymmetry with a material key is the release.*** A material key a solver does not
+      read leaves a property at its default and the answer is merely computed with it. A
+      condition a solver does not read leaves a clamp out of the assembly, and the solve
+      converges and answers a different problem with no symptom — so a capability declaring no
+      conditions refuses a load case outright, an unknown boundary is refused with both lists in
+      the message, and an unknown key is refused rather than dropped. The conditions go into the
+      cache key, because two designs differing only in what is clamped are two different solves.
+      *The two placement routes are cross-checked against each other rather than each against
+      itself*: a load case clamping the boundary that **is** `xmin` reproduces the
+      `fixed_edge`/`load_edge` shorthand's answer to 1e-6 through entirely different code, and
+      sending both at once is refused. The id decision is re-tested at the level that matters —
+      a workspace patch inserting a vertex, then a solve — and the test carries its own
+      counterexample, re-running with the selector an index-based implementation would have
+      produced and requiring it to disagree.
+      *And a limitation stated rather than smoothed over*: a mock meshes a raster and conforms
+      to an outline only where the outline lands on grid lines, so it **refuses** a boundary it
+      cannot resolve instead of loading the band of nodes nearby. It carries a
+      `raster_conforming_boundary` assumption its FEniCSx twin does not — the first case where a
+      pair's declared validity legitimately differs, and the reason the pairing test now has a
+      narrow, named exemption for assumptions that are about discretisation rather than physics.
+
+**Where this thread leaves the open questions.** #44 said `boundary_condition` and `load_case`
+would stay thin "until a capability needs them", and elasticity is the capability that did —
+so `load_case` acquired a body the same way `study` did at #48, by having something concrete to
+generalise from. `boundary_condition` is still thin, still for the recorded reason, and still
+waiting on the next capability rather than on an argument.
 
 ## M3 — Production job execution
 
