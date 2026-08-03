@@ -3,6 +3,7 @@ parse) against the pydantic protocol models, and live server output must round-t
 through the same models. The JS SDK (roadmap M2) consumes the identical fixture files."""
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -58,6 +59,39 @@ def test_the_corpus_and_the_server_agree_on_the_protocol_version():
     declared = json.loads((FIXTURES / "version.json").read_text())["protocol_version"]
     assert declared == PROTOCOL_VERSION, (
         f"protocol/fixtures/version.json says {declared}, the server says {PROTOCOL_VERSION}"
+    )
+
+
+#: Prose that states the protocol version, and the pattern that reads the number out of it.
+#: Every entry is a place a *person* learns what this server speaks, which is exactly the kind
+#: of claim nothing else checks — no code imports a markdown preamble.
+#:
+#: The list has two entries because one was not enough, and the way that was discovered is
+#: worth keeping: the CHANGELOG check was added *because* its number had drifted three minors
+#: behind, and the README then drifted one commit later, in the very change that introduced the
+#: check. A guard aimed at one file taught nothing about the others. Anything that says the
+#: version in words belongs here.
+PROSE_CLAIMS = {
+    "CHANGELOG.md": r"`MAJOR\.MINOR`, currently ([0-9]+\.[0-9]+)\)",
+    "README.md": r"\*\*The wire protocol is at ([0-9]+\.[0-9]+)\.\*\*",
+}
+
+
+@pytest.mark.parametrize("filename", sorted(PROSE_CLAIMS))
+def test_the_prose_states_the_current_protocol(filename):
+    """A file that tells a reader the protocol version must tell them the right one.
+
+    Deliberately a regex over the sentence rather than a whole-line match: the prose around the
+    number should stay free to change, and only the number is the claim being checked.
+    """
+    text = (FIXTURES.parents[1] / filename).read_text()
+    stated = re.search(PROSE_CLAIMS[filename], text)
+    assert stated is not None, (
+        f"{filename} no longer states the protocol version in the form this test reads; "
+        "restore the phrasing or update the pattern, but do not delete the claim"
+    )
+    assert stated.group(1) == PROTOCOL_VERSION, (
+        f"{filename} says the protocol is {stated.group(1)}, the server says {PROTOCOL_VERSION}"
     )
 
 

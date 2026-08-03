@@ -1,15 +1,87 @@
 # Changelog
 
 Notable changes to Fenix Spoon. The **wire protocol** has a version of its own
-(`MAJOR.MINOR`, currently 1.5) and its history is in
+(`MAJOR.MINOR`, currently 1.9) and its history is in
 [docs/04-wire-protocol.md](docs/04-wire-protocol.md); this file records what changed for the
 people who build on the toolkit, protocol bump or not.
+
+*The number above is asserted, not maintained by hand: `test_changelog_states_the_current_protocol`
+reads this line and compares it with `fenixspoon.protocol.PROTOCOL_VERSION`. It had drifted three
+minors behind before that test existed, which is the whole argument for it.*
 
 Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely and the
 project is pre-1.0, so the packages are versioned together and nothing here is a stability
 promise yet.
 
 ## Unreleased
+
+### Added — two more physics, and the three protocol gaps they exposed
+
+Each capability below was added for its own sake and each one found something the protocol
+could not say. That order matters: the extensions are answers to a solver that needed them,
+not a specification written forward.
+
+- **Linear elasticity** (`mock.elasticity2d`, `dolfinx.elasticity2d`) — the first physics with
+  a **vector** unknown, and the first whose boundary conditions the geometry could not
+  express. Validated against closed forms: the Kirsch stress concentration around a circular
+  hole and a cantilever's `PL³/3EI` tip deflection. Nodal stress is area-weighted, in one
+  shared helper, so the pair cannot average differently. (#81)
+- **Transient heat conduction** (`mock.transient_heat2d`, `dolfinx.transient_heat2d`) — the
+  first capability that answers *when* rather than *what at rest*, and the one that found the
+  protocol had no time dimension at all. Volume-weighted mean and time constant on the
+  unstructured mesh. (#82)
+
+- **Protocol 1.6 — a metric declares what it is taken over.** `MetricSpec.over` is `payload`
+  (the default, and what every steady capability already meant) or `run`, for a quantity only
+  the adapter can supply: a peak over a transient's history, a time to reach a level. The
+  combination that lies — a `run` metric declared as a reduction of the payload — is refused
+  rather than computed. Additive, and a discovery-payload change, so the SDK carries the
+  version and models nothing new. (#86)
+- **Protocol 1.7 — an artifact knows which instant it holds.** `ArtifactRef.t`, and a derived
+  `frames` list on the result envelope: the time index of a transient *is* the artifacts
+  carrying an instant, in time order. Deliberately **not** a new result kind — the field
+  history crosses as references like every other large thing. Deriving the index from the
+  files rather than storing it beside them is what makes a frame naming a file the result does
+  not serve unrepresentable rather than merely tested for. Capped at `MAX_FRAMES`, enforced
+  where the artifact is registered rather than where the envelope is built, because the
+  compact levels and the local API never build an envelope. The SDK *does* model this one:
+  `ArtifactRef.t` and `FrameRef` are part of the result envelope it already types. (#86)
+- **Protocol 1.8 — a geometry can name pieces of its own boundary.** Optional stable
+  `point_ids` on `polygon2d`, and a `boundaries` list whose selectors come in three families:
+  `part` (topological — `outer`, `obstacle`, `region:<name>`), `points` (by stable id), and
+  `near`/`box`/`all_of` (geometric). Additive and empty by default; every adapter shipped
+  before it puts its conditions where the outer/obstacle split implies them.
+  *Ids and predicates are both here because they follow different things — an id follows the
+  shape through an edit, a predicate follows the space — and neither can express the other
+  honestly.* Resolution produces a **predicate over coordinates**, `f(x) -> bool` for points
+  shaped `(2, N)`, which is exactly what `locate_entities_boundary` takes, so a FEniCSx
+  adapter passes it through and a mock gets a NumPy mask from the same call. A selector that
+  names real vertices spanning **no edge** is refused: a boundary that validates and then
+  matches nothing is the one outcome the design is arranged to prevent. What happens *on* a
+  named boundary is a load case, and lands separately. (#85, first half)
+- **Protocol 1.9 — a load case says what happens there.** `conditions` on a job request, and a
+  `load_case` workspace object a design references — its own object type, because reusing one
+  set of restraints and loads across a family of shapes is the whole argument for it not being
+  a block inside the design. Values stay an open dict of scalars, so a new physics is not a
+  protocol change; what a capability *declares* is the keys it reads, discoverable as a tenth
+  `capability.describe` section.
+  ***An unread condition is an error where an unread material key is not***, and that
+  asymmetry is the point of the release. An ignored material key leaves a property at its
+  default. An ignored condition leaves a clamp out of the assembly, and the solve converges and
+  answers a different problem with no symptom. So three refusals, all at submit and all in the
+  shared error corpus: `UnknownBoundary` for a name the geometry does not declare,
+  `UnknownConditionKey` for a key no capability reads, and `ConflictingConditions` for two of a
+  design's load cases setting one key on one boundary — refused rather than resolved by list
+  order. The conditions go into the cache key, since two designs differing only in what is
+  clamped are two different solves.
+  *Both elasticity adapters read them*, falling back to `fixed_edge`/`load_edge` when no load
+  case is supplied. **Precedence is total, never a merge**: a caller who named every boundary
+  must not inherit an invisible clamp from a default it never set. The FEniCSx half tags facets
+  built from the same predicate the mock consumes as a NumPy mask, so the pair cannot apply one
+  load case to different edges — and writing it turned up a real bug in the 1.8 resolver, which
+  did two-row arithmetic on the `(3, N)` coordinates dolfinx passes.
+  *Verified in the FEniCSx CI job*, where a load case reproduces the edge shorthand to 1e-9 and
+  a plate hangs from its own hole. (#85, second half)
 
 ### Added — an explorable field viewer (`@fenix-spoon/viewer`)
 

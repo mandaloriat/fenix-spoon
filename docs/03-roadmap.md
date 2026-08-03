@@ -333,6 +333,95 @@ unchanged objects and reports what it took from cache. The solenoid and the heat
 acceptable subjects. The milestone is *not* done when JSON-RPC merely answers — it is done when
 that iterative loop runs end to end.
 
+## More physics, and what each one asked of the protocol
+
+**Not a milestone — a thread that runs alongside them**, and the reason it has a section is that
+it kept producing protocol changes that nothing in M0–M5 predicted. The three items reported back
+from `physics-lab` above were gaps a *consumer* found by building on the toolkit. These are gaps a
+**new capability** found by being added to it, which is the other direction and, so far, the more
+productive one.
+
+The order is the load-bearing part. Every extension below answers a solver that already wanted it,
+rather than a specification written forward and hoped for — which is why each entry names the
+capability first and the protocol change second.
+
+- [x] **Linear elasticity: a vector unknown, and where the boundary conditions go** (#81) —
+      `mock.elasticity2d` and `dolfinx.elasticity2d`, validated against the Kirsch stress
+      concentration around a circular hole and a cantilever's `PL³/3EI` tip deflection. The first
+      result whose unknown is a vector, and the first capability whose conditions the geometry
+      could not express: `fixed_edge` / `load_edge` are params naming an axis-aligned edge, which
+      is a shorthand and is declared as one. *Nodal stress is area-weighted in one shared helper,
+      so the two halves of the pair cannot average differently* — the same reasoning that later
+      put boundary resolution in one place. The thing it could not do became #85.
+- [x] **Transient heat: answering "when", and finding out what the protocol cannot say** (#82) —
+      `mock.transient_heat2d` and `dolfinx.transient_heat2d`, with the mean and the time constant
+      volume-weighted on the unstructured mesh. The capability landed and immediately opened the
+      two entries below: a solve with a history had nowhere to put it, and `t_max` over a
+      transient meant something `stats` and `metrics` between them could not distinguish.
+- [x] **A metric declares what it is taken over, and the combination that lies is refused**
+      (#86, protocol 1.6) — `MetricSpec.over` is `payload` (the default, and what every steady
+      capability already meant) or `run`, for a quantity only the adapter can supply: a peak over
+      a history, a time to reach a level. *The refusal is the point.* A `run` metric declared as a
+      reduction of the payload would be filled in generically by #46's machinery from the final
+      frame and reported under a name promising the whole run — a wrong number with a
+      correct-looking label, which is worse than an absent one. Additive, and a discovery-payload
+      change like 1.2's, so the SDK carries the version and models nothing new.
+- [x] **The time index: an artifact knows which instant it holds** (#86, protocol 1.7) — an
+      optional `t` on an artifact, and a derived `frames` list on the result envelope. The time
+      index of a transient *is* the artifacts carrying an instant, in time order.
+      *Deliberately not a new result kind*: the field history crosses as references like every
+      other large thing, and there is no server-side reduction at a chosen instant. Deriving the
+      index from the files rather than storing it beside them is what makes a frame naming a file
+      the result does not serve **unrepresentable** rather than merely tested for. The cap is
+      enforced where an artifact is registered, not where an envelope is built, because the
+      compact levels and the local API never build one — and a cap half the callers can walk past
+      is not a cap. Unlike 1.6 the SDK models this one: leaving it out would have made the version
+      constant advertise a shape the types denied.
+- [x] **A geometry names pieces of its own boundary** (#85 first half, protocol 1.8) — optional
+      stable `point_ids` on `polygon2d`, and a `boundaries` list. Three selector families, because
+      they follow different things: `part` follows the **topology** and needed no invention
+      (`outer`, `obstacle`, `region:<name>` are what the shipped adapters already assume),
+      `points` follows the **shape** through an edit, and `near`/`box` follow the **space**.
+      *Indices could not do the second*: insert a control point and every index after it shifts,
+      moving a named boundary onto a different edge with nothing to notice. `all_of` intersects,
+      and is a closed set rather than an expression language — that is the UFL-over-the-wire
+      argument again in miniature. Resolution produces a **predicate over coordinates**,
+      `f(x) -> bool` over points shaped `(2, N)`, which is exactly what `locate_entities_boundary`
+      takes: one resolution, two consumers, no chance of the pair disagreeing about which edge was
+      meant. *A `points` selector naming real vertices that span no edge is refused* — a boundary
+      that validates and then matches nothing is precisely the failure the design exists to
+      prevent — and it is refused through the same `spanned_edges` the resolver uses, so the check
+      and the resolution cannot drift apart.
+- [x] **A load case says what happens there** (#85 second half, protocol 1.9) — a fourth
+      workspace object beside `geometry`, `material` and `design`, because an engineer reuses one
+      set of restraints and loads across a family of shapes, and that reuse is the whole argument
+      for it not being a block inside the design. Values stay an open dict of scalars like
+      `Region2D.material`, so a new physics is not a protocol change; what an adapter
+      **declares** is the condition keys it reads.
+      ***The asymmetry with a material key is the release.*** A material key a solver does not
+      read leaves a property at its default and the answer is merely computed with it. A
+      condition a solver does not read leaves a clamp out of the assembly, and the solve
+      converges and answers a different problem with no symptom. Hence three refusals, all at
+      submit and all in the shared error corpus: `UnknownBoundary`, `UnknownConditionKey` and
+      `ConflictingConditions` for two of a design's load cases setting one key on one boundary.
+      The conditions go into the cache key, because two designs differing only in what is
+      clamped are two different solves — leaving them out would have served the clamped answer
+      to the caller who asked about the free one.
+      *Precedence between a load case and the `fixed_edge`/`load_edge` shorthand is **total,
+      never a merge***: a caller who named every boundary must not inherit an invisible clamp
+      from a default it never set. The FEniCSx half builds facet tags from the same predicate
+      the mock consumes as a NumPy mask, which is what the `f(x) -> bool` shape was chosen for —
+      and writing it found a real bug in the 1.8 resolver, which did two-row arithmetic on the
+      `(3, N)` coordinates dolfinx passes. Verified in the FEniCSx CI job: the load case
+      reproduces the edge shorthand to 1e-9, and a plate hangs from its own hole.
+
+**Where this thread leaves the open questions.** #44 said `boundary_condition` and `load_case`
+would stay thin "until a capability needs them", and elasticity is the capability that did —
+so `load_case` acquired a body the same way `study` did at #48, by having something concrete to
+generalise from. The honest reading of #85 is that a load case is what a boundary condition was
+reaching for: `boundary_condition` is now the type with no user, still thin, still waiting on a
+capability rather than on an argument.
+
 ## M3 — Production job execution
 
 Goal: multi-user deployments are safe and boring. *Everything below has landed except the Helm
