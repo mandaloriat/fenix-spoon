@@ -33,6 +33,7 @@ from .geometry import (
     PartSelector,
     PointsSelector,
     Polygon2D,
+    spanned_edges,
 )
 
 #: Fraction of the domain's shorter side used as the default tolerance when matching a point
@@ -101,18 +102,14 @@ def _segments_predicate(ids: list[str], geometry):
     """
     segments: list[tuple[np.ndarray, np.ndarray]] = []
     for polygon in _polygons(geometry):
-        if not polygon.point_ids:
-            continue
-        index = {pid: position for position, pid in enumerate(polygon.point_ids)}
-        chosen = sorted(index[pid] for pid in ids if pid in index)
         points = np.asarray(polygon.points, dtype=float)
-        for first, second in zip(chosen, chosen[1:], strict=False):
-            if second == first + 1:
-                segments.append((points[first], points[second]))
-        # The closing edge, when both its ends were named: the outline wraps, so the last
-        # vertex and the first are as adjacent as any other pair.
-        if len(polygon.points) - 1 in chosen and 0 in chosen:
-            segments.append((points[-1], points[0]))
+        # `spanned_edges` rather than adjacency worked out here: the geometry validates a
+        # selector by asking the same function whether it spans anything, and two
+        # implementations of "adjacent" could disagree in exactly the direction that produces
+        # a boundary which validates and then matches nothing.
+        segments.extend(
+            (points[first], points[second]) for first, second in spanned_edges(polygon, ids)
+        )
 
     span = _extent(geometry)
 

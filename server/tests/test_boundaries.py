@@ -14,7 +14,7 @@ import pytest
 from pydantic import ValidationError
 
 from fenixspoon.boundaries import predicate
-from fenixspoon.geometry import (
+from fenixspoon.geometry import (  # noqa: I001
     AllOfSelector,
     BoundarySpec,
     BoxSelector,
@@ -25,6 +25,7 @@ from fenixspoon.geometry import (
     Polygon2D,
     Region2D,
     Regions2D,
+    spanned_edges,
 )
 
 SQUARE = Polygon2D(
@@ -174,13 +175,52 @@ def test_a_boundary_cannot_select_a_point_the_geometry_never_declared():
     """A selector matching nothing is the failure mode this design exists to prevent: a
     condition applied to nothing, on a solve that runs and answers a different problem."""
     with pytest.raises(ValidationError, match="which no polygon in this geometry declares"):
-        domain(BoundarySpec(name="root", select=PointsSelector(ids=["nope"])))
+        domain(BoundarySpec(name="root", select=PointsSelector(ids=["a", "nope"])))
 
 
 def test_a_geometry_with_no_point_ids_says_so_rather_than_matching_nothing():
     bare = Polygon2D(points=[(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)])
     with pytest.raises(ValidationError, match="no polygon carries `point_ids` at all"):
-        domain(BoundarySpec(name="root", select=PointsSelector(ids=["a"])), obstacle=bare)
+        domain(BoundarySpec(name="root", select=PointsSelector(ids=["a", "b"])), obstacle=bare)
+
+
+def test_points_that_span_no_edge_are_refused_rather_than_matching_nothing():
+    """The hole a review found: existing ids are not enough, they have to be *adjacent*.
+
+    `a` and `c` are two real vertices of the square with a vertex between them. They satisfy
+    every rule about ids existing, span no edge, and would have resolved to a predicate false
+    everywhere — a boundary that validates and then silently matches nothing, which is the one
+    outcome this whole design is arranged to prevent.
+
+    Refused rather than tested for, and refused using the *same* function the resolver uses to
+    find segments, so the check and the resolution cannot drift apart.
+    """
+    with pytest.raises(ValidationError, match="span no edge"):
+        domain(BoundarySpec(name="root", select=PointsSelector(ids=["a", "c"])))
+
+    # One vertex spans nothing either, and the model says so before the geometry has to.
+    with pytest.raises(ValidationError, match="at least 2 items"):
+        PointsSelector(ids=["a"])
+
+    # The rule reaches inside an `all_of`, where it would otherwise be easy to hide.
+    with pytest.raises(ValidationError, match="span no edge"):
+        domain(
+            BoundarySpec(
+                name="corner",
+                select=AllOfSelector(
+                    of=[PointsSelector(ids=["a", "c"]), PartSelector(of="outer")]
+                ),
+            )
+        )
+
+
+def test_the_validation_and_the_resolver_agree_on_what_adjacent_means():
+    """Both go through `spanned_edges`, so "it validated" and "it selects something" are the
+    same statement rather than two that happen to coincide."""
+    geometry = domain(BoundarySpec(name="root", select=PointsSelector(ids=["a", "b"])))
+    assert spanned_edges(SQUARE, ["a", "b"]) == [(0, 1)]
+    assert spanned_edges(SQUARE, ["a", "c"]) == []
+    assert hits(geometry, "root", (0.5, 0.0)) == [True]
 
 
 def test_point_ids_must_be_one_per_point_and_distinct():

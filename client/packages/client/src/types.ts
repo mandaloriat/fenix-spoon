@@ -125,7 +125,7 @@ export interface Polygon2D {
    * named boundary onto a different edge with nothing to notice. An editor that carries these
    * through an edit is what makes `PointsSelector` mean the same edge afterwards.
    */
-  point_ids?: string[];
+  point_ids?: string[] | null;
 }
 
 /** The outer rectangle, a hole, or a named region's outline. */
@@ -177,7 +177,7 @@ export type BoundarySelector =
 export interface BoundarySpec {
   name: string;
   select: BoundarySelector;
-  description?: string;
+  description?: string | null;
 }
 
 /** A rectangular domain with an obstacle cut out of it (flow around a body). */

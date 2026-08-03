@@ -122,7 +122,15 @@ class PointsSelector(BaseModel):
     type: Literal["points"] = "points"
     ids: Annotated[
         list[str],
-        Field(min_length=1, description="Point ids, from the polygon's `point_ids`."),
+        Field(
+            min_length=2,
+            description=(
+                "Point ids, from the polygon's `point_ids`. At least two, and at least two of "
+                "them adjacent in the outline: this selects the *edges* they span, and one "
+                "vertex spans none. The geometry checks the adjacency, since ids can be two "
+                "apart and satisfy a length rule while selecting nothing."
+            ),
+        ),
     ]
 
 
@@ -204,33 +212,69 @@ class BoundarySpec(BaseModel):
     )
 
 
-def _check_boundaries(boundaries: list[BoundarySpec], polygons: list[Polygon2D]) -> None:
-    """Names are unique, and a `points` selector names ids the geometry actually carries.
+def spanned_edges(polygon: Polygon2D, ids: list[str]) -> list[tuple[int, int]]:
+    """Vertex-index pairs for the edges the named points span, in outline order.
 
-    The second is the one that earns its keep: a selector referring to an id no polygon
-    declares is a boundary that silently matches nothing, and a condition applied to nothing
-    is a solve that runs and answers the wrong problem.
+    The single definition of what a `points` selector *means*, used by validation here and by
+    the resolver in :mod:`fenixspoon.boundaries`. Sharing it is the point: if the check and
+    the resolution computed adjacency separately they could disagree, and the disagreement
+    would take the shape this design is trying to make impossible — a boundary that validates
+    and then matches nothing.
+
+    Two vertices are adjacent when they are consecutive in the outline, and the outline wraps,
+    so the last and the first are neighbours like any other pair.
+    """
+    if not polygon.point_ids:
+        return []
+    index = {pid: position for position, pid in enumerate(polygon.point_ids)}
+    chosen = sorted(index[pid] for pid in ids if pid in index)
+    edges = [
+        (first, second)
+        for first, second in zip(chosen, chosen[1:], strict=False)
+        if second == first + 1
+    ]
+    last = len(polygon.points) - 1
+    if last in chosen and 0 in chosen:
+        edges.append((last, 0))
+    return edges
+
+
+def _check_boundaries(boundaries: list[BoundarySpec], polygons: list[Polygon2D]) -> None:
+    """Names are unique, and a `points` selector actually picks something out.
+
+    Two checks, and the second is the one that earns its keep. Ids existing is not enough:
+    `["a", "c"]` names two real vertices that are not adjacent, spans no edge, and would
+    resolve to a predicate that is false everywhere. A boundary that matches nothing is a
+    condition applied to nothing, on a solve that runs and answers a different problem — the
+    exact failure this design exists to prevent, so it is refused rather than tested for.
     """
     names = [entry.name for entry in boundaries]
     if len(set(names)) != len(names):
         raise ValueError("boundary names must be unique within one geometry")
     known = {pid for polygon in polygons if polygon.point_ids for pid in polygon.point_ids}
     for entry in boundaries:
-        for wanted in _selected_ids(entry.select):
-            if wanted not in known:
+        for selector in _point_selectors(entry.select):
+            for wanted in selector.ids:
+                if wanted not in known:
+                    raise ValueError(
+                        f"boundary {entry.name!r} selects point id {wanted!r}, which no polygon "
+                        f"in this geometry declares"
+                        + ("" if known else " (no polygon carries `point_ids` at all)")
+                    )
+            if not any(spanned_edges(polygon, selector.ids) for polygon in polygons):
                 raise ValueError(
-                    f"boundary {entry.name!r} selects point id {wanted!r}, which no polygon "
-                    f"in this geometry declares"
-                    + ("" if known else " (no polygon carries `point_ids` at all)")
+                    f"boundary {entry.name!r} selects points {selector.ids} that span no edge; "
+                    "a `points` selector names the edges *between* consecutive vertices, so at "
+                    "least two of them must be adjacent in one polygon's outline"
                 )
 
 
-def _selected_ids(selector) -> list[str]:
-    """Every point id a selector mentions, including inside an `all_of`."""
+def _point_selectors(selector) -> list["PointsSelector"]:
+    """Every `points` selector inside one, including within an `all_of`."""
     if isinstance(selector, PointsSelector):
-        return list(selector.ids)
+        return [selector]
     if isinstance(selector, AllOfSelector):
-        return [pid for inner in selector.of for pid in _selected_ids(inner)]
+        return [found for inner in selector.of for found in _point_selectors(inner)]
     return []
 
 
