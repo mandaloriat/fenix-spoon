@@ -334,6 +334,26 @@ export interface ArtifactRef {
   size: number;
   /** Server-relative; join with the client's base URL to download. */
   url: string;
+  /**
+   * The instant this file holds, for a time-dependent solve; absent for everything else.
+   * The artifacts carrying one are the result's `frames` (protocol 1.7).
+   */
+  t?: number;
+}
+
+/**
+ * One stored instant of a time-dependent solve.
+ *
+ * The whole time dimension is this index: the field history crosses as *references*, and a
+ * viewer fetches the instant it is showing rather than receiving the run. There is
+ * deliberately no server-side reduction at a chosen instant — a scalar against time is a
+ * `Series1DData` curve, and a field question means downloading the frame.
+ */
+export interface FrameRef {
+  /** In the solver's time unit. */
+  t: number;
+  /** Name of the artifact holding it; always one this result also lists. */
+  artifact: string;
 }
 
 /**
@@ -374,6 +394,8 @@ export interface Grid2DResult {
   /** Curves produced beside the field — the airfoil adapters send the surface `C_p` here. */
   series?: Series1DData[];
   artifacts: ArtifactRef[];
+  /** Stored instants, in time order — derived from the artifacts carrying a `t`. */
+  frames?: FrameRef[];
 }
 
 export interface Mesh2DResult {
@@ -386,6 +408,8 @@ export interface Mesh2DResult {
   provenance?: JobProvenance;
   series?: Series1DData[];
   artifacts: ArtifactRef[];
+  /** Stored instants, in time order — derived from the artifacts carrying a `t`. */
+  frames?: FrameRef[];
 }
 
 /**
@@ -404,6 +428,8 @@ export interface Series1DResult {
   diagnostics?: JobDiagnostics;
   series?: never[];
   artifacts: ArtifactRef[];
+  /** Stored instants, in time order — derived from the artifacts carrying a `t`. */
+  frames?: FrameRef[];
 }
 
 export type JobResult = Grid2DResult | Mesh2DResult | Series1DResult;

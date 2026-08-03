@@ -47,10 +47,10 @@ here is resolving the job, resolving a named region against the workspace, and t
 from typing import Any, Literal
 
 import numpy as np
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, Field, computed_field, model_validator
 
 from .. import fields as fieldlib
-from ..frames import FrameRef, frames_of
+from ..frames import FrameRef, check_frame_count, frames_of
 from ..series import Series1DData
 from ..store import ResultSummary
 from . import errors
@@ -242,6 +242,18 @@ class LeveledResult(Selective):
         if self.artifacts is None:
             return None
         return frames_of(self.artifacts) or None
+
+    @model_validator(mode="after")
+    def _check_frames(self) -> "LeveledResult":
+        """The same cap as the envelope, on the level that is actually served compactly.
+
+        Registration is where the limit really holds — it applies to every transport, and it
+        fails the solve rather than the serialisation. This is the backstop for a
+        `LeveledResult` assembled from anywhere else, and it exists because the first version
+        put the cap only on `ResultEnvelope`, which this route never builds.
+        """
+        check_frame_count(self.artifacts or [])
+        return self
 
 
 class FieldQuery(BaseModel):

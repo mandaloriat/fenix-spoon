@@ -17,6 +17,7 @@ from typing import Any, ClassVar, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from .. import fields
+from ..frames import MAX_FRAMES
 from ..geometry import Geometry
 from ..series import Series1DData, check_series
 
@@ -320,8 +321,9 @@ class ArtifactSpec(BaseModel):
     when: str | None = Field(
         default=None,
         description=(
-            "Name of the boolean param that has to be true for this file to appear; "
-            "null if it is always written."
+            "Name of the param whose **truthiness** gates this file; null if it is always "
+            "written. Usually a boolean (`write_vtk`), but not necessarily — the frame "
+            "artifacts are gated on `save_every`, an integer where 0 means none."
         ),
     )
 
@@ -453,6 +455,17 @@ class SolverContext:
             )
         entry: dict[str, Any] = {"name": name, "content_type": content_type}
         if t is not None:
+            # Enforced at registration rather than at serialisation, because only some
+            # transports build a `ResultEnvelope` — the compact levels and the local API do
+            # not, and a cap that half the callers can walk past is not a cap. Raised here it
+            # also fails the *solve*, with a message naming the parameter to change, instead
+            # of producing a result that cannot be represented.
+            framed = sum(1 for item in self._artifacts if item.get("t") is not None)
+            if framed >= MAX_FRAMES:
+                raise ValueError(
+                    f"a result may index at most {MAX_FRAMES} frames; save fewer instants "
+                    "rather than moving the history into the envelope"
+                )
             entry["t"] = float(t)
         self._artifacts.append(entry)
         return self._artifact_dir / name

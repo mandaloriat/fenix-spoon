@@ -34,6 +34,7 @@ from .core.discovery import (
     EnvironmentInfo,
 )
 from .core.results import LEVELS, FieldQuery, FieldQueryResult, LeveledResult
+from .frames import frames_of
 from .geometry import Geometry
 from .jobs import JobStatus
 from .protocol import PROTOCOL_VERSION, ProtocolVersion
@@ -322,15 +323,24 @@ def job_result(
         "series": [entry.model_dump() for entry in summary.series] if summary else [],
         # The one place a URL is built. The core hands back a path; only this transport
         # knows that the file is reachable at a route it serves.
+        #
+        # Built by hand rather than by dumping a model, which is why `t` had to be added here
+        # explicitly when protocol 1.7 introduced it — and why it was missed the first time.
+        # A hand-built payload beside a declared model is a place the two can disagree, and
+        # `test_the_result_route_carries_every_field_the_envelope_declares` now says so.
         "artifacts": [
             {
                 "name": a.name,
                 "content_type": a.content_type,
                 "size": a.size,
                 "url": f"{router.prefix}/jobs/{result.job_id}/artifacts/{a.name}",
+                **({"t": a.t} if a.t is not None else {}),
             }
             for a in result.artifacts
         ],
+        # Derived from the artifacts above, so this route cannot advertise an instant whose
+        # file it is not serving (protocol 1.7, #86).
+        "frames": [frame.model_dump() for frame in frames_of(result.artifacts)],
     }
 
 

@@ -14,6 +14,7 @@ curve; a field question means fetching a frame.
 import asyncio
 import json
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -236,3 +237,68 @@ def test_an_artifact_records_the_instant_it_holds():
     entries = {entry["name"]: entry for entry in ctx.artifacts}
     assert entries["frame_0001.vtk"]["t"] == 25.0
     assert "t" not in entries["solution.vtk"]
+
+
+# ------------------------------------------------------ the transports, and the SDK types
+
+
+def test_the_result_route_carries_every_field_the_envelope_declares(tmp_path, monkeypatch):
+    """The gap this PR's review found: `/jobs/{id}/result` builds its payload by hand.
+
+    A hand-built dict beside a declared model is a place the two can disagree, and they did —
+    protocol 1.7 was bumped with `t` reaching the compact levels and not this route, so the
+    version advertised an addition the full result did not carry. Comparing key sets is the
+    check that catches the *next* one too, rather than only this field.
+    """
+    from fastapi.testclient import TestClient
+
+    from fenixspoon.main import create_app
+
+    monkeypatch.setenv("FENIXSPOON_DATA_DIR", str(tmp_path / "http"))
+    with TestClient(create_app()) as client:
+        submitted = client.post(
+            "/api/v1/jobs",
+            json={
+                "solver": "mock.transient_heat2d",
+                "geometry": SINK.model_dump(),
+                "params": {"resolution": 32, "duration": 100.0, "steps": 4, "save_every": 2},
+            },
+        )
+        assert submitted.status_code == 202, submitted.text
+        job_id = submitted.json()["job_id"]
+        deadline = time.monotonic() + 60
+        while client.get(f"/api/v1/jobs/{job_id}").json()["status"] not in (
+            "done", "failed", "cancelled"
+        ):
+            assert time.monotonic() < deadline, "solve did not finish"
+            time.sleep(0.05)
+
+        payload = client.get(f"/api/v1/jobs/{job_id}/result").json()
+
+    declared = set(ResultEnvelope.model_json_schema()["properties"])
+    assert declared <= set(payload), (
+        f"the result route omits envelope fields: {sorted(declared - set(payload))}"
+    )
+    assert [frame["t"] for frame in payload["frames"]] == [50.0, 100.0]
+    framed = {item["name"]: item.get("t") for item in payload["artifacts"]}
+    assert framed["frame_0002.vtk"] == 50.0
+    assert framed["solution.vtk"] is None, "the final answer is not one of the instants"
+    # And the payload still validates as the thing it claims to be.
+    ResultEnvelope.model_validate(payload)
+
+
+def test_the_frame_cap_is_enforced_where_artifacts_are_registered():
+    """On every transport, not only where a `ResultEnvelope` happens to be built.
+
+    The compact levels and the in-process API never construct one, so a cap living only in
+    that model would be a cap half the callers walk past. Raised at registration it also
+    fails the solve with a message naming the parameter to change, rather than producing a
+    result that cannot be represented.
+    """
+    ctx = SolverContext(progress_cb=lambda event: None, artifact_dir=Path(tempfile.mkdtemp()))
+    for index in range(MAX_FRAMES):
+        ctx.artifact(f"frame_{index:05d}.vtk", t=float(index))
+    with pytest.raises(ValueError, match="at most"):
+        ctx.artifact("frame_99999.vtk", t=1.0e9)
+    # Unframed files are unaffected: the cap is on the index, not on the output.
+    assert ctx.artifact("solution.vtk").name == "solution.vtk"

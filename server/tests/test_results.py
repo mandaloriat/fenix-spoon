@@ -581,14 +581,22 @@ def run_http(client, solver="mock.laplace2d", geometry=None, **params):
 
 
 def test_the_full_result_route_keeps_its_shape_and_gains_the_new_keys(client):
-    """1.3, 1.4 and 1.5 are additive here: `data` and `stats` are untouched, four keys appear
-    beside them — `metrics` and `diagnostics` in 1.3, `provenance` in 1.4, `series` in 1.5."""
+    """1.3 through 1.7 are additive here: `data` and `stats` are untouched, five keys appear
+    beside them — `metrics` and `diagnostics` in 1.3, `provenance` in 1.4, `series` in 1.5,
+    `frames` in 1.7.
+
+    Compared as an exact set rather than a subset, which is what makes it useful in both
+    directions: it caught `frames` arriving, and it would catch one leaving.
+    """
     payload = client.get(f"/api/v1/jobs/{run_http(client)}/result").json()
     assert {"job_id", "kind", "data", "stats", "artifacts"} <= set(payload)
     assert set(payload) == {
         "job_id", "kind", "data", "stats", "metrics", "diagnostics", "provenance", "series",
-        "artifacts",
+        "artifacts", "frames",
     }
+    # A steady solve has no time axis, and the key says so by being empty rather than absent:
+    # this route is the exhaustive envelope, where every declared field is present.
+    assert payload["frames"] == []
     assert payload["data"]["fields"]["speed"]
     assert payload["metrics"]["speed_max"] > 0
     assert payload["artifacts"][0]["url"].startswith("/api/v1/")

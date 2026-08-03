@@ -123,6 +123,18 @@ def render_model(
             f"| `{name}` | `{type_name(field.annotation)}` | {required} | {default} | "
             f"{description} |"
         )
+    # Computed fields are part of the payload a consumer receives, so leaving them out made
+    # the reference describe a *narrower* shape than the wire — `frames` was absent from this
+    # table while the protocol version advertised it. Raised in review of #86. They are never
+    # inputs, so "required" is the wrong column for them and they are marked derived instead.
+    for name, computed in model.model_computed_fields.items():
+        description = (computed.description or "").replace("|", "\\|").replace("\n", " ")
+        if not description:
+            doc = (getattr(model, name).__doc__ or "").strip()
+            description = " ".join(doc.split("\n\n")[0].split())
+        lines.append(
+            f"| `{name}` | `{type_name(computed.return_type)}` | derived | | {description} |"
+        )
     lines.append("")
     return "\n".join(lines)
 
@@ -160,6 +172,7 @@ def build() -> str:
     from fenixspoon.jobs import JobStatus
     from fenixspoon.protocol import (
         ArtifactRef,
+        FrameRef,
         Grid2DData,
         Mesh2DData,
         ProgressEvent,
@@ -195,6 +208,9 @@ def build() -> str:
                 SeriesAxis,
                 SeriesTrace,
                 ArtifactRef,
+                # Protocol 1.7, #86. After `ArtifactRef` because it is an index *over* those:
+                # reading it before knowing what an artifact is would be reading it backwards.
+                FrameRef,
             ],
         ),
         (
