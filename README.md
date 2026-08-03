@@ -46,6 +46,11 @@ and the FEniCSx solver.
 > containers behind a Redis queue, and the stack is [load-tested](docs/06-load-test.md) at
 > 50 concurrent clients. What remains for M3 is deployment packaging — see the
 > [roadmap](docs/03-roadmap.md).
+>
+> **The wire protocol is at 1.8.** The last three minors came from adding physics rather than
+> from planning: a transient needed a metric to say what it is taken over (1.6) and a way to
+> index its instants (1.7), and elasticity needed a geometry that can *name* pieces of its own
+> boundary (1.8). Every one is additive — a 1.0 client still works.
 
 ## Why
 
@@ -68,6 +73,8 @@ see the [state-of-the-art survey](docs/01-state-of-the-art.md). Fenix Spoon is t
 | **Compact results** — five response levels, declared engineering metrics, diagnostics, and nine bounded field queries (peak + location, integral, section, hotspots) that never move the array | [`core/results.py`](server/fenixspoon/core/results.py), [`fields.py`](server/fenixspoon/fields.py) | ✅ protocol 1.3 |
 | **Result cache + provenance** — an identical resubmission is answered from the solve that already ran, opt-in per adapter, with `cached` and the pinned input revisions on every result | [`cache.py`](server/fenixspoon/cache.py) | ✅ protocol 1.4 |
 | **Studies** — a sequence of solves that answers one question: mesh convergence refines until the metrics settle and reports the rung it settled at, rather than leaving a caller to run four jobs and eyeball them | [`core/studies.py`](server/fenixspoon/core/studies.py) | ✅ mesh convergence |
+| **Time** — a metric declares whether it is taken over the payload or over the whole run, and a transient's instants are indexed by the artifacts that carry them: `frames` is derived from the files, so it cannot name one the result does not serve | [`frames.py`](server/fenixspoon/frames.py), [`solvers/base.py`](server/fenixspoon/solvers/base.py) | ✅ protocol 1.6–1.7 |
+| **Named boundaries** — a geometry can name pieces of its own outline, by topology (`outer`, `obstacle`), by stable point id, or by position (`near`, `box`); each resolves to the `f(x) -> bool` predicate `locate_entities_boundary` takes, so a mock and a FEniCSx adapter cannot disagree about which edge was meant | [`boundaries.py`](server/fenixspoon/boundaries.py), [`geometry.py`](server/fenixspoon/geometry.py) | ✅ protocol 1.8 — *the load case that says what happens there is [#85](https://github.com/mandaloriat/fenix-spoon/issues/85)* |
 | **JSON-RPC 2.0 over stdio** — `fenix-spoon rpc --stdio`: 26 methods, no port opened and no web framework imported, NDJSON out and both framings in | [`rpc/`](server/fenixspoon/rpc/), [`docs/08-json-rpc.md`](docs/08-json-rpc.md) | ✅ working |
 | **MCP adapter** — the same operations as 13 tools for a Model Context Protocol host, bound to the RPC method table rather than to the core, so it cannot drift from the other transports | [`mcp_adapter.py`](server/fenixspoon/mcp_adapter.py), [`docs/09-mcp.md`](docs/09-mcp.md) | ✅ optional extra (`pip install "fenix-spoon[mcp]"`) |
 | **CLI and Python API** — `fenix-spoon capability list`, `job submit`, `study run`… and the same operations in-process via `from fenixspoon import local` | [`commands.py`](server/fenixspoon/commands.py), [`local.py`](server/fenixspoon/local.py), [`docs/10-cli-and-python.md`](docs/10-cli-and-python.md) | ✅ working |

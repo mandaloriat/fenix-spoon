@@ -3,6 +3,7 @@ parse) against the pydantic protocol models, and live server output must round-t
 through the same models. The JS SDK (roadmap M2) consumes the identical fixture files."""
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -58,6 +59,29 @@ def test_the_corpus_and_the_server_agree_on_the_protocol_version():
     declared = json.loads((FIXTURES / "version.json").read_text())["protocol_version"]
     assert declared == PROTOCOL_VERSION, (
         f"protocol/fixtures/version.json says {declared}, the server says {PROTOCOL_VERSION}"
+    )
+
+
+def test_the_changelog_states_the_current_protocol():
+    """The number in the changelog's preamble is the one the server speaks.
+
+    A fourth place the version lives, and the one with no reader to keep it honest: nothing
+    imports a markdown preamble, so it drifted three minors behind — 1.5 while the server was
+    at 1.8 — with every other tripwire green. Somebody arriving at the repository reads that
+    line before any of the others, which is exactly why it was the one worth checking.
+
+    Deliberately a regex over the sentence rather than a whole-line match: the prose around it
+    should be free to change, and only the number is the claim.
+    """
+    changelog = (FIXTURES.parents[1] / "CHANGELOG.md").read_text()
+    stated = re.search(r"`MAJOR\.MINOR`, currently ([0-9]+\.[0-9]+)\)", changelog)
+    assert stated is not None, (
+        "CHANGELOG.md no longer states the protocol version in the form this test reads; "
+        "restore the phrasing or update the pattern, but do not delete the claim"
+    )
+    assert stated.group(1) == PROTOCOL_VERSION, (
+        f"CHANGELOG.md says the protocol is {stated.group(1)}, the server says "
+        f"{PROTOCOL_VERSION}"
     )
 
 
