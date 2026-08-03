@@ -31,7 +31,14 @@ class JobCancelled(Exception):
 class ProgressEvent(BaseModel):
     """One tick of solver progress, streamed to WebSocket subscribers."""
 
-    type: str = "progress"
+    type: str = Field(
+        default="progress",
+        description=(
+            "Discriminates this from a `status` event on the same stream. Fixed by default "
+            "rather than by annotation, which is why it needs saying: a subscriber branches "
+            "on it to tell a tick of work from a change of state."
+        ),
+    )
     iteration: int = Field(description="How far the solve has got, in solver-defined units.")
     total: int | None = Field(
         default=None, description="Expected final `iteration`, when the solver can predict it."

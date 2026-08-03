@@ -98,12 +98,23 @@ def test_pipes_are_escaped_so_the_markdown_table_survives():
 def test_descriptions_are_not_silently_missing():
     """The page is only as useful as the models' field descriptions.
 
-    The five exceptions are discriminators, whose type column already shows the literal
-    value — a description there would only repeat it. Anything beyond that is a field
-    somebody added without saying what it means.
+    Discriminators are the exception, and now the *only* exception: their type column already
+    shows the literal value, so a description would repeat it. They used to be counted against
+    a budget of five, which #85 immediately outgrew by adding five selectors — and a budget
+    that gets raised whenever it is hit is not a budget. Recognising a discriminator by its
+    shape says what was actually meant, and it means a field added without a description fails
+    this whether or not somebody has been adding discriminators.
     """
     page = build()
     undocumented = [
-        line for line in page.splitlines() if line.startswith("| `") and line.endswith("|  |")
+        line
+        for line in page.splitlines()
+        if line.startswith("| `") and line.endswith("|  |") and not _is_discriminator(line)
     ]
-    assert len(undocumented) <= 5, "\n".join(undocumented)
+    assert not undocumented, "\n".join(undocumented)
+
+
+def _is_discriminator(row: str) -> bool:
+    """A `type` field whose type column is the single literal it is fixed to."""
+    cells = [cell.strip() for cell in row.strip("|").split("|")]
+    return len(cells) >= 2 and cells[0] == "`type`" and cells[1].startswith("`'")

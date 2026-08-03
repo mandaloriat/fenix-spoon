@@ -168,7 +168,19 @@ def build() -> str:
         Provenance,
         StatusView,
     )
-    from fenixspoon.geometry import Domain2D, Geometry, Polygon2D, Region2D, Regions2D
+    from fenixspoon.geometry import (
+        AllOfSelector,
+        BoundarySpec,
+        BoxSelector,
+        Domain2D,
+        Geometry,
+        NearSelector,
+        PartSelector,
+        PointsSelector,
+        Polygon2D,
+        Region2D,
+        Regions2D,
+    )
     from fenixspoon.jobs import JobStatus
     from fenixspoon.protocol import (
         ArtifactRef,
@@ -192,7 +204,23 @@ def build() -> str:
     )
 
     sections = [
-        ("Geometry", [Polygon2D, Domain2D, Region2D, Regions2D]),
+        (
+            "Geometry",
+            [
+                Polygon2D,
+                Domain2D,
+                Region2D,
+                Regions2D,
+                # Protocol 1.8, #85. After the shapes, because a boundary is named *on* one:
+                # the spec first, then the five ways it can pick a piece out.
+                BoundarySpec,
+                PartSelector,
+                PointsSelector,
+                NearSelector,
+                BoxSelector,
+                AllOfSelector,
+            ],
+        ),
         ("Jobs", [JobRequest, JobCreated, JobStatus, JobList]),
         ("Events", [ProgressEvent, StatusEvent]),
         (

@@ -258,6 +258,50 @@ reduction is computed by the runtime from the payload and a `run` quantity is by
 in it. Without the declaration the two are told apart only by their names, and a transient's
 `t_peak` and `t_final_max` agree on every monotonic case anyone would check by hand.
 
+### Naming a piece of the boundary
+
+Protocol 1.8 lets a geometry name parts of its own boundary
+([#85](https://github.com/mandaloriat/fenix-spoon/issues/85)). The split it rests on is that
+two questions were being conflated:
+
+- **where** — which part of the boundary. That *is* a property of the shape: only the geometry
+  knows where one edge ends and the next begins;
+- **what** — clamped, loaded, convecting. That is **not**: the same cantilever is loaded three
+  ways and remains the same cantilever.
+
+So the geometry carries names, and what happens on them is a load case (a separate object,
+landing separately). Putting the conditions in the geometry would mint a new geometry revision
+for every load change, and turn comparing two load cases into comparing two shapes.
+
+```jsonc
+{
+  "type": "domain2d", "bounds": [-2, -2, 3, 3],
+  "obstacle": {"type": "polygon2d",
+               "points": [[0,0], [1,0], [1,1], [0,1]],
+               "point_ids": ["a", "b", "c", "d"]},
+  "boundaries": [
+    {"name": "root", "select": {"type": "points", "ids": ["c", "d"]}},
+    {"name": "plane", "select": {"type": "near", "axis": "y", "value": 0.0}},
+    {"name": "body", "select": {"type": "part", "of": "obstacle"}}
+  ]
+}
+```
+
+**Both `points` and `near` exist because they follow different things.** An id follows the
+*shape*: insert a control point and every index after it shifts, so an index-based boundary
+would slide onto a different edge with nothing to notice — an id stays on the edge it was given
+to. A predicate follows the *space*: a symmetry plane is a statement about position and stays
+put whatever profile is placed on it. Neither can express the other honestly.
+
+`part` is the third family and needed no invention: `outer`, `obstacle` and `region:<name>` are
+what potential flow, magnetostatics and heat already assume implicitly. `all_of` intersects
+selectors — deliberately a small closed set rather than an expression language, which would be
+the UFL-over-the-wire argument again in miniature.
+
+Everything here is **additive and empty by default**: `point_ids` is absent unless a boundary
+is named, and every adapter shipped today puts its conditions where the outer/obstacle split
+implies them.
+
 ### Time: an index over the artifacts
 
 A time-dependent solve produces two things of different natures, and 1.7 keeps them apart
