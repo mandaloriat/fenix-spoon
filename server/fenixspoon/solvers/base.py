@@ -308,7 +308,13 @@ class ArtifactSpec(BaseModel):
     parameter it left at the default.
     """
 
-    name: str = Field(description="Filename the solver registers, e.g. `solution.vtk`.")
+    name: str = Field(
+        description=(
+            "Filename the solver registers, e.g. `solution.vtk`. May contain `{index}` for a "
+            "file written once per stored instant — `frame_{index}.vtk` — which is how a "
+            "transient declares an output whose count depends on its parameters (#86)."
+        )
+    )
     content_type: str = Field(description="MIME type it is served with.")
     description: str = Field(description="What the file contains, and what opens it.")
     when: str | None = Field(
@@ -318,6 +324,25 @@ class ArtifactSpec(BaseModel):
             "null if it is always written."
         ),
     )
+
+    def matches(self, written: str) -> bool:
+        """True if `written` is a file this spec declares.
+
+        A literal comparison for the ordinary case, and a digit match where the name carries
+        `{index}`. Written as a method rather than left to each caller because the test that
+        keeps the declaration honest — written files are a subset of declared ones — is the
+        one place this must not be re-implemented approximately.
+        """
+        if "{index}" not in self.name:
+            return written == self.name
+        head, _, tail = self.name.partition("{index}")
+        middle = written[len(head) : len(written) - len(tail)] if written else ""
+        return (
+            written.startswith(head)
+            and written.endswith(tail)
+            and len(written) > len(head) + len(tail)
+            and middle.isdigit()
+        )
 
 
 class CapabilityFeatures(BaseModel):
@@ -401,11 +426,18 @@ class SolverContext:
         if self._cancel_event.is_set():
             raise JobCancelled()
 
-    def artifact(self, name: str, content_type: str | None = None) -> Path:
+    def artifact(
+        self, name: str, content_type: str | None = None, t: float | None = None
+    ) -> Path:
         """Register an output file and return the path the solver should write it to.
 
         ``name`` must be a bare filename — path separators are rejected so artifacts can
         never escape the job directory.
+
+        ``t`` marks the file as **one instant of a time-dependent solve** (#86). The
+        artifacts carrying one become the result's `frames`, in time order. Putting the
+        instant on the file rather than in a parallel list is what makes an index that names
+        a file the result does not serve unrepresentable rather than merely tested for.
         """
         if not name or "/" in name or "\\" in name or name.startswith(".") or ".." in name:
             raise ValueError(f"invalid artifact name: {name!r}")
@@ -419,7 +451,10 @@ class SolverContext:
                     name.rsplit(".", 1)[-1].lower(), "application/octet-stream"
                 )
             )
-        self._artifacts.append({"name": name, "content_type": content_type})
+        entry: dict[str, Any] = {"name": name, "content_type": content_type}
+        if t is not None:
+            entry["t"] = float(t)
+        self._artifacts.append(entry)
         return self._artifact_dir / name
 
     @property

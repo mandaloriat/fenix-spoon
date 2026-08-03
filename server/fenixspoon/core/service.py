@@ -58,6 +58,12 @@ class ArtifactHandle:
     content_type: str
     size: int
     path: Path
+    t: float | None = None
+    """The instant this file holds, for a time-dependent solve (#86); None otherwise.
+
+    On the handle rather than in a list beside it, so the time index of a result is derived
+    from the files themselves and cannot name one that is not there.
+    """
 
 
 @dataclass(frozen=True)
@@ -640,6 +646,7 @@ class FenixSpoonCore:
                     content_type=handle.content_type,
                     size=handle.size,
                     path=str(handle.path),
+                    t=handle.t,
                 )
                 for handle in (self._handle(job, entry) for entry in job.artifacts)
             ],
@@ -812,4 +819,5 @@ class FenixSpoonCore:
             content_type=entry.get("content_type", "application/octet-stream"),
             size=int(entry.get("size", 0)),
             path=directory / entry["name"],
+            t=(float(entry["t"]) if entry.get("t") is not None else None),
         )

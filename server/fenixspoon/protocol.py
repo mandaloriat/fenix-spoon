@@ -8,8 +8,14 @@ with these models — the fixture suite also validates live server output.
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, computed_field, model_validator
 
+from .frames import (  # noqa: F401  (re-export for consumers)
+    MAX_FRAMES,
+    FrameRef,
+    check_frame_count,
+    frames_of,
+)
 from .geometry import Domain2D, Geometry, Polygon2D  # noqa: F401  (re-export for consumers)
 from .series import (  # noqa: F401  (re-export for consumers)
     MAX_SERIES_POINTS,
@@ -35,7 +41,7 @@ from .solvers.base import ProgressEvent  # noqa: F401  (re-export for consumers)
 #: repeating it on each event and result would be per-message overhead for something one
 #: call answers — see `GET /api/v1/version`, and `docs/04-wire-protocol.md` for the
 #: reasoning and the bump procedure.
-PROTOCOL_VERSION = "1.6"
+PROTOCOL_VERSION = "1.7"
 
 
 class ProtocolVersion(BaseModel):
@@ -153,6 +159,15 @@ class ArtifactRef(BaseModel):
     content_type: str = Field(description="MIME type to serve it with.")
     size: int = Field(description="Size on disk in bytes.")
     url: str = Field(description="Server-relative download path; join with the API base URL.")
+    t: float | None = Field(
+        default=None,
+        description=(
+            "The instant this file holds, for a time-dependent solve; null for everything "
+            "else. Added in protocol 1.7 (#86) — the artifacts carrying one are the result's "
+            "`frames`, and putting the time on the file itself is what makes the index and "
+            "the files unable to disagree."
+        ),
+    )
 
 
 class ResultEnvelope(BaseModel):
@@ -213,6 +228,22 @@ class ResultEnvelope(BaseModel):
     artifacts: list[ArtifactRef] = Field(
         default=[], description="Files the solver wrote, downloadable from the artifact endpoint."
     )
+
+    @computed_field
+    @property
+    def frames(self) -> list[FrameRef]:
+        """Stored instants of a time-dependent solve, in time order (protocol 1.7, #86).
+
+        An index *over* the artifacts rather than beside them: derived from the ones carrying
+        a `t`, so it cannot name a file this result does not serve. Empty for a steady solve
+        and for a transient that was not asked to save any.
+        """
+        return frames_of(self.artifacts)
+
+    @model_validator(mode="after")
+    def _check_frames(self) -> "ResultEnvelope":
+        check_frame_count(self.artifacts)
+        return self
 
     @model_validator(mode="after")
     def _check_data(self) -> "ResultEnvelope":

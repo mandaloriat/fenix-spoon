@@ -34,7 +34,12 @@ from pydantic import BaseModel, Field
 from ..geometry import Regions2D
 from ..series import Series1DData, SeriesAxis, SeriesTrace
 from .base import CapabilityExample, ProgressEvent, Solver, SolverContext, SolverResult
-from .declarations import TRANSIENT_HEAT_ASSUMPTIONS, TRANSIENT_HEAT_METRICS, VTK_ARTIFACT
+from .declarations import (
+    FRAME_ARTIFACT,
+    TRANSIENT_HEAT_ASSUMPTIONS,
+    TRANSIENT_HEAT_METRICS,
+    VTK_ARTIFACT,
+)
 from .dolfinx_heat import _build_solid_mesh, _nodal_region_value, _solid_area
 from .dolfinx_poisson import _nodal_speed, _p1_mesh_data, _write_vtk_unstructured
 from .mock_transient_heat import ALUMINIUM_RHO_CP, crossing_time
@@ -63,7 +68,7 @@ class DolfinxTransientHeat2D(Solver):
     #: A direct solve on a mesh Gmsh builds deterministically, repeated a fixed number of
     #: times, with no randomness anywhere: same inputs, same answer. Safe to cache (#47).
     deterministic = True
-    artifacts = [VTK_ARTIFACT]
+    artifacts = [VTK_ARTIFACT, FRAME_ARTIFACT]
     examples = [
         CapabilityExample(
             title="start-up from ambient",
@@ -94,6 +99,14 @@ class DolfinxTransientHeat2D(Solver):
             description="Volumetric heat capacity in J/(m³·K) where a region declares none.",
         )
         write_vtk: bool = Field(default=True)
+        save_every: int = Field(
+            default=0, ge=0,
+            description=(
+                "Write one field file every N steps, indexed as the result's `frames` (#86). "
+                "0 writes none: the curves answer most questions and the files are the "
+                "expensive half."
+            ),
+        )
 
     @classmethod
     def estimate_cells(cls, geometry: Regions2D, params: "DolfinxTransientHeat2D.Params") -> int:
@@ -181,6 +194,15 @@ class DolfinxTransientHeat2D(Solver):
             # rating is read against. The mean is an integral, for the reason above.
             peak.append(float(values.max()))
             mean.append(float(fem.assemble_scalar(mean_form).real) / volume)
+            if params.save_every and index % params.save_every == 0:
+                # The P1 triangulation is the same every step, so only the values change —
+                # but each frame is a standalone file, because a caller fetches one instant
+                # and must not need the others to read it.
+                points, triangles, nodal = _p1_mesh_data(V, previous)
+                _write_vtk_unstructured(
+                    ctx.artifact(f"frame_{index:04d}.vtk", t=index * step),
+                    points, triangles, {"T": nodal},
+                )
             ctx.progress(
                 ProgressEvent(
                     iteration=index, total=params.steps, message=f"t = {index * step:.3g} s"

@@ -258,6 +258,38 @@ reduction is computed by the runtime from the payload and a `run` quantity is by
 in it. Without the declaration the two are told apart only by their names, and a transient's
 `t_peak` and `t_final_max` agree on every monotonic case anyone would check by hand.
 
+### Time: an index over the artifacts
+
+A time-dependent solve produces two things of different natures, and 1.7 keeps them apart
+([#86](https://github.com/mandaloriat/fenix-spoon/issues/86)). **Scalars against time are
+curves** — `T_max(t)`, a probe history — and `series1d` has carried those since 1.5.
+**Fields against time are large**, so they cross as references like every other large thing
+here: an adapter writes one file per stored instant, the artifact carries the instant it
+holds in `t`, and the result's `frames` lists them in time order.
+
+```json
+{
+  "artifacts": [
+    {"name": "frame_0005.vtk", "size": 8213, "t": 50.0, "url": "..."},
+    {"name": "solution.vtk", "size": 8213, "url": "..."}
+  ],
+  "frames": [{"t": 50.0, "artifact": "frame_0005.vtk"}]
+}
+```
+
+`frames` is **derived from the artifacts, never stored beside them**. That is the whole
+reason the instant lives on the file: an index naming something the result does not serve is
+not a case to validate, it is unrepresentable. It also means a steady result carries no index
+at all rather than an empty one, and that the index rides on the `artifacts` level — so the
+default answer tells a caller which instants exist, and how large each is, before it fetches
+any of them. The count is capped for the same reason the series lengths are.
+
+**There is deliberately no reduction at a chosen instant.** `result.query` reduces the
+payload, and a transient's payload is its final instant. A scalar-against-time question is
+answered by the curve; a field question means fetching the frame. That limit was accepted
+when the shape was settled rather than discovered afterwards, and a `t` argument on
+`FieldQuery` would answer about the wrong time.
+
 The `params` section carries a flat parameter list — name, type, default, bounds, enum choices —
 plus `schema_ref`. Being flat is the point rather than being small: a `Literal` parameter reaches
 a caller as `$ref` → `$defs` → `enum`, and resolving that is work the summary does once. On the

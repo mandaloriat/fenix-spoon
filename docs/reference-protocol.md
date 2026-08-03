@@ -214,6 +214,7 @@ A downloadable file the solver produced alongside the inline result.
 | `content_type` | `str` | yes |  | MIME type to serve it with. |
 | `size` | `int` | yes |  | Size on disk in bytes. |
 | `url` | `str` | yes |  | Server-relative download path; join with the API base URL. |
+| `t` | `float \| null` | no | `None` | The instant this file holds, for a time-dependent solve; null for everything else. Added in protocol 1.7 (#86) — the artifacts carrying one are the result's `frames`, and putting the time on the file itself is what makes the index and the files unable to disagree. |
 
 
 # Compact results
@@ -288,6 +289,7 @@ One file, by reference. The `artifacts` level never inlines bytes.
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
+| `t` | `float \| null` | no | `None` | The instant this file holds, for a time-dependent solve; null otherwise. The artifacts carrying one are the result's frames (#86). |
 | `name` | `str` | yes |  | Bare filename, e.g. `solution.vtk`. |
 | `content_type` | `str` | yes |  | MIME type. |
 | `size` | `int` | yes |  | Size on disk in bytes. |
@@ -528,7 +530,7 @@ A file this capability may write alongside the inline result (issue #43).
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `name` | `str` | yes |  | Filename the solver registers, e.g. `solution.vtk`. |
+| `name` | `str` | yes |  | Filename the solver registers, e.g. `solution.vtk`. May contain `{index}` for a file written once per stored instant — `frame_{index}.vtk` — which is how a transient declares an output whose count depends on its parameters (#86). |
 | `content_type` | `str` | yes |  | MIME type it is served with. |
 | `description` | `str` | yes |  | What the file contains, and what opens it. |
 | `when` | `str \| null` | no | `None` | Name of the boolean param that has to be true for this file to appear; null if it is always written. |

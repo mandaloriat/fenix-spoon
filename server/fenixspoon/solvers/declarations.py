@@ -318,6 +318,20 @@ HEAT_METRICS = [
 ]
 
 
+#: One stored instant of a transient, written once per saved step (#86). Declared with
+#: `{index}` because the count is a parameter, not a property of the capability — the whole
+#: reason `ArtifactSpec.name` learned a pattern.
+FRAME_ARTIFACT = ArtifactSpec(
+    name="frame_{index}.vtk",
+    content_type="model/vnd.vtk",
+    description=(
+        "One instant of the field, as legacy VTK. These are the result's `frames`: the "
+        "time index lists them with the instant each holds, and a caller fetches the one it "
+        "is looking at rather than receiving the history."
+    ),
+    when="save_every",
+)
+
 #: Linear elasticity: what a structural check reads off a static solve (#81).
 #:
 #: `sigma_vm_max` is the load-bearing one, and the one whose declaration has to be honest: it
