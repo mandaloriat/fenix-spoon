@@ -405,9 +405,16 @@ def test_declared_artifacts_are_the_files_a_solve_writes(core, me, solver):
     _requires(solver)
     geometry, params = {**SMOKE, **FENICS_SMOKE}[solver]
     job = solve(core, me, solver, geometry, params)
-    declared = {spec.name for spec in core.capability(solver).artifacts}
+    declared = core.capability(solver).artifacts
     written = {artifact.name for artifact in core.result(job.id, me).artifacts}
-    assert written <= declared, f"{solver} wrote undeclared files: {sorted(written - declared)}"
+    # Matched through the spec rather than by set membership, because a transient declares
+    # `frame_{index}.vtk` for a file it writes once per stored instant (#86) — a count its
+    # parameters decide. A literal comparison would either fail on those or force every
+    # variable-count output to go undeclared, which is the honesty this test exists to keep.
+    undeclared = sorted(
+        name for name in written if not any(spec.matches(name) for spec in declared)
+    )
+    assert not undeclared, f"{solver} wrote undeclared files: {undeclared}"
     assert written, "the smoke params ask for the VTK, so something should have been written"
 
 

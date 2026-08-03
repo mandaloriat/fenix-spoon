@@ -42,7 +42,12 @@ from pydantic import BaseModel, Field
 from ..geometry import Regions2D
 from ..series import Series1DData, SeriesAxis, SeriesTrace
 from .base import CapabilityExample, ProgressEvent, Solver, SolverContext, SolverResult
-from .declarations import TRANSIENT_HEAT_ASSUMPTIONS, TRANSIENT_HEAT_METRICS, VTK_ARTIFACT
+from .declarations import (
+    FRAME_ARTIFACT,
+    TRANSIENT_HEAT_ASSUMPTIONS,
+    TRANSIENT_HEAT_METRICS,
+    VTK_ARTIFACT,
+)
 from .mock_heat import (
     _ambient_flux,
     _assemble,
@@ -118,7 +123,7 @@ class MockTransientHeat2D(Solver):
     assumptions = TRANSIENT_HEAT_ASSUMPTIONS
     #: Fixed step count, fixed sweep count, no randomness: same inputs, same arrays (#47).
     deterministic = True
-    artifacts = [VTK_ARTIFACT]
+    artifacts = [VTK_ARTIFACT, FRAME_ARTIFACT]
     examples = [
         CapabilityExample(
             title="start-up from ambient",
@@ -183,6 +188,15 @@ class MockTransientHeat2D(Solver):
         output: Literal["grid2d", "mesh2d"] = "grid2d"
         write_vtk: bool = Field(
             default=True, description="Attach the final instant as a legacy-VTK artifact"
+        )
+        save_every: int = Field(
+            default=0, ge=0,
+            description=(
+                "Write one field file every N steps, indexed as the result's `frames` (#86). "
+                "0 writes none, which is the default because the curves answer most "
+                "questions and the files are the expensive half. The instants come back as "
+                "references — there is no query at a chosen time."
+            ),
         )
 
     @classmethod
@@ -286,6 +300,11 @@ class MockTransientHeat2D(Solver):
             times.append(index * step)
             peak.append(float(temperature[solid].max()))
             mean.append(float(temperature[solid].mean()))
+            if params.save_every and index % params.save_every == 0:
+                write_vtk_structured_points(
+                    ctx.artifact(f"frame_{index:04d}.vtk", t=index * step),
+                    x, y, {"T": np.where(solid, temperature, params.t_ambient)},
+                )
             ctx.progress(
                 ProgressEvent(
                     iteration=index,

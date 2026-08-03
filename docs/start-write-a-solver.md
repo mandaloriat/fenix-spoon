@@ -142,6 +142,37 @@ The name must be a bare filename — separators are rejected, so an artifact can
 the job directory. It appears in the result envelope with a download URL. Registered
 names are the only servable ones, which is what makes the endpoint safe.
 
+## Writing a time history
+
+If your solve steps in time, return the curves and index the fields — do not try to put a
+history into a payload.
+
+```python
+if params.save_every and step % params.save_every == 0:
+    write_my_vtk(ctx.artifact(f"frame_{step:04d}.vtk", t=step * dt), ...)
+```
+
+`t` is what makes the file a **frame**: the result lists the artifacts carrying one, in time
+order, and a caller fetches the instant it is looking at. Declare it with a pattern, because
+the count is a parameter rather than a property of your adapter:
+
+```python
+artifacts = [
+    VTK_ARTIFACT,
+    ArtifactSpec(name="frame_{index}.vtk", content_type="model/vnd.vtk",
+                 description="One instant of the field.", when="save_every"),
+]
+```
+
+Two things to get right. **The scalars belong in a curve, not in the frames** — `T_max(t)` as
+a `series1d` answers "does it reach 80 °C, and when" without a single field crossing the wire,
+and that is what most callers want. And **each frame must stand alone**: a caller fetches one
+instant, so it cannot need the others to read it.
+
+Also worth knowing: `estimate_cells` is about *work*, and a transient spends its mesh once per
+step. Both transient adapters here return cells × steps, which is what keeps a thousand-step
+run from walking through a gate sized for one solve.
+
 ## Declaring what a job will cost
 
 The server refuses over-sized work at submit rather than letting the timeout kill it

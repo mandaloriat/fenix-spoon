@@ -47,9 +47,10 @@ here is resolving the job, resolving a named region against the workspace, and t
 from typing import Any, Literal
 
 import numpy as np
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field, model_validator
 
 from .. import fields as fieldlib
+from ..frames import FrameRef, check_frame_count, frames_of
 from ..series import Series1DData
 from ..store import ResultSummary
 from . import errors
@@ -173,6 +174,13 @@ class Provenance(BaseModel):
 class ArtifactView(BaseModel):
     """One file, by reference. The `artifacts` level never inlines bytes."""
 
+    t: float | None = Field(
+        default=None,
+        description=(
+            "The instant this file holds, for a time-dependent solve; null otherwise. The "
+            "artifacts carrying one are the result's frames (#86)."
+        ),
+    )
     name: str = Field(description="Bare filename, e.g. `solution.vtk`.")
     content_type: str = Field(description="MIME type.")
     size: int = Field(description="Size on disk in bytes.")
@@ -221,6 +229,31 @@ class LeveledResult(Selective):
     )
     fields: FieldsView | None = Field(default=None, description="Level `fields`.")
     artifacts: list[ArtifactView] | None = Field(default=None, description="Level `artifacts`.")
+
+    @computed_field
+    @property
+    def frames(self) -> list[FrameRef] | None:
+        """The `artifacts` level's time index: the files carrying an instant, in time order.
+
+        Absent — not empty — when the level was not requested or nothing is framed, so a
+        caller can tell "this solve has no time axis" from "you did not ask". `Selective`
+        drops nulls on the wire, which is what makes the distinction free for a steady solve.
+        """
+        if self.artifacts is None:
+            return None
+        return frames_of(self.artifacts) or None
+
+    @model_validator(mode="after")
+    def _check_frames(self) -> "LeveledResult":
+        """The same cap as the envelope, on the level that is actually served compactly.
+
+        Registration is where the limit really holds — it applies to every transport, and it
+        fails the solve rather than the serialisation. This is the backstop for a
+        `LeveledResult` assembled from anywhere else, and it exists because the first version
+        put the cap only on `ResultEnvelope`, which this route never builds.
+        """
+        check_frame_count(self.artifacts or [])
+        return self
 
 
 class FieldQuery(BaseModel):
