@@ -42,11 +42,22 @@ explorable viewer has to 1.1.
 - **The airfoil demo plots its surface pressure**, which it has computed since #68 and been
   discarding. The saw teeth are the mock's staircased body rather than the plot, and the page
   says which, because a first-time visitor would otherwise read a faithful drawing as a bug.
-- *Two things writing it found.* A zero-width-domain guard inside the projection was
-  unreachable — the domain repair upstream already prevents one — so two defences that could
-  have disagreed became one. And the accessible description was skipped whenever the canvas had
-  no 2D context, because it sat after the early return; the name of an element is a function of
-  its data, not of whether the environment can rasterise.
+- *Three things found while building it, two by the tests and one in review.* A zero-width-domain
+  guard inside the projection was unreachable — the domain repair upstream already prevents one —
+  so two defences that could have disagreed became one. The accessible description was skipped
+  whenever the canvas had no 2D context, because it sat after the early return; the name of an
+  element is a function of its data, not of whether the environment can rasterise. And **padding
+  a log axis additively is wrong in a way nothing reports**: a residual history from 1e-1 down to
+  1e-7 had 0.005 subtracted from its lower bound, which is negative, so the domain repair lifted
+  it to the log floor and six decades silently became twelve. Padding is now a fraction of the
+  *decades* on a log scale, decided in one place for both axes — the version that special-cased
+  x at the call site and left y additive is what produced it.
+- *Paints are coalesced to one per frame*, the `render()` / `draw()` split `<fs-viewer>` uses. It
+  matters more here than there: a pointer crossing a dense curve resolves a different nearest
+  point many times per frame, and each one repainted the axes, the ticks and every trace. The
+  accessible description stays **synchronous** — deferring it to a frame would be a milder
+  version of the mistake of deferring it to a rendering context — which is affordable because
+  the resolved traces are now cached rather than re-paired on every pointer sample.
 
 ### Added — two more physics, and the three protocol gaps they exposed
 

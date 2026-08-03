@@ -236,3 +236,41 @@ describe('attributes and properties agree', () => {
     expect(plot.yScale).toBe('log');
   });
 });
+
+describe('painting is coalesced', () => {
+  const frame = () => new Promise((done) => requestAnimationFrame(() => done(null)));
+
+  it('paints at most once per frame however many times it is asked', async () => {
+    // A pointer crossing a dense curve resolves a different nearest point many times per
+    // frame, and each one used to repaint the whole thing — axes, ticks, every trace.
+    const plot = mount();
+    plot.result = FIELD_RESULT;
+    let paints = 0;
+    const draw = plot.draw.bind(plot);
+    plot.draw = () => {
+      paints += 1;
+      draw();
+    };
+    for (let i = 0; i < 20; i += 1) plot.render();
+    expect(paints).toBe(0);
+    await frame();
+    expect(paints).toBe(1);
+  });
+
+  it('still describes the canvas synchronously', () => {
+    // The accessible name is a function of the data, so deferring it to a frame would be a
+    // milder version of deferring it to a rendering context — the bug already fixed once.
+    const plot = mount();
+    plot.result = FIELD_RESULT;
+    expect(plot.querySelector('canvas')!.getAttribute('aria-label')).toContain('2 curves');
+  });
+
+  it('drops a scheduled frame when the element leaves the document', () => {
+    // Otherwise a frame paints into a canvas nobody can see, and keeps the element alive
+    // until it runs.
+    const plot = mount();
+    plot.result = FIELD_RESULT;
+    plot.render();
+    expect(() => plot.remove()).not.toThrow();
+  });
+});

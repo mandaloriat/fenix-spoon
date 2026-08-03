@@ -27,7 +27,7 @@
  *
  * A pressure coefficient is plotted with `C_p` increasing *downwards*, and it would be easy to
  * notice a trace called `cp_upper` and flip the axis for the caller. That is exactly the class
- * of guess [ADR 0001](../../../docs/adr/0001-explorable-viewer.md) records the viewer refusing:
+ * of guess [ADR 0001](../../../../docs/adr/0001-explorable-viewer.md) records the viewer refusing:
  * it will not infer a vector field from a scalar one, a geometry outline from a mask, or a
  * physical name for an integrated curve. A name is not a quantity. The convention is real, so
  * the attribute exists and the airfoil demo sets it — but the page says so, not the widget.
@@ -54,7 +54,7 @@ import {
   type ScaleKind,
   type Tick,
   LOG_FLOOR,
-  padRange,
+  padDomain,
   scaleFor,
   ticksFor,
 } from './scale.js';
@@ -110,6 +110,8 @@ export class PlotElement extends HTMLElement {
   #hover: NearestPoint | null = null;
   #size = { width: 0, height: 0 };
   #observer: ResizeObserver | null = null;
+  #frame = 0;
+  #resolved: ResolvedTrace[] | null = null;
 
   // ------------------------------------------------------------------ data in
 
@@ -126,7 +128,8 @@ export class PlotElement extends HTMLElement {
     this.#result = result;
     this.#curves = null;
     this.#hover = null;
-    this.#render();
+    this.#invalidate();
+    this.render();
   }
 
   /**
@@ -140,7 +143,8 @@ export class PlotElement extends HTMLElement {
   set curves(curves: Series1DData | null) {
     this.#curves = curves;
     this.#hover = null;
-    this.#render();
+    this.#invalidate();
+    this.render();
   }
 
   /** Every curve set the current result carries, by name — what a picker offers. */
@@ -237,7 +241,11 @@ export class PlotElement extends HTMLElement {
   get capabilities(): PlotCapabilities {
     const traces = this.#traces();
     if (traces.length === 0) {
-      const reason = this.#curves ?? this.#selected() ? 'no trace has a usable abscissa' : 'no curves set';
+      // Spelled out rather than `this.#curves ?? this.#selected() ? a : b`. That parses the
+      // way it reads — `??` binds tighter than `?:` — but it is one stray edit away from
+      // not doing, and the two branches say opposite things.
+      const held = this.#curves ?? this.#selected();
+      const reason = held === null ? 'no curves set' : 'no trace has a usable abscissa';
       return { draw: { available: false, reason }, logY: { available: false, reason } };
     }
     const y = extentY(traces);
@@ -260,17 +268,24 @@ export class PlotElement extends HTMLElement {
   connectedCallback(): void {
     if (!this.#canvas) this.#build();
     this.#observe();
-    this.#render();
+    this.render();
   }
 
   disconnectedCallback(): void {
     this.#observer?.disconnect();
     this.#observer = null;
+    // A frame scheduled against an element no longer in the document would paint into a
+    // canvas nobody can see, and hold this element alive until it ran.
+    if (this.#frame && typeof cancelAnimationFrame === 'function') {
+      cancelAnimationFrame(this.#frame);
+    }
+    this.#frame = 0;
   }
 
   attributeChangedCallback(): void {
     this.#hover = null;
-    this.#render();
+    this.#invalidate();
+    this.render();
   }
 
   #build(): void {
@@ -299,7 +314,7 @@ export class PlotElement extends HTMLElement {
 
   #observe(): void {
     if (typeof ResizeObserver === 'undefined' || this.#observer) return;
-    this.#observer = new ResizeObserver(() => this.#render());
+    this.#observer = new ResizeObserver(() => this.render());
     this.#observer.observe(this);
   }
 
@@ -314,9 +329,25 @@ export class PlotElement extends HTMLElement {
     return all.find((entry) => entry.name === wanted) ?? null;
   }
 
+  /**
+   * The drawable traces, resolved once per data change rather than once per call.
+   *
+   * Cached because three callers want them and one of them is `pointermove`: re-pairing every
+   * value with its abscissa on each pointer sample is work proportional to the whole curve
+   * set, repeated for a query that only reads it. `#invalidate` is called wherever the
+   * selection can change — both setters and the attribute callback, since `series` picks
+   * which set is drawn.
+   */
   #traces(): ResolvedTrace[] {
-    const curves = this.#curves ?? this.#selected();
-    return curves ? resolveTraces(curves) : [];
+    if (this.#resolved === null) {
+      const curves = this.#curves ?? this.#selected();
+      this.#resolved = curves ? resolveTraces(curves) : [];
+    }
+    return this.#resolved;
+  }
+
+  #invalidate(): void {
+    this.#resolved = null;
   }
 
   /** The two scales for the current data and box, or null when there is nothing to draw. */
@@ -328,14 +359,19 @@ export class PlotElement extends HTMLElement {
     const right = Math.max(left + 1, width - MARGIN.right);
     const top = MARGIN.top;
     const bottom = Math.max(top + 1, height - MARGIN.bottom);
+    // `padDomain` rather than `padRange`, on both axes, because additive padding on a log
+    // scale can push a positive lower bound below zero — see its docstring for what that
+    // does to a residual history. Both axes go through the same call: the version that
+    // special-cased x here and left y additive is what produced that bug.
+    const padded = { x: padDomain(x, this.xScale, 0.02), y: padDomain(y, this.yScale) };
     return {
-      x: scaleFor(this.xScale === 'log' ? x : padRange(x, 0.02), left, right, this.xScale),
+      x: scaleFor(padded.x, left, right, this.xScale),
       // Inverted by swapping the pixel endpoints, so nothing downstream has to know: a
       // projection is a projection, and `invert-y` becomes one argument rather than a flag
       // every drawing call has to remember.
       y: this.invertY
-        ? scaleFor(padRange(y), top, bottom, this.yScale)
-        : scaleFor(padRange(y), bottom, top, this.yScale),
+        ? scaleFor(padded.y, top, bottom, this.yScale)
+        : scaleFor(padded.y, bottom, top, this.yScale),
     };
   }
 
@@ -361,7 +397,7 @@ export class PlotElement extends HTMLElement {
     this.dispatchEvent(
       new CustomEvent('fs-plot-hover', { detail: found, bubbles: true, composed: true }),
     );
-    this.#render();
+    this.render();
   };
 
   #onPointerLeave = (): void => {
@@ -371,7 +407,7 @@ export class PlotElement extends HTMLElement {
     this.dispatchEvent(
       new CustomEvent('fs-plot-hover', { detail: null, bubbles: true, composed: true }),
     );
-    this.#render();
+    this.render();
   };
 
   #announce(found: NearestPoint | null): void {
@@ -383,7 +419,36 @@ export class PlotElement extends HTMLElement {
 
   // ------------------------------------------------------------------ painting
 
-  #render(): void {
+  /**
+   * Ask for a paint, at most one per frame.
+   *
+   * The same `render()` / `draw()` split `<fs-viewer>` uses, and it earns its keep here for a
+   * reason the viewer does not have: a pointer moving fast across a dense curve resolves a
+   * *different* nearest point many times per frame, and each one used to repaint immediately.
+   * The work skipped is a full frame — axes, ticks, every trace — not a marker.
+   *
+   * Public, like the viewer's, so a page that mutates a curve set in place has a way to say
+   * so. Setting `result` or `curves` calls it already.
+   */
+  render(): void {
+    // Describe now, paint later. The accessible name is a function of the data, so deferring
+    // it to a frame is a milder version of the mistake of deferring it to a rendering
+    // context — and a test that has to wait a frame to read a label is the symptom. Free to
+    // do here because `#traces()` caches.
+    this.#describe(this.#traces());
+    if (this.#frame) return;
+    const schedule =
+      typeof requestAnimationFrame === 'function'
+        ? requestAnimationFrame
+        : (cb: FrameRequestCallback) => setTimeout(() => cb(0), 0) as unknown as number;
+    this.#frame = schedule(() => {
+      this.#frame = 0;
+      this.draw();
+    });
+  }
+
+  /** Paint now. `render()` is the coalesced entry point; this is the work. */
+  draw(): void {
     const canvas = this.#canvas;
     if (!canvas) return;
 
@@ -404,8 +469,6 @@ export class PlotElement extends HTMLElement {
     // announces what it holds instead of an unlabelled box. Writing the tests found this:
     // the obvious order bails on a null context and skips the description with it.
     const traces = this.#traces();
-    this.#describe(traces);
-
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);

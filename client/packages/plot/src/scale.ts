@@ -119,6 +119,29 @@ export function padRange({ min, max }: Range, fraction = 0.05): Range {
   return { min: min - pad, max: max + pad };
 }
 
+/**
+ * Padding that means the same thing on either scale.
+ *
+ * On a linear axis a fraction of the span is added at each end. On a log axis that is the
+ * wrong operation and quietly ruins the plot: padding a residual history running from 1e-1
+ * down to 1e-7 subtracts 0.005 from the lower bound, which is *negative*, so
+ * :func:`usableDomain` lifts it to :data:`LOG_FLOOR` and six decades become twelve with the
+ * whole curve crushed into the top half. Nothing errors and the axis labels look plausible.
+ *
+ * So a log axis is padded by a fraction of its **decades**, multiplicatively, which keeps a
+ * positive range positive by construction. Having one function decide is the point — the
+ * first version special-cased the x axis at the call site and left y additive, which is
+ * exactly the asymmetry that produced the bug.
+ */
+export function padDomain(domain: Range, kind: ScaleKind, fraction = 0.05): Range {
+  if (kind !== 'log') return padRange(domain, fraction);
+  const safe = usableDomain(domain, 'log');
+  const lo = Math.log10(safe.min);
+  const hi = Math.log10(safe.max);
+  const pad = (hi - lo) * fraction;
+  return { min: 10 ** (lo - pad), max: 10 ** (hi + pad) };
+}
+
 export interface Tick {
   value: number;
   label: string;

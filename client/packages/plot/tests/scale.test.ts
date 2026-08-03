@@ -4,6 +4,7 @@ import {
   LOG_FLOOR,
   extentOf,
   formatTick,
+  padDomain,
   padRange,
   scaleFor,
   ticksFor,
@@ -142,5 +143,40 @@ describe('extentOf and padRange', () => {
 
   it('grows a range by a fraction of its span', () => {
     expect(padRange({ min: 0, max: 10 }, 0.1)).toEqual({ min: -1, max: 11 });
+  });
+});
+
+describe('padDomain', () => {
+  it('pads a linear range additively, as padRange does', () => {
+    expect(padDomain({ min: 0, max: 10 }, 'linear', 0.1)).toEqual({ min: -1, max: 11 });
+  });
+
+  it('keeps a log range positive — the bug this exists for', () => {
+    // A residual history from 1e-1 down to 1e-7. Additive padding subtracts 0.005 from the
+    // lower bound, which is *negative*, so `usableDomain` lifts it to LOG_FLOOR and six
+    // decades silently become twelve with the whole curve crushed into the top half.
+    const additive = padRange({ min: 1e-7, max: 1e-1 });
+    expect(additive.min).toBeLessThan(0);
+
+    const padded = padDomain({ min: 1e-7, max: 1e-1 }, 'log');
+    expect(padded.min).toBeGreaterThan(0);
+    expect(padded.min).toBeLessThan(1e-7);
+    expect(padded.max).toBeGreaterThan(1e-1);
+  });
+
+  it('pads a log range by a fraction of its decades', () => {
+    // Six decades padded by 5% is 0.3 of a decade at each end.
+    const padded = padDomain({ min: 1, max: 1e6 }, 'log', 0.05);
+    expect(Math.log10(padded.min)).toBeCloseTo(-0.3, 6);
+    expect(Math.log10(padded.max)).toBeCloseTo(6.3, 6);
+  });
+
+  it('leaves a padded log range spanning the decades the data did', () => {
+    // The regression in one assertion: the projected span must still be about six decades,
+    // not the twelve additive padding produced.
+    const padded = padDomain({ min: 1e-7, max: 1e-1 }, 'log');
+    const decades = Math.log10(padded.max) - Math.log10(padded.min);
+    expect(decades).toBeGreaterThan(6);
+    expect(decades).toBeLessThan(7);
   });
 });
