@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from counts import stated_count
 
 from fenixspoon.core import FenixSpoonCore
 from fenixspoon.core.identity import Principal, Quotas
@@ -266,13 +267,13 @@ TOOL_COUNT_CLAIMS = {
 def test_the_prose_counts_the_tools_this_adapter_actually_exposes(filename):
     """Four documents state this number and none of them was checked against the table.
 
-    The JSON-RPC suite makes the same check for its method count and owns the parsing, since
-    both documents write counts as digits in one place and as words in another. This test
-    lives here rather than there because `mcp_adapter` cannot be imported without the extra —
-    so the guard runs in the `mcp` CI job, which is the job that installs it.
+    The JSON-RPC suite makes the same check for its method count, and `counts.py` owns the
+    parsing since both documents write counts as digits in one place and as words in another.
+    This test lives here rather than beside that one because `mcp_adapter` cannot be imported
+    without the extra — so the guard runs in the `mcp` CI job, which is the job that installs
+    it, and which is where the first version of it failed on an import this directory's flat
+    layout does not allow.
     """
-    from .test_rpc import stated_count
-
     root = Path(__file__).resolve().parents[2]
     text = (root / filename).read_text()
     assert stated_count(text, TOOL_COUNT_CLAIMS[filename]) == len(mcp_adapter.TOOLS), (
