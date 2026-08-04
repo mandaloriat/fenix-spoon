@@ -1,14 +1,21 @@
-"""Studies: one specification for the shape every iterative workflow shares (#48).
+"""Studies: one specification for the shape every iterative workflow shares (#48, #21).
 
-The acceptance criterion is :func:`test_a_mesh_convergence_study_tabulates_and_reuses` — "a
-mesh-convergence study over one design returns a table of (variation → metric) with per-job
-references, reusing cached runs, and its output fits in a screen of text".
+Two acceptance criteria, one per kind.
+:func:`test_a_mesh_convergence_study_tabulates_and_reuses` — "a mesh-convergence study over one
+design returns a table of (variation → metric) with per-job references, reusing cached runs,
+and its output fits in a screen of text" (#48). And
+:func:`test_a_sweep_of_angle_of_attack_produces_a_lift_polar` — one submission, N jobs, and a
+response curve that is linear in alpha because that is what potential-flow lift is (#21).
 
-The rest fall into three groups. **Specification** tests pin what a study object may say, and
-they matter more than they look: a study is a question, and a malformed question produces a
-plausible answer rather than an error. **Orchestration** tests cover what running one does to
-jobs, quotas and the cache. **Read-out** tests cover the convergence arithmetic, which is the
-part that turns a table into a sentence and therefore the part that can quietly lie.
+Each kind's tests fall into the same groups, in the same order, and the parallel is the point:
+**specification** tests pin what a study object may say, and they matter more than they look —
+a study is a question, and a malformed question produces a plausible answer rather than an
+error. **Orchestration** tests cover what running one does to jobs, quotas and the cache.
+**Read-out** tests cover the arithmetic that turns a table into a sentence — where a ladder
+settled, what a sweep's curve looks like — and therefore the part that can quietly lie.
+
+The sweep section also carries the tests for what its arrival *found*: a column list the rows
+had never honoured, and a CLI table that dropped every map-valued column.
 """
 
 import asyncio
@@ -207,7 +214,10 @@ def test_a_rung_records_the_study_and_the_design_it_came_from(core, me):
     provenance = core.provenance(report.rungs[1].job_id, me)
     assert provenance.inputs["study"].startswith(f"{study}@")
     assert provenance.inputs["variation_index"] == 1
-    assert provenance.inputs["variation_value"] == 32.0
+    # The whole override map, not the bare number: a grid point sets several parameters, and
+    # a value recorded without its parameter was already half a sentence when only the ladder
+    # existed.
+    assert provenance.inputs["variation"] == {"resolution": 32.0}
     assert provenance.inputs["design"].startswith(f"{design}@")
 
 
@@ -379,3 +389,446 @@ def test_the_study_operations_are_reachable_over_json_rpc(core, me):
     assert wire["kind"] == "mesh_convergence"
     assert len(wire["rungs"]) == 3
     assert wire["convergence"][0]["metric"]
+
+
+# ============================================================== sweeps (roadmap M5, #21)
+#
+# The second kind, and the one the abstraction was written for. What these tests are really
+# checking, beyond the arithmetic, is that adding it cost nothing structural: no new
+# operation, no second job path, no change to the ladder above. Every test in this section
+# goes through the same `study.run` / `study.get` the convergence tests use.
+
+
+def sweep_of(core, me, design, **overrides) -> str:
+    body = {
+        "kind": "sweep",
+        "design": design,
+        "axes": [{"parameter": "alpha", "values": [-4.0, 0.0, 4.0, 8.0]}],
+        "metrics": ["c_l"],
+    }
+    body.update(overrides)
+    return core.create_object("study", body, me).ref
+
+
+def swept_design(core, me) -> str:
+    """A design cheap enough to solve a dozen times in a test, on the airfoil above."""
+    return design_of(core, me, {"resolution": 40, "iterations": 250})
+
+
+# ----------------------------------------------------------------------- acceptance
+
+
+def test_a_sweep_of_angle_of_attack_produces_a_lift_polar(core, me):
+    """The acceptance criterion, restated against what the toolkit can actually answer.
+
+    #21 asked for "a demo sweeping airfoil camber and plotting a lift-**proxy** curve". Both
+    halves of that have moved since it was written. The proxy is gone — #68 made `c_l` a real
+    number, validated against closed forms — and camber is a property of the *geometry*, which
+    the workspace stores as an explicit polygon rather than a parametric shape, so a camber
+    sweep is a sweep over geometry references and not over a capability's parameters.
+
+    Angle of attack is the better subject anyway, and not as a substitute: `alpha` rotates the
+    free stream rather than the geometry, which the adapter's own parameter description points
+    out is what lets a sweep reuse one domain — and the lift polar is the curve this entire
+    physics exists to produce.
+
+    The assertion is a **property of the physics**, not a golden number: potential-flow lift is
+    linear in alpha, so equal steps in angle must give equal steps in `c_l`. That also catches
+    the failure mode a sweep is uniquely exposed to — every point collapsing onto one cached
+    job, which would make the "curve" flat and every step equal to zero. Hence both halves:
+    the steps agree with each other, *and* they are not zero.
+    """
+    study = sweep_of(core, me, swept_design(core, me))
+    run, report = run_to_completion(core, me, study)
+
+    assert run.submitted == 4 and run.reused == 0 and run.refused == 0
+    assert [point.values["alpha"] for point in report.points] == [-4.0, 0.0, 4.0, 8.0]
+    assert all(point.status == "done" for point in report.points)
+    assert len({point.job_id for point in report.points}) == 4, (
+        "the points collapsed onto one solve"
+    )
+
+    (curve,) = report.curves
+    assert curve.name == "c_l"
+    (trace,) = curve.traces
+    assert trace.x.name == "alpha" and trace.x.values == [-4.0, 0.0, 4.0, 8.0]
+
+    steps = [b - a for a, b in zip(trace.values, trace.values[1:], strict=False)]
+    assert min(steps) > 0.1, f"the polar has no slope: {trace.values}"
+    mean = sum(steps) / len(steps)
+    assert max(abs(step - mean) for step in steps) < 0.03 * mean, (
+        f"lift is linear in alpha and these steps are not: {steps}"
+    )
+
+    # The same two properties the ladder's acceptance test pins: it reads in one response, and
+    # no field crossed into it.
+    rendered = json.dumps(report.model_dump())
+    assert len(rendered) < 4096, f"report is {len(rendered)} bytes"
+    assert "fields" not in rendered
+
+
+def test_a_sweep_costs_nothing_the_second_time(core, me):
+    """The property that makes a sweep worth running from a workspace rather than a script:
+    add two angles to an eleven-angle polar and pay for two solves."""
+    design = swept_design(core, me)
+    run_to_completion(core, me, sweep_of(core, me, design))
+
+    wider = sweep_of(
+        core,
+        me,
+        design,
+        axes=[{"parameter": "alpha", "values": [-4.0, 0.0, 4.0, 6.0, 8.0]}],
+    )
+    run, report = run_to_completion(core, me, wider)
+    assert run.reused == 4 and run.submitted == 1
+    assert [point.cached for point in report.points] == [True, True, True, False, True]
+
+
+# -------------------------------------------------------------------- specification
+
+
+def test_a_sweep_is_a_grid_or_a_list_of_points_but_not_both(core, me):
+    """Given both, neither is the specification — and silently preferring one would make the
+    other a decoration that looks load-bearing."""
+    design = swept_design(core, me)
+    with pytest.raises(errors.InvalidObject):
+        sweep_of(core, me, design, points=[{"alpha": 0.0}, {"alpha": 4.0}])
+    with pytest.raises(errors.InvalidObject):
+        sweep_of(core, me, design, axes=[], points=[])
+
+
+@pytest.mark.parametrize(
+    "axes",
+    [
+        pytest.param(
+            [{"parameter": "alpha", "values": [0.0, 4.0]}, {"parameter": "alpha", "values": [1.0]}],
+            id="one parameter on two axes",
+        ),
+        pytest.param([{"parameter": "alpha", "values": []}], id="an axis with no values"),
+        pytest.param([{"parameter": "alpha", "values": [4.0, 0.0]}], id="descending"),
+        pytest.param([{"parameter": "alpha", "values": [4.0, 4.0]}], id="a repeated value"),
+    ],
+)
+def test_a_malformed_grid_is_refused(core, me, axes):
+    with pytest.raises(errors.InvalidObject):
+        sweep_of(core, me, swept_design(core, me), axes=axes)
+
+
+def test_the_first_axis_needs_two_values_because_it_is_the_abscissa(core, me):
+    """A curve needs two points — and this rule is what bounds the trace count.
+
+    With at least two values on the abscissa, the combinations of the remaining axes cannot
+    exceed `MAX_SWEEP_POINTS / 2`, which is exactly `MAX_SERIES_TRACES`. Drop it and a sweep
+    with one value on the first axis and sixty-four on the second would build a series the
+    protocol refuses — a legal study whose report cannot be encoded.
+    """
+    from fenixspoon.series import MAX_SERIES_TRACES
+
+    assert studies.MAX_SWEEP_POINTS // 2 == MAX_SERIES_TRACES, (
+        "the point cap and the trace ceiling are related by this rule; moving one alone "
+        "breaks the guarantee that a legal sweep always has an encodable report"
+    )
+    with pytest.raises(errors.InvalidObject):
+        sweep_of(
+            core,
+            me,
+            swept_design(core, me),
+            axes=[
+                {"parameter": "alpha", "values": [0.0]},
+                {"parameter": "resolution", "values": [24.0, 32.0]},
+            ],
+        )
+
+
+def test_a_grid_over_the_cap_is_refused_with_its_shape_spelled_out(core, me):
+    """The whole failure mode is that a grid's size is not visible in the body asking for it:
+    four axes of four values is one short line and two hundred and fifty-six solves."""
+    with pytest.raises(errors.InvalidObject) as caught:
+        sweep_of(
+            core,
+            me,
+            swept_design(core, me),
+            axes=[
+                {"parameter": "alpha", "values": [0.0, 2.0, 4.0, 6.0]},
+                {"parameter": "u_inf", "values": [1.0, 2.0, 3.0, 4.0]},
+                {"parameter": "resolution", "values": [24.0, 32.0, 40.0, 48.0]},
+                {"parameter": "iterations", "values": [100.0, 200.0, 300.0, 400.0]},
+            ],
+        )
+    assert "4 x 4 x 4 x 4" in json.dumps(caught.value.errors)
+
+
+@pytest.mark.parametrize(
+    "points",
+    [
+        pytest.param([{"alpha": 0.0}], id="a sweep of one point is a solve"),
+        pytest.param([{"alpha": 0.0}, {"alpha": 0.0}], id="a repeated point"),
+        pytest.param([{"alpha": 0.0}, {"u_inf": 2.0}], id="a ragged parameter set"),
+        pytest.param([{}, {}], id="points that set nothing"),
+    ],
+)
+def test_a_malformed_point_list_is_refused(core, me, points):
+    with pytest.raises(errors.InvalidObject):
+        sweep_of(core, me, swept_design(core, me), axes=[], points=points)
+
+
+def test_the_point_cap_is_counted_and_never_enumerated(core, me, monkeypatch):
+    """The cap must not build the thing it refuses.
+
+    Ten axes of a hundred values is a thousand numbers on the wire and 10^20 points, so a
+    validator that asked `len(self.variations())` would construct the cartesian product it was
+    about to reject — turning the guard against an accidental 256-solve grid into the more
+    effective denial of service it was meant to prevent. Counted with `prod` over the axis
+    lengths instead, which is one multiplication per axis. Raised in review of #21.
+
+    `product` is monkeypatched to explode rather than left to hang: a regression here would
+    otherwise fail by exhausting the machine, which is a true signal and a terrible one.
+    """
+    monkeypatch.setattr(
+        studies,
+        "product",
+        lambda *args: pytest.fail("the point cap enumerated the grid it was refusing"),
+    )
+    with pytest.raises(errors.InvalidObject) as caught:
+        sweep_of(
+            core,
+            me,
+            swept_design(core, me),
+            axes=[
+                {"parameter": f"p{i}", "values": [float(v) for v in range(40)]}
+                for i in range(8)
+            ],
+        )
+    # 40^8, spelled out both ways, because the point of the message is that neither number is
+    # visible in the body that asked for it.
+    assert "6553600000000 points (40 x 40 x 40 x 40 x 40 x 40 x 40 x 40)" in json.dumps(
+        caught.value.errors
+    )
+
+
+def test_an_axis_over_a_parameter_the_capability_does_not_have_is_refused(core, me):
+    """The ladder's guard, which matters more over a grid rather than less: one misspelled
+    axis collapses every point that differs only along it, and the table then reads as a
+    parameter with no effect — a wrong conclusion, confidently drawn."""
+    study = sweep_of(
+        core, me, swept_design(core, me), axes=[{"parameter": "alfa", "values": [0.0, 4.0]}]
+    )
+    with pytest.raises(errors.InvalidObject) as caught:
+        asyncio.run(core.run_study(study, me))
+    assert "alpha" in json.dumps(caught.value.errors), "the message should list the real names"
+
+
+def test_the_refusal_points_at_the_field_the_bad_name_was_written_in(core, me):
+    """A `loc` is an instruction to go and look, so it has to name something the caller sent.
+
+    The first version reported `["parameter"]` whatever the kind, having been written for the
+    ladder — which on a sweep sends a reader to a field the body does not have. One error per
+    bad name now, each located: the axis that carries it, by index, or `points` where every
+    point declares the same keys and singling one out would suggest the rest are fine.
+    Raised in review of #21.
+    """
+    grid = sweep_of(
+        core,
+        me,
+        swept_design(core, me),
+        axes=[
+            {"parameter": "alpha", "values": [0.0, 4.0]},
+            {"parameter": "u_infinity", "values": [1.0, 2.0]},
+        ],
+    )
+    with pytest.raises(errors.InvalidObject) as caught:
+        asyncio.run(core.run_study(grid, me))
+    assert [error["loc"] for error in caught.value.errors] == [["axes", 1, "parameter"]]
+
+    listed = sweep_of(
+        core,
+        me,
+        swept_design(core, me),
+        axes=[],
+        points=[{"alfa": 0.0, "u_infinity": 1.0}, {"alfa": 4.0, "u_infinity": 1.0}],
+    )
+    with pytest.raises(errors.InvalidObject) as caught:
+        asyncio.run(core.run_study(listed, me))
+    # Both names are wrong and both are reported: fixing one and resubmitting to discover the
+    # other is the round trip a list of errors exists to avoid.
+    assert [error["loc"] for error in caught.value.errors] == [["points"], ["points"]]
+
+    ladder = study_of(core, me, design_of(core, me), parameter="resolutoin")
+    with pytest.raises(errors.InvalidObject) as caught:
+        asyncio.run(core.run_study(ladder, me))
+    assert [error["loc"] for error in caught.value.errors] == [["parameter"]]
+
+
+# -------------------------------------------------------------------- orchestration
+
+
+def test_a_grid_enumerates_in_odometer_order_with_the_last_axis_fastest(core, me):
+    """Consecutive points differ in the axis the curve is drawn along, which is what makes the
+    order worth specifying rather than leaving to `product`'s documentation."""
+    study = sweep_of(
+        core,
+        me,
+        swept_design(core, me),
+        axes=[
+            {"parameter": "resolution", "values": [24.0, 32.0]},
+            {"parameter": "alpha", "values": [0.0, 4.0, 8.0]},
+        ],
+    )
+    body = studies.STUDY_BODY.validate_python(core.object(study, me).body)
+    assert body.variations() == [
+        {"resolution": 24.0, "alpha": 0.0},
+        {"resolution": 24.0, "alpha": 4.0},
+        {"resolution": 24.0, "alpha": 8.0},
+        {"resolution": 32.0, "alpha": 0.0},
+        {"resolution": 32.0, "alpha": 4.0},
+        {"resolution": 32.0, "alpha": 8.0},
+    ]
+
+
+def test_a_point_records_every_parameter_it_varied(core, me):
+    """#44's rule under a grid: the job's inputs still describe what was solved, and now they
+    have to name *which* parameter each value belonged to."""
+    design = swept_design(core, me)
+    study = sweep_of(core, me, design)
+    _, report = run_to_completion(core, me, study)
+
+    provenance = core.provenance(report.points[2].job_id, me)
+    assert provenance.inputs["study"].startswith(f"{study}@")
+    assert provenance.inputs["variation_index"] == 2
+    assert provenance.inputs["variation"] == {"alpha": 4.0}
+    assert provenance.inputs["design"].startswith(f"{design}@")
+
+
+def test_a_point_the_capability_refuses_does_not_take_the_table_with_it(core, me):
+    """`alpha` is bounded at ±30° by the adapter, so a sweep that walks past it has a point
+    with no answer and three with one. Per-point, exactly as the ladder is per-rung."""
+    study = sweep_of(
+        core, me, swept_design(core, me), axes=[{"parameter": "alpha", "values": [0.0, 4.0, 40.0]}]
+    )
+    _, report = run_to_completion(core, me, study)
+
+    assert [point.status for point in report.points] == ["done", "done", "refused"]
+    assert report.complete, "a refused point is terminal; the sweep is not waiting for it"
+
+
+# ------------------------------------------------------------------------ read-out
+
+
+def test_a_two_axis_sweep_draws_one_trace_per_line_of_the_grid(core, me):
+    """A family of curves, which is how a two-parameter sweep is drawn on paper: `c_l(alpha)`
+    at each resolution, rather than one zig-zag through six unrelated points."""
+    study = sweep_of(
+        core,
+        me,
+        swept_design(core, me),
+        axes=[
+            {"parameter": "alpha", "values": [0.0, 4.0, 8.0]},
+            {"parameter": "resolution", "values": [24.0, 40.0]},
+        ],
+    )
+    _, report = run_to_completion(core, me, study)
+
+    (curve,) = report.curves
+    assert [trace.name for trace in curve.traces] == [
+        "c_l @ resolution=24",
+        "c_l @ resolution=40",
+    ]
+    for trace in curve.traces:
+        assert trace.x.values == [0.0, 4.0, 8.0]
+    # Two resolutions of the same angles disagree — mildly, and they must, or the sweep is
+    # reporting one solve under two names.
+    assert curve.traces[0].values != curve.traces[1].values
+
+
+def test_a_missing_point_leaves_its_trace_short_rather_than_misaligned(core, me):
+    """Why every trace carries its own abscissa instead of sharing the series-level one.
+
+    With a shared `x`, a point with no answer has no legal encoding: a trace's values must
+    line up with the axis, so the missing one would have to become a zero, a null the model
+    refuses, or a silent shift of every later value onto the wrong angle. Per-trace abscissae
+    make the partial sweep say exactly what it knows.
+    """
+    study = sweep_of(
+        core, me, swept_design(core, me), axes=[{"parameter": "alpha", "values": [0.0, 4.0, 40.0]}]
+    )
+    _, report = run_to_completion(core, me, study)
+
+    (curve,) = report.curves
+    assert curve.x is None, "the series-level abscissa is the encoding this avoids"
+    (trace,) = curve.traces
+    assert trace.x.values == [0.0, 4.0], "the refused angle is absent, not zero"
+    assert len(trace.values) == 2
+
+
+def test_explicit_points_are_tabulated_and_not_drawn(core, me):
+    """The form every design of experiments a grid cannot express arrives in — and the reason
+    it comes back without curves: the caller chose points, not an ordering, so there is no
+    axis to draw against and inventing one would be drawing against the list index."""
+    study = sweep_of(
+        core,
+        me,
+        swept_design(core, me),
+        axes=[],
+        points=[{"alpha": 0.0, "u_inf": 1.0}, {"alpha": 6.0, "u_inf": 1.5}],
+    )
+    _, report = run_to_completion(core, me, study)
+
+    assert report.parameters == ["alpha", "u_inf"]
+    assert [point.values for point in report.points] == [
+        {"alpha": 0.0, "u_inf": 1.0},
+        {"alpha": 6.0, "u_inf": 1.5},
+    ]
+    assert all(point.status == "done" for point in report.points)
+    assert report.curves == []
+
+
+def test_a_metric_nothing_has_answered_yet_is_absent_rather_than_an_empty_frame(core, me):
+    """A curve set with no traces is not an empty drawing, it is an invalid one — and "no
+    answers yet" is said by the metric's absence, not by a frame around nothing."""
+    study = sweep_of(core, me, swept_design(core, me))
+    report = core.study_report(study, me)  # never run: nothing has answered anything
+
+    assert all(point.status == "refused" for point in report.points)
+    assert report.curves == []
+    # `complete` is true here, which reads oddly for a study nobody ran: a refusal is terminal
+    # and a point with no job is reported as refused. That is #48's meaning of the field and
+    # this pins it rather than leaving it to be discovered — the sentence to read beside it is
+    # the per-point `error`, which says the variation was never accepted in the first place.
+    assert report.complete and all(point.error for point in report.points)
+
+
+# ------------------------------------------------------------------------ transport
+
+
+def test_a_sweep_report_crosses_json_rpc_as_the_same_document(core, me):
+    """No new operation and no new binding — `study.get` answers for both kinds, which is the
+    whole payoff of #48 having defined a study rather than a mesh ladder."""
+    from fenixspoon.rpc.encoding import jsonable
+    from fenixspoon.rpc.methods import method_names
+
+    study = sweep_of(core, me, swept_design(core, me))
+    _, report = run_to_completion(core, me, study)
+
+    assert {"study.run", "study.get"} <= set(method_names()), "no new method appeared"
+    wire = jsonable(report)
+    assert wire["kind"] == "sweep"
+    assert len(wire["points"]) == 4
+    assert wire["curves"][0]["traces"][0]["x"]["name"] == "alpha"
+
+
+def test_the_table_carries_the_columns_the_study_asked_for(core, me):
+    """`metrics` is documented as "which declared metrics to tabulate", and until #21 every
+    row carried all of them regardless — the read-out honoured the list and the table ignored
+    it. Invisible on a ladder, where the read-out is what a caller reads; obvious the moment a
+    sweep of two named metrics rendered six columns of them."""
+    study = sweep_of(core, me, swept_design(core, me), metrics=["c_l"])
+    _, report = run_to_completion(core, me, study)
+
+    assert all(set(point.metrics) == {"c_l"} for point in report.points)
+    assert [curve.name for curve in report.curves] == ["c_l"]
+
+    # The counter-case, so this cannot quietly become "you must ask for what you want".
+    every = sweep_of(core, me, swept_design(core, me), metrics=None)
+    _, report = run_to_completion(core, me, every)
+    declared = {spec.name for spec in core.capability("mock.laplace2d").metrics}
+    assert all(set(point.metrics) == declared for point in report.points)

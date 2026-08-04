@@ -27,9 +27,10 @@
     ([#47](https://github.com/mandaloriat/fenix-spoon/issues/47)); and the **JSON-RPC over
     stdio transport** §11 — twenty-four methods, no port, no FastAPI
     ([#45](https://github.com/mandaloriat/fenix-spoon/issues/45)), documented at
-    [JSON-RPC over stdio](08-json-rpc.md); and the **study abstraction** §7 — one kind,
-    `mesh_convergence`, orchestrated through object references and compact results
-    ([#48](https://github.com/mandaloriat/fenix-spoon/issues/48)); and the **MCP adapter**
+    [JSON-RPC over stdio](08-json-rpc.md); and the **study abstraction** §7 —
+    `mesh_convergence` first ([#48](https://github.com/mandaloriat/fenix-spoon/issues/48)) and
+    `sweep` since ([#21](https://github.com/mandaloriat/fenix-spoon/issues/21)), both
+    orchestrated through object references and compact results; and the **MCP adapter**
     §11 — thirteen tools over the JSON-RPC method table, an optional extra
     ([#49](https://github.com/mandaloriat/fenix-spoon/issues/49)), documented at
     [MCP adapter](09-mcp.md); and the **CLI and Python API** §11
@@ -40,9 +41,11 @@
     with no web framework imported.
 
     Six of §15's open questions are settled as a result and are marked there; a seventh is
-    partly settled and says which part. What is still open is not M2.5 work: the study kinds
-    beyond the first, and the MCP resources-versus-paths question, which wants a real host to
-    watch rather than more argument.
+    partly settled and says which part. What is still open is not M2.5 work: the MCP
+    resources-versus-paths question, which wants a real host to watch rather than more
+    argument. *"The study kinds beyond the first" was the other one, and #21 answered it by
+    adding one — no new operation, no new binding, and the ladder untouched, which is the
+    evidence the abstraction was drawn in the right place rather than merely early.*
 
 ## 1. Motivation
 
@@ -243,7 +246,7 @@ The whole vocabulary should stay small enough to hold in one page. A first cut:
 | `job.cancel` | cooperative cancellation |
 | `result.query` | compact queries over a result's fields |
 | `artifact.get` | resolve an artifact reference to a path or bytes |
-| `study.run` | run a study over a design *(implemented, #48 — one kind)* |
+| `study.run` | run a study over a design *(implemented — `mesh_convergence` #48, `sweep` #21)* |
 | `study.get` | study status and its per-job result references *(implemented, #48)* |
 
 Deliberately absent: anything that takes code, a command line, a package name or an image
@@ -251,6 +254,38 @@ reference. Deliberately *not* per-physics: there is no `solve_magnetostatics` �
 capability name, a parameter set and declared metrics, which is what makes a new solver adapter
 automatically available to every caller, exactly as
 [writing an adapter](start-write-a-solver.md) makes it available to the HTTP API today.
+
+### Study kinds
+
+Two operations, two kinds, and the second is the reason the first was written as a *study*
+rather than as a mesh ladder.
+
+| Kind | The question | The answer |
+|---|---|---|
+| `mesh_convergence` (#48) | one parameter, a ladder of values | the table, plus where each metric stopped moving |
+| `sweep` (#21) | one or more parameters, a grid or a list of points | the table, plus a response curve per metric |
+
+A **sweep** carries either `axes` — a full factorial, last axis varying fastest, first axis the
+abscissa of the curves — or explicit `points`, which is how a Latin hypercube or any other
+design of experiments arrives. Generating those here was considered and refused: **a randomized
+design generated server-side breaks the property that defines a study**, that its job list is a
+pure function of its object revision, unless the seed is frozen in the body — at which point the
+caller is specifying the design anyway. So the caller generates and the revision freezes.
+
+A sweep is bounded at 64 points. The bound is on the *answer*, not on the queue — every point
+goes through `job.submit` and is governed by the cell budget and the quota like any other job —
+and it exists because a grid **multiplies**: four axes of four values is 256 solves from a body
+that fits on one line, and the typo that adds a fifth axis is invisible.
+
+The curves come back as `Series1DData`, the same model a `series1d` result carries, so anything
+that draws a curve draws these. Each trace brings its own abscissa rather than sharing the
+series-level one, because a point with no answer has no legal encoding against a shared axis —
+it would have to become a zero, or shift every later value onto the wrong abscissa. A partial
+sweep says exactly what it knows.
+
+**What neither kind does is choose the next point.** That is an optimizer, it is
+[#22](https://github.com/mandaloriat/fenix-spoon/issues/22), and the boundary is §15's: given
+`study:s-1@2` you can say which solves it implies without running any of them.
 
 ## 8. Workspace
 

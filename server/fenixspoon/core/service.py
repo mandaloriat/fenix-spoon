@@ -389,7 +389,7 @@ class FenixSpoonCore:
         """
         record = self.workspace.get_typed(ref, principal.id, "study")
         try:
-            body = studies.StudyBody.model_validate(record.body)
+            body = studies.STUDY_BODY.validate_python(record.body)
         except ValidationError as exc:  # pragma: no cover - create() already validated it
             raise errors.InvalidObject("study", json.loads(exc.json())) from exc
 
@@ -400,19 +400,31 @@ class FenixSpoonCore:
         # study varying `resolutoin` would submit every rung with identical parameters, the
         # result cache would collapse them onto one job, and the report would show the same
         # metric at every rung — a *perfectly converged* answer that is entirely fabricated.
-        # A study is exactly the operation where that failure is invisible.
-        if body.parameter not in solver_cls.Params.model_fields:
+        # A study is exactly the operation where that failure is invisible. Over a grid the
+        # same typo is worse, not better: one misspelled axis collapses every point that
+        # differs only along it, and the table reads as a parameter with no effect.
+        #
+        # One error per bad name, each pointing where that name was written — `parameter` on a
+        # ladder, `axes[2].parameter` on a grid, `points` where every point declares the same
+        # keys. The first version raised one error at `loc: ["parameter"]` whatever the kind,
+        # which sent a caller looking for a field a sweep does not have; the body knows its own
+        # shape, so it is the body that answers where. Raised in review of #21.
+        unknown = [
+            name for name in body.parameters() if name not in solver_cls.Params.model_fields
+        ]
+        if unknown:
             raise errors.InvalidObject(
                 "study",
                 [
                     {
                         "type": "unknown_parameter",
-                        "loc": ["parameter"],
+                        "loc": body.parameter_loc(name),
                         "msg": (
-                            f"{solver_cls.name!r} has no parameter {body.parameter!r}; "
+                            f"{solver_cls.name!r} has no parameter {name!r}; "
                             f"it accepts {sorted(solver_cls.Params.model_fields)}"
                         ),
                     }
+                    for name in unknown
                 ],
             )
         # Same rule for the metric names, and checked here so it applies to `study.run` as
@@ -422,34 +434,40 @@ class FenixSpoonCore:
         return record, body, geometry, resolved, solver_cls
 
     async def run_study(self, ref: str, principal: Principal) -> studies.StudyRun:
-        """Submit every rung of a study — `study.run` (roadmap M2.5, #48).
+        """Submit every variation of a study — `study.run` (M2.5 #48, M5 #21).
 
         Returns as soon as the work is accepted, not when it is done: solving a five-rung
         mesh ladder takes minutes and this is one call on a channel that must stay usable.
         The table appears in :meth:`study_report`.
 
-        Each rung goes through :meth:`submit` like any other job, which is what makes a study
-        obey the cell budget and the quota per job rather than per study, and what makes an
-        already-computed rung free — the result cache answers it without solving.
+        Each variation goes through :meth:`submit` like any other job, which is what makes a
+        study obey the cell budget and the quota per job rather than per study, and what makes
+        an already-computed one free — the result cache answers it without solving. A sweep
+        makes that last property worth more than a ladder did: a caller who sweeps `alpha`
+        over eleven angles and then adds two more pays for two solves.
 
-        A rung the server refuses does not fail the study. Rung 4 exceeding the cell budget
-        says nothing about rungs 1–3, and reporting the whole run as failed would throw away
-        work that succeeded; the refusal is recorded and shows up against that rung in the
-        report.
+        A variation the server refuses does not fail the study. Rung 4 exceeding the cell
+        budget says nothing about rungs 1–3, and reporting the whole run as failed would throw
+        away work that succeeded; the refusal is recorded and shows up against that variation
+        in the report.
+
+        Kind-agnostic on purpose — `body.variations()` is the only thing that differs between
+        a ladder and a grid, and this loop is the one place a second kind could have grown a
+        second job path.
         """
         record, body, geometry, resolved, solver_cls = self._study_plan(ref, principal)
 
         jobs: list[str] = []
         submitted = reused = refused = 0
-        for index, value in enumerate(body.values):
+        for index, variation in enumerate(body.variations()):
             try:
                 job = await self.submit(
                     resolved.solver,
                     geometry,
-                    {**resolved.params, body.parameter: value},
+                    {**resolved.params, **variation},
                     principal,
-                    inputs=studies.variation_inputs(record.pinned, index, value, resolved),
-                    # A study varies one parameter of a design; everything else it holds
+                    inputs=studies.variation_inputs(record.pinned, index, variation, resolved),
+                    # A study varies some parameters of a design; everything else it holds
                     # fixed, and the load case is part of everything else. Omitting it here
                     # would sweep the mesh of an *unclamped* cantilever and report a table
                     # of rigid-body motions converging beautifully to nothing.
@@ -472,41 +490,62 @@ class FenixSpoonCore:
         )
 
     def study_report(self, ref: str, principal: Principal) -> studies.StudyReport:
-        """The (variation → metric) table — `study.get` (roadmap M2.5, #48).
+        """The (variation → metric) table — `study.get` (M2.5 #48, M5 #21).
 
-        Built by resolving each rung back to its job rather than by reading a stored run
+        Built by resolving each variation back to its job rather than by reading a stored run
         record, because there is no stored run record: the study says what to solve, the jobs
         are the answer, and a third thing tracking which is which is a third thing that can
         be wrong.
 
         Two resolution paths, and the second is not defensive padding. The **cache key** is
-        the normal one: it is deterministic, and it finds a rung that was answered by a solve
-        somebody ran standalone last week — which is the whole point of reusing the cache and
-        which no `inputs` lookup can find, because that job's inputs never mentioned this
-        study. When there is no key (caching off, or the adapter does not declare itself
+        the normal one: it is deterministic, and it finds a variation that was answered by a
+        solve somebody ran standalone last week — which is the whole point of reusing the
+        cache and which no `inputs` lookup can find, because that job's inputs never mentioned
+        this study. When there is no key (caching off, or the adapter does not declare itself
         deterministic) the recorded `inputs` answer instead.
+
+        The lookup above the split is shared for the same reason `_study_plan` is: a ladder
+        and a grid must not develop two ideas of which job answered what.
         """
         record, body, geometry, resolved, solver_cls = self._study_plan(ref, principal)
+        variations = body.variations()
         by_input = {
             job.inputs.get("variation_index"): job
-            for job in self.jobs_for_object(record.pinned, principal, limit=len(body.values) * 4)
+            for job in self.jobs_for_object(record.pinned, principal, limit=len(variations) * 4)
         }
+        answered = []
+        for index, variation in enumerate(variations):
+            job = self._variation_job(solver_cls, geometry, resolved, variation, principal)
+            answered.append(job if job is not None else by_input.get(index))
 
-        rungs: list[studies.StudyRung] = []
         declared = [spec.name for spec in solver_cls.metrics]
-        columns: dict[str, list[float | None]] = {
-            name: [] for name in studies.tabulated_metrics(body, declared)
-        }
-        for index, value in enumerate(body.values):
-            job = self._rung_job(solver_cls, geometry, resolved, body, value, principal)
-            if job is None:
-                job = by_input.get(index)
-            rungs.append(self._rung(value, job))
-            metrics = rungs[-1].metrics
-            for name, column in columns.items():
-                column.append(metrics.get(name))
+        tabulated = studies.tabulated_metrics(body, declared)
 
-        return studies.StudyReport(
+        if isinstance(body, studies.SweepBody):
+            points = [
+                self._variation_result(studies.SweepPoint, {"values": variation}, job, tabulated)
+                for variation, job in zip(variations, answered, strict=True)
+            ]
+            units = {spec.name: spec.unit for spec in solver_cls.metrics}
+            return studies.SweepReport(
+                study=record.pinned,
+                kind=body.kind,
+                design=resolved.design,
+                parameters=body.parameters(),
+                solver=resolved.solver,
+                points=points,
+                curves=studies.response_curves(body, points, tabulated, units),
+                complete=all(point.status in (*TERMINAL, "refused") for point in points),
+            )
+
+        rungs = [
+            self._variation_result(studies.StudyRung, {"value": value}, job, tabulated)
+            for value, job in zip(body.values, answered, strict=True)
+        ]
+        columns: dict[str, list[float | None]] = {
+            name: [rung.metrics.get(name) for rung in rungs] for name in tabulated
+        }
+        return studies.ConvergenceReport(
             study=record.pinned,
             kind=body.kind,
             design=resolved.design,
@@ -517,16 +556,16 @@ class FenixSpoonCore:
             complete=all(rung.status in (*TERMINAL, "refused") for rung in rungs),
         )
 
-    def _rung_job(self, solver_cls, geometry, resolved, body, value, principal) -> Job | None:
-        """This rung's job by content address, or None when it has no address to look up."""
+    def _variation_job(
+        self, solver_cls, geometry, resolved, variation, principal
+    ) -> Job | None:
+        """This variation's job by content address, or None when it has no address."""
         try:
-            parsed = solver_cls.Params.model_validate(
-                {**resolved.params, body.parameter: value}
-            )
+            parsed = solver_cls.Params.model_validate({**resolved.params, **variation})
         except ValidationError:
-            # The rung's parameters do not validate — the same refusal `run_study` recorded.
-            # Reported as a missing rung rather than raised, because one bad value must not
-            # take the whole table with it.
+            # The variation's parameters do not validate — the same refusal `run_study`
+            # recorded. Reported as a missing row rather than raised, because one bad value
+            # must not take the whole table with it.
             return None
         # The same conditions `run_study` submitted with, or this looks up an address no
         # rung was ever stored at and reports a complete study as entirely missing.
@@ -537,21 +576,37 @@ class FenixSpoonCore:
         return Job.from_record(found, self.jobs.data_dir / found.id) if found else None
 
     @staticmethod
-    def _rung(value: float, job: Job | None) -> studies.StudyRung:
+    def _variation_result(model, question: dict, job: Job | None, tabulated: list[str]):
+        """One row of the table: what was asked, beside what came back.
+
+        The `question` half is the caller's — a rung's value, a point's map — and the answer
+        half is identical for both, which is why one builder fills either model. Two of these
+        would be two places for a refusal to acquire a different word.
+
+        `tabulated` filters the metrics, and it did not before #21. A study's `metrics` list is
+        documented as "which declared metrics to tabulate", the read-out honoured it, and every
+        row carried all of them anyway — visible the moment a sweep of two named metrics
+        rendered a twelve-column table of six. The row is the table, so the column list governs
+        it; a caller who wants everything omits the list and gets everything.
+        """
         if job is None:
-            return studies.StudyRung(
-                value=value,
+            return model(
+                **question,
                 status="refused",
-                error="this rung was not accepted; run the study to see why",
+                error="this variation was not accepted; run the study to see why",
             )
-        return studies.StudyRung(
-            value=value,
+        return model(
+            **question,
             job_id=job.id,
             status=job.status,
             cached=job.reused > 0,
             # From the summary, which is database columns rather than the payload file — a
             # five-rung study reads five rows instead of five multi-megabyte JSON documents.
-            metrics=dict(job.summary.metrics) if job.summary else {},
+            metrics={
+                name: value
+                for name, value in (job.summary.metrics if job.summary else {}).items()
+                if name in tabulated
+            },
             error=job.error,
         )
 

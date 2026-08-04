@@ -86,7 +86,7 @@ COMMANDS: dict[tuple[str, str], tuple[str, list[str], str]] = {
     ("result", "get"): ("result.get", ["job_id"], "the answer, at the levels asked for"),
     ("result", "query"): ("result.query", ["job_id"], "one bounded question about one field"),
     ("artifact", "get"): ("artifact.get", ["job_id", "name"], "resolve an artifact to a path"),
-    ("study", "run"): ("study.run", ["ref"], "submit every rung of a study"),
+    ("study", "run"): ("study.run", ["ref"], "submit every variation of a study"),
     ("study", "get"): ("study.get", ["ref"], "the (variation → metric) table"),
 }
 
@@ -369,19 +369,64 @@ def render(payload: Any, indent: int = 0) -> str:
 
 def _table(rows: list[dict[str, Any]], indent: int) -> str:
     """Rows that share a shape, as columns. Only the keys every row has, so a ragged list
-    degrades to the keys they agree on rather than to a grid full of blanks."""
-    columns = [key for key in rows[0] if all(key in row for row in rows)]
-    columns = [key for key in columns if not isinstance(rows[0][key], dict | list)]
+    degrades to the keys they agree on rather than to a grid full of blanks.
+
+    A column whose value is a **flat map** is spread into one column per key, qualified as
+    `parent.key`. Still generic — no operation is named here — but it is the difference
+    between a table and a header: a sweep's points carry what they varied in `values` and what
+    came back in `metrics`, and dropping both left six rows of job ids under the word
+    `points`. Found by running `study get` on a lift polar and reading the output, which is
+    the only way this kind of hole is ever found.
+
+    Qualified names always, never the bare key: `values` and `metrics` can hold the same name,
+    and a column called `alpha` that might be either an input or an answer is worse than a
+    longer heading. Lists stay dropped — a curve does not become columns.
+    """
+    shared = [key for key in rows[0] if all(key in row for row in rows)]
+    columns: list[tuple[str, tuple[str, ...]]] = []
+    for key in shared:
+        if all(_is_flat_map(row[key]) for row in rows):
+            columns += [
+                (f"{key}.{inner}", (key, inner))
+                for inner in rows[0][key]
+                if all(inner in row[key] for row in rows)
+            ]
+        elif not isinstance(rows[0][key], dict | list):
+            columns.append((key, (key,)))
     if not columns:
         return "\n".join(render(row, indent) for row in rows)
+    return _grid(rows, columns, indent)
+
+
+def _is_flat_map(value: Any) -> bool:
+    """A non-empty dict of scalars — the only shape a column can be spread into columns."""
+    return (
+        isinstance(value, dict)
+        and bool(value)
+        and not any(isinstance(item, dict | list) for item in value.values())
+    )
+
+
+def _grid(
+    rows: list[dict[str, Any]], columns: list[tuple[str, tuple[str, ...]]], indent: int
+) -> str:
+    """Lay out the chosen columns, each named by a heading and read by a path into the row."""
+
+    def cell(row: dict[str, Any], path: tuple[str, ...]) -> str:
+        value: Any = row
+        for step in path:
+            value = value[step]
+        return _scalar(value)
+
     widths = {
-        key: max(len(key), *(len(_scalar(row[key])) for row in rows)) for key in columns
+        heading: max(len(heading), *(len(cell(row, path)) for row in rows))
+        for heading, path in columns
     }
     pad = " " * indent
-    header = pad + "  ".join(key.ljust(widths[key]) for key in columns)
-    rule = pad + "  ".join("-" * widths[key] for key in columns)
+    header = pad + "  ".join(heading.ljust(widths[heading]) for heading, _ in columns)
+    rule = pad + "  ".join("-" * widths[heading] for heading, _ in columns)
     body = [
-        pad + "  ".join(_scalar(row[key]).ljust(widths[key]) for key in columns)
+        pad + "  ".join(cell(row, path).ljust(widths[heading]) for heading, path in columns)
         for row in rows
     ]
     return "\n".join([header, rule, *body])

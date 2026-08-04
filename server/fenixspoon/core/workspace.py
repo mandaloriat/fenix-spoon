@@ -15,7 +15,7 @@ Six object types, and they are deliberately not equal:
 | `design` | :class:`DesignBody` | the load-bearing one — what `job.submit` resolves |
 | `boundary_condition` | *nothing* | see below |
 | `load_case` | :class:`~fenixspoon.core.conditions.LoadCaseBody` | #85 defined it |
-| `study` | :class:`~fenixspoon.core.studies.StudyBody` | #48 defined it |
+| `study` | `MeshConvergenceBody` or `SweepBody`, on `kind` | #48 defined it, #21 unioned it |
 
 **`boundary_condition` is stored as opaque JSON on purpose.** Issue #44 asked for that to be
 said out loud rather than papered over with an invented schema, so: no shipped solver has a
@@ -67,7 +67,7 @@ workspace keeps enough to *recompute*, which a swept result never could.
 
 import json
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any
 
 import jsonpatch
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
@@ -76,7 +76,7 @@ from ..geometry import Geometry
 from ..objects import OBJECT_TYPES, ObjectFileStore, ObjectRecord, parse_ref
 from . import errors
 from .conditions import Conditions, LoadCaseBody, merge_load_cases
-from .studies import StudyBody
+from .studies import STUDY_BODY
 
 #: Built once. The union is fixed at import time, and constructing a `TypeAdapter` per
 #: validation shows up on a workspace listing that validates every head it returns.
@@ -176,15 +176,20 @@ class WorkspaceInfo(BaseModel):
 
 #: Types whose body the workspace validates. The rest are stored as given — see the module
 #: docstring for why inventing a schema for them would be worse than admitting there is none.
-VALIDATED: dict[str, type[BaseModel] | Literal["geometry"]] = {
-    "geometry": "geometry",
-    "material": MaterialBody,
-    "design": DesignBody,
+#:
+#: Adapters rather than model classes, because two of these are unions now: a geometry always
+#: was, and a study body became one when #21 added the second kind. The sentinel this map used
+#: to carry for the geometry special case went with it — one calling convention beats a map
+#: whose values mean two different things.
+VALIDATED: dict[str, TypeAdapter[Any]] = {
+    "geometry": _GEOMETRY,
+    "material": TypeAdapter(MaterialBody),
+    "design": TypeAdapter(DesignBody),
     # #48 gave `study` a body and #85 gave `load_case` one, so both left the thin list.
     # `boundary_condition` is still thin, and still for the reason above rather than for
     # want of attention.
-    "study": StudyBody,
-    "load_case": LoadCaseBody,
+    "study": STUDY_BODY,
+    "load_case": TypeAdapter(LoadCaseBody),
 }
 
 
@@ -366,14 +371,11 @@ class Workspace:
 
     @staticmethod
     def _validate(object_type: str, body: dict[str, Any]) -> None:
-        model = VALIDATED.get(object_type)
-        if model is None:
+        adapter = VALIDATED.get(object_type)
+        if adapter is None:
             return  # thin type: stored as given, on purpose
         try:
-            if model == "geometry":
-                _GEOMETRY.validate_python(body)
-            else:
-                model.model_validate(body)
+            adapter.validate_python(body)
         except ValidationError as exc:
             raise errors.InvalidObject(object_type, json.loads(exc.json())) from exc
 

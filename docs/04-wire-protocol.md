@@ -13,13 +13,13 @@ protocol version below is shared: `rpc.describe` reports it too.
 
 ## Versioning
 
-The protocol is versioned `MAJOR.MINOR`, currently **1.5**, and a server reports what it
+The protocol is versioned `MAJOR.MINOR`, currently **1.9**, and a server reports what it
 speaks:
 
 ### `GET /api/v1/version`
 
 ```json
-{ "protocol": "1.5", "implementation": "0.1.0", "api_path": "/api/v1" }
+{ "protocol": "1.9", "implementation": "0.1.0", "api_path": "/api/v1" }
 ```
 
 **The one route that never requires an API key.** A client needs to know whether it can talk
@@ -113,8 +113,14 @@ the **result cache** ([#47](https://github.com/mandaloriat/fenix-spoon/issues/47
 1.4: `provenance` on every result, and an identical resubmission answered from the solve that
 already ran. The **JSON-RPC transport** ([#45](https://github.com/mandaloriat/fenix-spoon/issues/45))
 adds nothing to this document by design — it is a second binding of these models, not a change to
-them, and it is where the workspace finally became reachable. The rest of the draft — the CLI,
-Python and MCP adapters, and studies — is still design.
+them, and it is where the workspace finally became reachable. The rest of the draft has since
+landed on the same terms and left this document equally unchanged: the
+[CLI and Python adapters](10-cli-and-python.md) ([#50](https://github.com/mandaloriat/fenix-spoon/issues/50)),
+the [MCP adapter](09-mcp.md) ([#49](https://github.com/mandaloriat/fenix-spoon/issues/49)), and
+[studies](07-local-agent-interface.md#7-minimum-operation-set)
+([#48](https://github.com/mandaloriat/fenix-spoon/issues/48)) — each a further binding of these
+models rather than an addition to them, which is the property the transport-neutral core exists
+to keep.
 
 **Protocol 1.5** adds two things to the domain contract and both are additive: a
 [`series1d` result kind](#one-dimensional-results) with a `series` key beside `data`
@@ -939,9 +945,16 @@ second protocol. Each is driven by
   not a quantity.
 - **Boundary integrals in general.** `MetricSpec.boundary` names the boundary a metric integrates
   over, and today `body` is the only name any adapter uses. Gap force in magnetostatics, reaction
-  forces in elasticity and wall heat flux in conduction are the same shape, and whether the
-  boundary needs to be *addressable* — a named region of the geometry rather than a convention —
-  is the question the second one of those will answer.
+  forces in elasticity and wall heat flux in conduction are the same shape. Half of this is now
+  settled and from the other direction than expected: the question *"does the boundary need to be
+  addressable"* was answered **yes** by 1.8, but by a load case needing to say where a clamp goes
+  rather than by a metric needing to say where a force was integrated. So the geometry can name a
+  boundary and a submission can act on one, while `MetricSpec.boundary` still takes the `body`
+  convention. What remains is the small half — letting a declared metric name a
+  [geometry boundary](#naming-a-piece-of-the-boundary) — and it stays unbuilt until an adapter reports a
+  reaction force, on the same rule the rest of this thread follows: the capability first, the
+  protocol change second.
 
 Until these land, the result envelope is exactly what is documented above: `job_id`, `kind`,
-`data`, `stats`, `metrics`, `diagnostics`, `series`, `artifacts`.
+`data`, `stats`, `metrics`, `diagnostics`, `provenance`, `series`, `artifacts`, and the derived
+`frames`.
