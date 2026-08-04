@@ -10,7 +10,14 @@ import { describe, expect, it } from 'vitest';
 import WebSocketImpl from 'ws';
 
 import { FenixSpoonClient, JobFailedError } from '../src/client.js';
-import { type Domain2D, type Regions2D, fieldNames, fieldValues, isMesh2D } from '../src/types.js';
+import {
+  type Domain2D,
+  type Regions2D,
+  fieldNames,
+  fieldValues,
+  isMesh2D,
+  studyVariations,
+} from '../src/types.js';
 import { validateGeometry, validateJobEvent, validateJobResult } from '../src/validate.js';
 
 const BASE_URL = process.env.FENIXSPOON_TEST_URL;
@@ -187,5 +194,93 @@ describeLive('against a live server', () => {
     for await (const event of job.events()) replayed.push(event);
     expect(replayed.length).toBeGreaterThan(1);
     expect(replayed.at(-1)).toMatchObject({ type: 'status', status: 'done' });
+  });
+
+  // ------------------------------------------------------- workspace (1.10, 1.11)
+
+  it('keeps a design under a stable id and solves it by reference', async () => {
+    const geometry = await client.createObject('geometry', AIRFOIL, 'airfoil');
+    expect(geometry.ref).toMatch(/^geometry:g-\d+$/);
+    expect(geometry.revision).toBe(1);
+
+    // Distinct params, and not for tidiness: the cache is content-addressed, so a design
+    // whose content matches an inline submission earlier in this file resolves to *that*
+    // job — whose `inputs` are empty, because it was submitted inline. The assertion below
+    // would then be reading the wrong job's provenance and passing for the wrong reason.
+    // `test_auth.py` keeps a counter for the same trap.
+    const design = await client.createObject('design', {
+      solver: 'mock.laplace2d',
+      geometry: geometry.ref,
+      params: { ...FAST, iterations: 137 },
+    });
+
+    // The payoff: no geometry in this request, and the result can name the revision it
+    // came from — which a page that inlines its outline can never do.
+    const job = await client.submit({ design: design.ref });
+    const result = await job.wait();
+    expect(result.provenance?.inputs).toMatchObject({
+      design: expect.stringContaining(design.ref),
+      geometry: expect.stringContaining(geometry.ref),
+    });
+  });
+
+  it('patches one control point instead of resending the outline', async () => {
+    const geometry = await client.createObject('geometry', AIRFOIL);
+    const moved = await client.patchObject(geometry.ref, [
+      { op: 'replace', path: '/obstacle/points/1', value: [0.35, 0.12] },
+    ]);
+
+    expect(moved.revision).toBe(2);
+    expect(await client.objectRevisions(geometry.ref)).toEqual([1, 2]);
+    // The revision the patch was computed from is still readable, which is what makes a
+    // pinned reference in a result mean something a week later.
+    const original = await client.getObject(`${geometry.ref}@1`);
+    expect((original.body.obstacle as { points: number[][] }).points[1]).toEqual([0.35, 0.09]);
+  });
+
+  it('runs a sweep and gets back a curve the plot widget can draw', async () => {
+    const geometry = await client.createObject('geometry', AIRFOIL);
+    const design = await client.createObject('design', {
+      solver: 'mock.laplace2d',
+      geometry: geometry.ref,
+      params: FAST,
+    });
+    const study = await client.createObject('study', {
+      kind: 'sweep',
+      design: design.ref,
+      axes: [{ parameter: 'alpha', values: [-4, 0, 4] }],
+      metrics: ['c_l'],
+    });
+
+    const started = await client.runStudy(study.ref);
+    // Accepted, not necessarily *solved*. The data directory is fresh per run, but this
+    // file has already solved this airfoil at these parameters, and `alpha: 0` is the
+    // default — so the middle point is a cache hit from a test five cases up. That is the
+    // cache working; `submitted + reused` is the property that does not depend on which
+    // tests ran before, and `refused: 0` is the one worth asserting.
+    expect(started.submitted + started.reused).toBe(3);
+    expect(started.refused).toBe(0);
+
+    let report = await client.studyReport(study.ref);
+    const deadline = Date.now() + 60_000;
+    while (!report.complete && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      report = await client.studyReport(study.ref);
+    }
+
+    expect(report.kind).toBe('sweep');
+    expect(studyVariations(report)).toHaveLength(3);
+    const curves = report.kind === 'sweep' ? report.curves : [];
+    expect(curves[0]?.name).toBe('c_l');
+    // A `Series1DData`, which is what `<fs-plot>` takes — no adapter in between, which is
+    // the whole reason a sweep reports its response in the result kind rather than beside it.
+    expect(curves[0]?.traces[0]?.x?.values).toEqual([-4, 0, 4]);
+  });
+
+  it('refuses a reference that is not one, without a round trip', async () => {
+    await expect(client.getObject('not-a-reference')).rejects.toMatchObject({
+      name: 'FenixSpoonError',
+      status: 0,
+    });
   });
 });

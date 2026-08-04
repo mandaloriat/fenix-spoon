@@ -34,6 +34,7 @@ from .core.discovery import (
     EnvironmentInfo,
 )
 from .core.results import LEVELS, FieldQuery, FieldQueryResult, LeveledResult
+from .core.studies import StudyReport, StudyRun
 from .core.workspace import ObjectSummary, ObjectView
 from .frames import frames_of
 from .geometry import Geometry
@@ -373,6 +374,48 @@ def patch_object(
     return _core(request).patch_object(
         _ref(object_type, object_id), req.patch, principal, req.label
     )
+
+
+# ------------------------------------------------------------------ studies (1.11)
+#
+# ADR 0002 decision 3: a study is an object that *runs*, not an endpoint that computes. #21
+# sketched `POST /sweeps` with the grid in the body; a sweep posted that way is a computation
+# with no identity — it cannot be pinned, re-read a week later, re-run into the cache, or
+# shown to a colleague. So the object is created like any other and these two routes act on
+# it, which is also why there is no request body here: everything the run needs is in the
+# revision it names.
+
+
+@router.post("/studies/{study_id}/run", response_model=StudyRun, status_code=202)
+async def run_study(
+    study_id: str,
+    request: Request,
+    principal: CurrentPrincipal,
+) -> StudyRun:
+    """Submit every variation of a study.
+
+    `202`, and it returns as soon as the work is accepted — the same contract `POST /jobs`
+    has, for the same reason: a five-rung ladder takes minutes and this is a request a
+    browser is holding open. `reused` is worth reading on the way past, because it says how
+    much of the ladder the result cache just made free.
+    """
+    return await _core(request).run_study(f"study:{study_id}", principal)
+
+
+@router.get("/studies/{study_id}", response_model=StudyReport)
+def study_report(
+    study_id: str,
+    request: Request,
+    principal: CurrentPrincipal,
+) -> StudyReport:
+    """The (variation → metric) table, and what it means.
+
+    Free to call before the run, during it, and after: there is no stored run record to be
+    absent, because the study says what to solve and the jobs are the answer. A ladder adds
+    where each metric settled; a sweep adds a response curve per metric as `Series1DData`,
+    which is the model `<fs-plot>` already draws.
+    """
+    return _core(request).study_report(f"study:{study_id}", principal)
 
 
 @router.post("/jobs", response_model=JobCreated, status_code=202)

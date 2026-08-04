@@ -1,7 +1,7 @@
 # Changelog
 
 Notable changes to Fenix Spoon. The **wire protocol** has a version of its own
-(`MAJOR.MINOR`, currently 1.10) and its history is in
+(`MAJOR.MINOR`, currently 1.11) and its history is in
 [docs/04-wire-protocol.md](docs/04-wire-protocol.md); this file records what changed for the
 people who build on the toolkit, protocol bump or not.
 
@@ -15,6 +15,45 @@ project is pre-1.0, so the packages are versioned together and nothing here is a
 promise yet.
 
 ## Unreleased
+
+### Added — protocol 1.11: studies over HTTP, and a sweep in the browser (#21)
+
+[ADR 0002](docs/adr/0002-workspace-over-http.md) decision 3, the third of its four landable
+pieces, and the half of [#21](https://github.com/mandaloriat/fenix-spoon/issues/21) that has
+been waiting since the sweep kind shipped. **Additive**, and it adds no models: both routes
+speak shapes four other transports have carried since #48.
+
+- **`POST /api/v1/studies/{id}/run` → `202` and `GET /api/v1/studies/{id}`.** Neither takes a
+  request body, which is the whole argument. #21 sketched `POST /sweeps` with the grid in the
+  body; a sweep posted that way is a computation with no identity — it cannot be pinned,
+  re-read next week, re-run into the cache, or handed to a colleague as an id. So the study is
+  created through the object routes like anything else and these two act on it. Change the
+  grid by patching the study.
+- **Running a study twice is idempotent, including mid-flight, and nothing was added for it.**
+  Every variation goes through `POST /jobs`, and the result cache has matched `queued` and
+  `running` jobs since 1.4 — the mechanism that stops two identical submissions from racing.
+  This was one of two questions ADR 0002 left open; it turned out not to be a decision, and
+  the record now says so.
+- **The SDK gains `runStudy` and `studyReport`**, plus the workspace methods' return types —
+  and no new curve type. A sweep answers with `Series1DData`, which the client has typed since
+  1.5, so `<fs-plot>` draws a study report with no adapter in between. That was the reason for
+  choosing the model a release before anything could fetch one, and it is now checked rather
+  than asserted.
+- **A fourth demo: [a lift polar](docs/gallery.md#lift-polar-a-parameter-sweep-driven-from-the-page).**
+  The first page that keeps its geometry, design and study on the server under stable ids and
+  names them instead of resending them. Sweep once and every row reads `done`; sweep again and
+  every row reads `cached`. It also demonstrates, by having got it wrong first, why the angle
+  grid is a **step** rather than a point count: with N points between two ends, widening the
+  range moves every angle by a fraction of a degree and a widening that should have cost one
+  solve costs seven. Anchored at `from`, extending the range reuses everything already
+  computed — 6 of 7 free, in the screenshot.
+- *One stale claim removed from the code.* `SweepReport`'s docstring argued for sharing
+  `Series1DData` and then noted that no browser could fetch one. The note is kept and marked
+  as having paid off rather than deleted: a design bet that came off is worth more in the
+  record than a sentence that only ever described the present.
+
+*Not in this release, and named in the roadmap:* the optimization run routes and the
+background task that makes a search pollable over HTTP (ADR 0002 decision 4).
 
 ### Added — protocol 1.10: the workspace over HTTP (ADR 0002)
 
@@ -58,7 +97,8 @@ waiting on it. **Additive**: every route is new and nothing that worked at 1.9 c
   the halves as integers, which `checkProtocolCompatibility` has always done.
 
 *Not in this release, and named in the roadmap:* the study and optimization run routes
-(decision 3) and the background task that makes a search pollable over HTTP (decision 4).
+(decision 3 — landed in 1.11 for studies) and the background task that makes a search pollable
+over HTTP (decision 4).
 
 ### Added — optimization: choosing the next point (#22)
 

@@ -32,8 +32,8 @@ install, no desktop tooling — a browser talking to a FEniCSx server.
 
 - **[See it working first](gallery.md)**
 
-    Three worked examples with screenshots — potential flow, magnetostatics, and a heat sink
-    whose controls the server generates.
+    Four worked examples with screenshots — potential flow, magnetostatics, a heat sink whose
+    controls the server generates, and a lift polar swept from the browser.
 
 </div>
 

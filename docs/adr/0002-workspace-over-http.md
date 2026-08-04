@@ -1,6 +1,7 @@
 # 0002 — The workspace over HTTP
 
-**Status:** accepted — *decisions 1, 2, 5 and 6 are implemented as protocol 1.10; 3 and 4 are not yet*
+**Status:** accepted — *decisions 1, 2, 5 and 6 are implemented as protocol 1.10, decision 3 as
+protocol 1.11; decision 4 is not yet*
 **Affects:** the wire protocol (`/api/v1`), `@fenix-spoon/client`, the conformance corpus,
 [#21](https://github.com/mandaloriat/fenix-spoon/issues/21) and
 [#22](https://github.com/mandaloriat/fenix-spoon/issues/22), both waiting on it
@@ -280,3 +281,12 @@ introduced against a surface that already exists.
 routes are listed in `environment.inspect` so a client can feature-detect them, and whether a
 `study.run` that is already running is idempotent or a `409`. Both are small; neither changes
 the shape above; both are named here so they are decided rather than defaulted.
+
+*Answered while building piece 3, and the second one was not a decision after all.* A
+`study.run` on a study that is already running is **idempotent**, and nothing was added to make
+it so: every variation goes through `submit`, and the result cache has matched `queued` and
+`running` jobs since #47 — that is how two identical submissions attach to one solve instead of
+racing. So the second run returns the same job ids with `reused` counting them, which is what a
+caller who pressed the button twice should get. Recording it here because a property that falls
+out of an existing rule is easy to mistake for an accident, and the next person to touch the
+cache should know a route depends on it.

@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fenix Spoon — lift polar by parameter sweep</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 1.5rem; max-width: 960px;
+         margin-inline: auto; }
+  h1 { font-size: 1.25rem; }
+  .hint { font-size: 0.8rem; opacity: 0.65; }
+  .missing { padding: 1rem; border: 1px solid #f59e0b; border-radius: 6px; background: #f59e0b22; }
+  .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 1rem;
+           align-items: start; }
+  @media (max-width: 700px) { .split { grid-template-columns: 1fr; } }
+  fs-geometry-2d { display: block; aspect-ratio: 3 / 2; border: 1px solid #8884; border-radius: 6px; }
+  fs-plot { display: block; width: 100%; height: 280px; border: 1px solid #8884;
+            border-radius: 6px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem; align-items: center;
+              margin: 0.75rem 0; }
+  .controls label { display: flex; gap: 0.4rem; align-items: center; font-size: 0.9rem; }
+  input[type="number"] { width: 4.5rem; }
+  button { padding: 0.45rem 1.2rem; font-size: 1rem; border-radius: 6px; border: 1px solid #8886;
+           background: #3b82f6; color: white; cursor: pointer; }
+  button:disabled { opacity: 0.5; cursor: wait; }
+  #status { font-size: 0.85rem; opacity: 0.8; min-height: 1.2em; }
+  table { border-collapse: collapse; font-size: 0.85rem; margin-top: 0.75rem; width: 100%; }
+  th, td { text-align: right; padding: 0.25rem 0.5rem; border-bottom: 1px solid #8883; }
+  th:first-child, td:first-child { text-align: left; }
+  td.free { color: #16a34a; }
+  .refs { font-family: ui-monospace, monospace; font-size: 0.8rem; opacity: 0.75; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "@fenix-spoon/client": "/packages/client/index.js",
+    "@fenix-spoon/geometry-2d": "/packages/geometry-2d/index.js",
+    "@fenix-spoon/plot": "/packages/plot/index.js"
+  }
+}
+</script>
+</head>
+<body>
+<h1>Fenix Spoon 🥄 — a lift polar, swept from the browser</h1>
+<p class="hint">One <em>study</em> object, several solves, one curve. The page keeps its airfoil
+and its sweep <strong>on the server under stable ids</strong> and names them instead of
+resending them — which is what protocol 1.10 and 1.11 added, and what makes the second run of
+a sweep cost nothing. Edit the profile and the geometry gets a new <em>revision</em>; widen the
+angle range and only the new angles are solved — the grid is anchored at the lower end, so
+extending it reuses everything already computed.</p>
+
+<div id="missing" class="missing" hidden>
+  The widget bundles aren't built. Run <code>npm --prefix client install &amp;&amp; npm --prefix
+  client run build</code>, then reload.
+</div>
+
+<div class="split">
+  <div>
+    <fs-geometry-2d id="editor" bounds="-1,-1,2,1" mode="spline" samples="10"></fs-geometry-2d>
+    <p class="hint">Drag a control point to change the section. Each edit writes one revision
+    of the same geometry object — the sweep names the design, the design names the geometry,
+    and nothing here resends an outline.</p>
+  </div>
+  <div>
+    <!-- A sweep's response comes back as `Series1DData`, which is the model this widget has
+         taken since protocol 1.5. There is no adapter between the two, on purpose. -->
+    <fs-plot id="plot" legend interactive x-label="angle of attack [deg]"></fs-plot>
+    <div id="table"></div>
+  </div>
+</div>
+
+<div class="controls">
+  <button id="run">Sweep ▶</button>
+  <label>from <input type="number" id="from" value="-6" step="1"></label>
+  <label>to <input type="number" id="to" value="9" step="1"></label>
+  <label>step <input type="number" id="step" value="3" min="0.5" max="10" step="0.5"></label>
+  <label>metric <select id="metric"></select></label>
+  <label>solver <select id="solver"></select></label>
+</div>
+<div id="status">connecting…</div>
+<div id="refs" class="refs"></div>
+
+<script type="module">
+import { FenixSpoonClient } from '@fenix-spoon/client';
+import '@fenix-spoon/geometry-2d';
+import '@fenix-spoon/plot';
+
+const client = new FenixSpoonClient('');
+const editor = document.getElementById('editor');
+const plot = document.getElementById('plot');
+const statusEl = document.getElementById('status');
+const refsEl = document.getElementById('refs');
+const tableEl = document.getElementById('table');
+const runBtn = document.getElementById('run');
+const metricSel = document.getElementById('metric');
+const solverSel = document.getElementById('solver');
+
+const NACA = [
+  [1, 0], [0.7, 0.055], [0.35, 0.09], [0.1, 0.062],
+  [0, 0], [0.1, -0.03], [0.35, -0.045], [0.7, -0.03],
+];
+
+// The three workspace objects this page owns. Created once, then *patched* — which is the
+// entire point of the exercise: an id is a few bytes and an outline is not.
+let geometryRef = null;
+let designRef = null;
+let studyRef = null;
+
+editor.geometry = {
+  type: 'domain2d',
+  bounds: [-1, -1, 2, 1],
+  obstacle: { type: 'polygon2d', points: NACA },
+};
+
+/**
+ * The angles to sweep: a *stepped* grid rather than N points between two ends.
+ *
+ * That is the difference between a demo that reuses and one that only claims to. With a
+ * point count, widening the range moves every angle and nothing is a cache hit; with a step,
+ * the grid is anchored at `from`, so extending `to` adds angles and keeps the ones already
+ * solved. The result cache is content-addressed, so "already solved" is literal.
+ */
+function angles() {
+  const from = Number(document.getElementById('from').value);
+  const to = Number(document.getElementById('to').value);
+  const step = Math.max(0.5, Number(document.getElementById('step').value));
+  const values = [];
+  // Rounded, and not for looks: a sweep axis must be strictly increasing and distinct, and
+  // two angles that differ in the sixteenth decimal are two solves of the same question.
+  for (let alpha = from; alpha <= to + 1e-9 && values.length < 64; alpha += step) {
+    values.push(Number(alpha.toFixed(4)));
+  }
+  return values;
+}
+
+/**
+ * Write `value` at `path`, but only when it differs from what is already there.
+ *
+ * The server refuses a patch that changes nothing with a 409, and rightly — a revision that
+ * records no change is a revision that means nothing. Catching that would work and would
+ * print a red line in the console on every re-sweep; asking first is quieter and is what a
+ * caller with the object in hand should do anyway.
+ */
+async function patchIfChanged(ref, path, value, current) {
+  if (JSON.stringify(current) === JSON.stringify(value)) return;
+  await client.patchObject(ref, [{ op: 'replace', path, value }]);
+}
+
+async function ensureObjects() {
+  const geometry = editor.geometry;
+  if (geometryRef === null) {
+    geometryRef = (await client.createObject('geometry', geometry, 'polar demo')).ref;
+  } else {
+    // One patch instead of a fresh object: the reference stays valid, the old revision stays
+    // readable, and a result computed from it can still say which shape it meant.
+    const stored = await client.getObject(geometryRef);
+    await patchIfChanged(
+      geometryRef,
+      '/obstacle/points',
+      geometry.obstacle.points,
+      stored.body.obstacle.points,
+    );
+  }
+
+  const params = { resolution: 96, iterations: 900, write_vtk: false };
+  if (designRef === null) {
+    designRef = (
+      await client.createObject(
+        'design',
+        { solver: solverSel.value, geometry: geometryRef, params },
+        'polar demo',
+      )
+    ).ref;
+  } else {
+    const stored = await client.getObject(designRef);
+    await patchIfChanged(designRef, '/solver', solverSel.value, stored.body.solver);
+  }
+
+  const values = angles();
+  if (studyRef === null) {
+    studyRef = (
+      await client.createObject(
+        'study',
+        {
+          kind: 'sweep',
+          design: designRef,
+          axes: [{ parameter: 'alpha', values }],
+          // Naming metrics rather than taking all of them. The solver declares six; a polar
+          // is about three, and a study that asks for three tabulates three — in the table
+          // here and in the curves, which is why the selector below has exactly these.
+          metrics: ['c_l', 'c_m_c4', 'x_cp'],
+        },
+        'lift polar',
+      )
+    ).ref;
+  } else {
+    const stored = await client.getObject(studyRef);
+    await patchIfChanged(studyRef, '/axes/0/values', values, stored.body.axes[0].values);
+  }
+}
+
+function renderTable(report) {
+  const columns = Object.keys(report.points[0]?.metrics ?? {});
+  const head = ['alpha', ...columns, ''].map((c) => `<th>${c}</th>`).join('');
+  const rows = report.points
+    .map((point) => {
+      const cells = columns.map((name) => {
+        const value = point.metrics[name];
+        return `<td>${value === undefined ? '—' : value.toFixed(4)}</td>`;
+      });
+      const free = point.cached ? '<td class="free">cached</td>' : `<td>${point.status}</td>`;
+      return `<tr><td>${point.values.alpha}</td>${cells.join('')}${free}</tr>`;
+    })
+    .join('');
+  tableEl.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function draw(report) {
+  const names = report.curves.map((curve) => curve.name);
+  if (names.join() !== [...metricSel.options].map((o) => o.value).join()) {
+    metricSel.innerHTML = names.map((n) => `<option value="${n}">${n}</option>`).join('');
+    if (names.includes('c_l')) metricSel.value = 'c_l';
+  }
+  // `Series1DData` straight from the report — the widget needs nothing else.
+  plot.curves = report.curves.find((curve) => curve.name === metricSel.value) ?? null;
+  renderTable(report);
+}
+
+async function sweep() {
+  runBtn.disabled = true;
+  try {
+    await ensureObjects();
+    statusEl.textContent = 'submitting…';
+    const started = await client.runStudy(studyRef);
+    refsEl.textContent = `${geometryRef} · ${designRef} · ${studyRef}`;
+
+    const free = started.reused;
+    statusEl.textContent =
+      `${started.submitted} solve(s) started` +
+      (free ? `, ${free} answered from cache — free` : '') +
+      (started.refused ? `, ${started.refused} refused` : '');
+
+    let report = await client.studyReport(studyRef);
+    draw(report);
+    while (!report.complete) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      report = await client.studyReport(studyRef);
+      draw(report);
+      const done = report.points.filter((p) => p.status === 'done').length;
+      statusEl.textContent = `${done} of ${report.points.length} solved…`;
+    }
+    const cached = report.points.filter((p) => p.cached).length;
+    statusEl.textContent =
+      `${report.points.length} points, ${cached} of them free. ` +
+      `Sweep again and every one of them will be.`;
+  } catch (error) {
+    statusEl.textContent = `failed: ${error.message}`;
+  } finally {
+    runBtn.disabled = false;
+  }
+}
+
+async function boot() {
+  if (!customElements.get('fs-plot')) {
+    document.getElementById('missing').hidden = false;
+    return;
+  }
+  const solvers = await client.listSolvers();
+  const usable = solvers.filter((s) => s.physics === 'potential-flow' || /laplace|potential/.test(s.name));
+  solverSel.innerHTML = (usable.length ? usable : solvers)
+    .map((s) => `<option value="${s.name}">${s.name}</option>`)
+    .join('');
+  // A change of solver is a different design, and the study points at the design — so the
+  // objects are rebuilt rather than patched into an inconsistent state.
+  solverSel.addEventListener('change', () => {
+    designRef = null;
+    studyRef = null;
+  });
+  statusEl.textContent = 'ready — press Sweep';
+}
+
+runBtn.addEventListener('click', sweep);
+metricSel.addEventListener('change', async () => {
+  if (studyRef) draw(await client.studyReport(studyRef));
+});
+boot();
+</script>
+</body>
+</html>

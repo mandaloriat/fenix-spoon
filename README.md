@@ -48,7 +48,7 @@ and the FEniCSx solver.
 > 50 concurrent clients. What remains for M3 is deployment packaging — see the
 > [roadmap](docs/03-roadmap.md).
 >
-> **The wire protocol is at 1.10.** Four of the last five minors came from adding physics
+> **The wire protocol is at 1.11.** Four of the last five minors came from adding physics
 > rather than from planning: a transient needed a metric to say what it is taken over (1.6)
 > and a way to index its instants (1.7), and elasticity needed a geometry that can *name*
 > pieces of its own boundary (1.8) and a load case to say what happens there (1.9). 1.10 is
@@ -87,7 +87,7 @@ see the [state-of-the-art survey](docs/01-state-of-the-art.md). Fenix Spoon is t
 | **MCP adapter** — the same operations as 15 tools for a Model Context Protocol host, bound to the RPC method table rather than to the core, so it cannot drift from the other transports | [`mcp_adapter.py`](server/fenixspoon/mcp_adapter.py), [`docs/09-mcp.md`](docs/09-mcp.md) | ✅ optional extra (`pip install "fenix-spoon[mcp]"`) |
 | **CLI and Python API** — `fenix-spoon capability list`, `job submit`, `study run`… and the same operations in-process via `from fenixspoon import local` | [`commands.py`](server/fenixspoon/commands.py), [`local.py`](server/fenixspoon/local.py), [`docs/10-cli-and-python.md`](docs/10-cli-and-python.md) | ✅ working |
 | **Cross-transport conformance** — one request rendered five ways must produce one answer, and one refusal must mean the same thing on each; the error partition lives in the shared fixture corpus | [`tests/test_conformance.py`](server/tests/test_conformance.py), [`protocol/fixtures/errors.json`](protocol/fixtures/errors.json) | ✅ working |
-| **Browser demos** — the airfoil built from the three packages, plus zero-dependency versions of both airfoil and solenoid kept as protocol references | [`examples/airfoil-2d/`](examples/airfoil-2d/), [`examples/solenoid-2d/`](examples/solenoid-2d/) | ✅ working |
+| **Browser demos** — the airfoil built from the three packages, a lift polar that keeps its geometry, design and study on the server and sweeps them, plus zero-dependency versions of both airfoil and solenoid kept as protocol references | [`examples/airfoil-2d/`](examples/airfoil-2d/), [`examples/solenoid-2d/`](examples/solenoid-2d/), [`examples/polar-sweep/`](examples/polar-sweep/) | ✅ working |
 | **JS/TS SDK** — `@fenix-spoon/client`: typed protocol client with progress streaming, reconnection and runtime validators | [`client/packages/client/`](client/packages/client/) | ✅ working |
 | **Geometry editor widget** — `<fs-geometry-2d>`: SVG-based parametric profile editor, keyboard-operable, emits protocol JSON | [`client/packages/geometry-2d/`](client/packages/geometry-2d/) | ✅ working |
 | **Field viewer widget** — `<fs-viewer>`: canvas renderer *and explorer* for `grid2d`/`mesh2d` — colormaps, contours, probe, sections, zoom/pan, vector glyphs, integral curves, capability-driven tools, all on data already received | [`client/packages/viewer/`](client/packages/viewer/) | ✅ working |
@@ -196,7 +196,7 @@ serialization formats), is in [`docs/02-architecture.md`](docs/02-architecture.m
 ├── protocol/fixtures/  # Shared conformance corpus — read by both pytest and vitest
 ├── server/             # Python package `fenixspoon` (FastAPI app + solvers) and tests
 ├── client/             # npm workspace: @fenix-spoon/{client,geometry-2d,viewer}
-├── examples/           # Self-contained browser demos (airfoil, solenoid)
+├── examples/           # Self-contained browser demos (airfoil, solenoid, heat sink, polar)
 └── docker-compose.yml
 ```
 

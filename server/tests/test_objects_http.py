@@ -303,3 +303,110 @@ def test_the_listing_carries_no_bodies_and_filters_by_type(client):
     only = client.get("/api/v1/objects", params={"type": "material"}).json()
     assert [row["ref"] for row in only] == ["material:m-1"]
     assert client.get("/api/v1/objects", params={"type": "nonsense"}).status_code == 422
+
+
+# ------------------------------------------------------------------ studies (1.11)
+#
+# ADR 0002 decision 3, and the shape it refused: #21 sketched `POST /sweeps` with the grid in
+# the request body. A sweep sent that way is a computation with no identity — so the object is
+# created like any other and these two routes act on it.
+
+
+def sweep_body(design: str) -> dict:
+    return {
+        "kind": "sweep",
+        "design": design,
+        "axes": [{"parameter": "alpha", "values": [-4.0, 0.0, 4.0]}],
+        "metrics": ["c_l"],
+    }
+
+
+def polar(client) -> str:
+    geometry = create(client, "geometry", GEOMETRY).json()["ref"]
+    design = create(
+        client,
+        "design",
+        {"solver": "mock.laplace2d", "geometry": geometry, "params": FAST_PARAMS},
+    ).json()["ref"]
+    return create(client, "study", sweep_body(design)).json()["ref"]
+
+
+def completed(client, study_id: str, timeout: float = 30.0) -> dict:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        report = client.get(f"/api/v1/studies/{study_id}").json()
+        if report["complete"]:
+            return report
+        time.sleep(0.05)
+    raise TimeoutError("the sweep did not finish")
+
+
+def test_a_sweep_runs_and_reports_from_the_browser_side(client):
+    """#21's second half, and the first time a page can reach any of this.
+
+    The report carries the response curve as `Series1DData` — which is not a shape invented
+    for this route but the one `<fs-plot>` has drawn since 1.5, so the page needs no adapter
+    between the two.
+    """
+    study_id = polar(client).split(":")[1]
+
+    started = client.post(f"/api/v1/studies/{study_id}/run")
+    assert started.status_code == 202, started.text
+    assert started.json()["submitted"] == 3
+
+    report = completed(client, study_id)
+    assert report["kind"] == "sweep"
+    assert [point["values"]["alpha"] for point in report["points"]] == [-4.0, 0.0, 4.0]
+    assert all(point["status"] == "done" for point in report["points"])
+
+    (curve,) = report["curves"]
+    assert curve["name"] == "c_l"
+    (trace,) = curve["traces"]
+    assert trace["x"]["values"] == [-4.0, 0.0, 4.0]
+    assert trace["values"][0] < trace["values"][-1], "lift rises with angle of attack"
+
+
+def test_the_report_is_readable_before_the_run_and_free_afterwards(client):
+    """Two properties a page depends on and neither is a special case.
+
+    Before: there is no stored run record to be absent, so a report of an unrun study is a
+    table of refused rows rather than a 404 — which is what lets a page render the shape
+    before pressing anything. After: re-running is a cache hit per point, so a reload that
+    re-posts costs nothing.
+    """
+    study_id = polar(client).split(":")[1]
+
+    before = client.get(f"/api/v1/studies/{study_id}")
+    assert before.status_code == 200
+    assert [point["status"] for point in before.json()["points"]] == ["refused"] * 3
+
+    client.post(f"/api/v1/studies/{study_id}/run")
+    completed(client, study_id)
+
+    again = client.post(f"/api/v1/studies/{study_id}/run")
+    assert again.json() == {**again.json(), "submitted": 0, "reused": 3, "refused": 0}
+
+
+def test_a_study_route_will_not_run_something_that_is_not_a_study(client):
+    """The type is in the path, so `/studies/d-1` names `study:d-1` — refused by the
+    reference parser for the same reason `/objects/design/g-1` is."""
+    create(client, "geometry", GEOMETRY)
+    assert client.post("/api/v1/studies/g-1/run").status_code == 422
+    assert client.get("/api/v1/studies/s-99").status_code == 404
+
+
+def test_another_principals_study_cannot_be_run_or_read(two_principals):
+    geometry = create(two_principals, "geometry", GEOMETRY, headers=auth(ALICE)).json()["ref"]
+    design = create(
+        two_principals,
+        "design",
+        {"solver": "mock.laplace2d", "geometry": geometry, "params": FAST_PARAMS},
+        headers=auth(ALICE),
+    ).json()["ref"]
+    study = create(two_principals, "study", sweep_body(design), headers=auth(ALICE)).json()["ref"]
+    study_id = study.split(":")[1]
+
+    assert two_principals.post(
+        f"/api/v1/studies/{study_id}/run", headers=auth(BOB)
+    ).status_code == 404
+    assert two_principals.get(f"/api/v1/studies/{study_id}", headers=auth(BOB)).status_code == 404

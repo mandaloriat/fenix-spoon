@@ -487,7 +487,9 @@ Goal: adoption. People find, run, and copy examples.
 - [x] Example gallery: potential flow, solenoid magnetostatics and a heat sink, each a
       copy-paste-able app, with a [gallery index](gallery.md) (#18) — *the heat sink ships two
       adapters, `mock.heat2d` and `dolfinx.heat2d`, cross-validated against each other, and its
-      demo page builds its controls from `params_schema`.*
+      demo page builds its controls from `params_schema`.* A fourth joined them later and is
+      credited to #21 below: a lift polar, the first page whose answer is a curve rather than
+      a field, and the first that keeps its inputs on the server under stable ids.
 - [x] Vector fields on the wire and in the viewer (#62) — *protocol 1.1 adds `vector_fields` to
       `grid2d` and `point_vector_fields` to `mesh2d`, indexed like the scalar maps, so a velocity
       is one named thing rather than two conventions apart. `<fs-viewer vectors="velocity">` draws
@@ -593,14 +595,28 @@ vocabulary introduced in M2.5, M2.5 provides the abstraction and M5 provides the
       pressure on a single-principal machine, and now has a negative test per verb. And
       nothing metered object creation: `FENIXSPOON_MAX_OBJECTS` joins the other three quotas,
       with no `Retry-After`, because waiting does not delete an object.
-- [ ] A sweep from a browser (#21, second half) — *unblocked, and no longer the shape the
-      issue sketched.* It asked for `POST /api/v1/sweeps` with the grid in the body; ADR 0002
+- [x] A sweep from a browser (#21, second half) — *protocol 1.11, and not the shape the issue
+      sketched.* It asked for `POST /api/v1/sweeps` with the grid in the body; ADR 0002
       refused that — a sweep posted as a body is a computation with no identity, which cannot
       be pinned, re-read, re-run into the cache or shown to a colleague. A study is an
       **object that runs**: create it like any other, then `POST /studies/{id}/run` and
-      `GET /studies/{id}`. The objects half landed with 1.10; what remains is the two study
-      routes and the comparison widget, and the widget is cheap because a sweep's response is
-      already `Series1DData`.
+      `GET /studies/{id}`, neither taking a request body because the study already says
+      everything the run needs.
+      *No comparison widget was needed after all*, which is the payoff of a decision taken a
+      release earlier: a sweep answers with `Series1DData`, so `<fs-plot>` draws a study
+      report unmodified and the SDK typed it without an addition. The deliverable that
+      remained was a page — [a lift polar](gallery.md#lift-polar-a-parameter-sweep-driven-from-the-page),
+      the first demo that keeps its geometry, design and study on the server under stable ids.
+      *And the page taught the sweep something a test would not have.* Written with a
+      point-count control it reused nothing when the range widened, because N points between
+      two ends move every angle by a fraction of a degree and a fraction of a degree is a
+      different question. Anchoring the grid to a **step** from `from` turned a seven-solve
+      widening into a one-solve one. The protocol was right; the caller was wrong; only
+      driving it in a browser showed which.
+      *Two open questions ADR 0002 named, one of them answered by not being a question.* A
+      `study.run` on a study already running is idempotent, and nothing was added to make it
+      so — the result cache has matched `queued` and `running` jobs since #47, which is what
+      stops two identical submissions from racing.
 - [x] Optimization loop hooks — the `optimization` object and a bounded scalar search
       (#22, first half). *The far side of the line #48 drew, and the seventh workspace object
       type. A study **enumerates** a variation space; this **searches** one, choosing its next

@@ -1,7 +1,7 @@
 # Example gallery
 
-Three worked examples, each a page you can read top to bottom and each chosen to exercise a
-different part of the toolkit. All three run against the mock solvers with no FEniCSx installed,
+Four worked examples, each a page you can read top to bottom and each chosen to exercise a
+different part of the toolkit. All four run against the mock solvers with no FEniCSx installed,
 and switch to the FEniCSx adapter automatically when the server has one.
 
 ```bash
@@ -95,6 +95,37 @@ boundary condition on exposed faces — which is how heat sinks are actually ana
 result's `mask` marks the cells that were never solved, and the viewer greys them out. Model the
 air as a conducting region instead and the fins stop working entirely: air conducts at
 0.026 W/(m·K) against aluminium's 205, so heat cannot leave through them.
+
+---
+
+## Lift polar — a parameter sweep, driven from the page
+
+[![Lift polar demo](img/polar-sweep.png)](https://github.com/mandaloriat/fenix-spoon/blob/main/examples/polar-sweep/index.html)
+
+Sweep the angle of attack and get a curve instead of a picture. The page owns one airfoil, one
+design and one sweep; pressing **Sweep** solves the angles it has not solved before and nothing
+else.
+
+**What it shows** is the half of the toolkit the other three demos cannot reach: the browser can
+now use the *workspace*. A geometry, a design and a study live on the server under stable ids
+([protocol 1.10](04-wire-protocol.md#workspace-objects)), a study can be run and read over HTTP
+([1.11](04-wire-protocol.md#studies)), and the page names those ids instead of resending an
+outline on every request. Dragging a control point writes one **revision** of the same geometry
+object rather than a new object, so the old revision stays readable and a result computed from
+it can still say which shape it meant.
+
+The consequence is visible in the rightmost column of the table. Sweep once and every row says
+`done`; sweep again and every row says `cached`, because the result cache is content-addressed
+and nothing about the question changed. Widen the range and only the angles that are new are
+solved — the grid is a **step** from `from`, not N points between two ends, which is the
+difference between a sweep that reuses and one that only claims to. A point count would move
+every angle by a fraction of a degree and turn a widening into a full re-solve.
+
+Two smaller things worth noticing. The study asks for three metrics out of the six the solver
+declares, and gets three columns and three curves — `metrics` is part of the study body, not a
+filter applied afterwards. And the plot is fed the study's response **unmodified**: a sweep
+answers with `Series1DData`, which is the model `<fs-plot>` has taken since protocol 1.5, so
+there is no adapter between the two. That was the point of choosing that model for sweeps.
 
 ---
 

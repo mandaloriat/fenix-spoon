@@ -7,6 +7,8 @@
  */
 
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -14,6 +16,7 @@ const SERVER_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../../../se
 const PORT = Number(process.env.FENIXSPOON_TEST_PORT ?? 8765);
 
 let child: ChildProcess | undefined;
+let dataDir: string | undefined;
 
 function pythonHasServer(): boolean {
   const probe = spawnSync('python3', ['-c', 'import fenixspoon'], {
@@ -44,10 +47,23 @@ export async function setup(): Promise<void> {
     return;
   }
 
+  // A data directory of our own, thrown away afterwards. Without it the server falls back
+  // to `/tmp/fenixspoon-jobs`, which is shared by every run on the machine — and the result
+  // cache is content-addressed, so a job from *last* week's run answers this week's
+  // submission. That is fine for a solve and quietly wrong for anything reading
+  // `provenance`: the workspace test would get back the object ids of whichever run solved
+  // it first and fail against its own. Found by running `npm test` twice.
+  dataDir = mkdtempSync(join(tmpdir(), 'fenixspoon-sdk-'));
+
   child = spawn(
     'python3',
     ['-m', 'uvicorn', 'fenixspoon.main:app', '--port', String(PORT), '--log-level', 'warning'],
-    { cwd: SERVER_DIR, stdio: 'ignore', detached: false },
+    {
+      cwd: SERVER_DIR,
+      stdio: 'ignore',
+      detached: false,
+      env: { ...process.env, FENIXSPOON_DATA_DIR: dataDir },
+    },
   );
 
   const url = `http://127.0.0.1:${PORT}`;
@@ -63,4 +79,6 @@ export async function setup(): Promise<void> {
 export async function teardown(): Promise<void> {
   child?.kill();
   child = undefined;
+  if (dataDir) rmSync(dataDir, { recursive: true, force: true });
+  dataDir = undefined;
 }
