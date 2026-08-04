@@ -526,6 +526,8 @@ export interface Series1DResult {
   stats: JobStats;
   metrics?: JobMetrics;
   diagnostics?: JobDiagnostics;
+  /** As on the field kinds. `GET /jobs/{id}/result` sends it for every kind, since 1.4. */
+  provenance?: JobProvenance;
   series?: never[];
   artifacts: ArtifactRef[];
   /** Stored instants, in time order — derived from the artifacts carrying a `t`. */

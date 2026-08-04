@@ -234,12 +234,14 @@ export class FenixSpoonClient {
    * });
    * const job = await client.submit({ design: design.ref });
    * ```
+   *
+   * `body: object` rather than `Record<string, unknown>`, and the example above is why: an
+   * *interface* — `Domain2D`, `Regions2D`, anything a caller declared — has no implicit index
+   * signature in TypeScript, so passing a typed geometry to a `Record` parameter does not
+   * compile. The first line of this doc comment was uncompilable when it was written. Caught
+   * by the integration suite once it started creating geometries from the shared fixtures.
    */
-  createObject(
-    type: ObjectType,
-    body: Record<string, unknown>,
-    label?: string,
-  ): Promise<ObjectView> {
+  createObject(type: ObjectType, body: object, label?: string): Promise<ObjectView> {
     return this.request<ObjectView>(`/api/v1/objects/${type}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
