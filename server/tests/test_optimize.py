@@ -371,6 +371,36 @@ def test_a_replay_says_the_trajectory_stops_rather_than_guessing_why(core, me, t
     assert blind.evaluations_spent == 2, "only the two solves that left a job behind"
 
 
+def test_starting_a_search_forgets_what_the_last_one_knew(core, me):
+    """The remembered tail describes a search that *finished*, and a new run drops it.
+
+    Without that rule the memory outlives its subject. A poll during a running search reaches
+    the same "no job here" branch at the same index as the previous run's stall, matches the
+    remembered tail, and reports a search that is progressing as stalled — with an error
+    message from a refusal that is no longer happening. Raised in review of #22.
+
+    Asserted on the structure rather than through a poll, and the reason is worth stating:
+    reproducing the false report behaviourally needs a second search that gets *further* than
+    the first, which means relieving the quota that stopped it, which means controlling the
+    clock. That machinery would test the fixture more than the rule. The rule is that
+    starting clears, and this is that rule.
+    """
+    quota = Principal(id="tester", quotas=Quotas(jobs_per_hour=2))
+    optimization = optimization_of(core, quota, design_of(core, quota))
+    assert _searched(core, quota, optimization).stopped == "stalled"
+    assert core._stops, "a stalled search leaves the reason behind for optimize.get"
+
+    async def start_only():
+        await core.run_optimization(optimization, quota)
+        # Read before the search can finish and write a fresh tail: what a poll would see
+        # while one is in flight is `incomplete`, never a reason from the run before it.
+        remembered = dict(core._stops)
+        await core._searches[(f"{optimization}@1", quota.id)]
+        return remembered
+
+    assert asyncio.run(start_only()) == {}
+
+
 def test_an_evaluation_records_the_optimization_it_came_from(core, me):
     """#44's rule again: what was solved is described by object revisions, and `iteration` is
     this sequence's `variation_index` so a reader of provenance learns one vocabulary."""

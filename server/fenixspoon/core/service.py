@@ -62,10 +62,16 @@ log = logging.getLogger(__name__)
 class _SearchStop:
     """The tail of a search that its replay cannot rebuild from the jobs.
 
-    Both fields exist because a *refused* submission leaves nothing behind: no job, so no
-    row, and no record of what the server said. `answered` is what makes the memory safe to
-    use — it is applied only to a replay that stopped in the same place, so a reason from a
-    shorter search is never reported about a longer one.
+    `reason` and `refused` both exist because a *refused* submission leaves nothing behind:
+    no job, so no row, and no record of what the server said.
+
+    Two rules keep it from becoming a run record that lies. `answered` bounds *where* it
+    applies — only to a replay that stopped in the same place, so a reason from a shorter
+    search is never reported about a longer one. And it is written when a search finishes and
+    **dropped when the next one starts**, which bounds *when*: a poll landing on a running
+    search's frontier reaches the same "no job here" branch at the same index, and without
+    that rule it would be handed the previous run's refusal and report a search that is
+    progressing as stalled. Raised in review of #22.
     """
 
     answered: int
@@ -737,6 +743,12 @@ class FenixSpoonCore:
             # is not a correctness guard; it is two loops declining to do one loop's work.
             return optimize.OptimizationRun(optimization=record.pinned, started=False)
 
+        # Starting invalidates what the last search knew. `_stops` describes *a search that
+        # finished*, and the moment another one begins it stops being evidence about
+        # anything: a poll landing on the new search's frontier hits the same `job is None`
+        # branch, at the same index, and would be handed the old refusal — reporting a
+        # stalled search that is in fact progressing. Raised in review of #22.
+        self._stops.pop(key, None)
         task = asyncio.get_running_loop().create_task(self._search(record.pinned, principal))
         self._searches[key] = task
         task.add_done_callback(lambda finished, key=key: self._search_finished(key, finished))
