@@ -19,6 +19,7 @@ owns submit / get / cancel / subscribe over a pluggable backend; this wraps it w
 validation and authorization that used to sit in the routes.
 """
 
+import asyncio
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,7 +34,7 @@ from ..objects import ObjectFileStore, parse_ref
 from ..solvers import available_solvers, get_solver, registered_solvers
 from ..solvers.base import Solver, SolverInfo
 from . import conditions as conditions_module
-from . import discovery, errors, results, studies
+from . import discovery, errors, optimize, results, studies
 from .conditions import Conditions
 from .discovery import (
     CapabilityDescription,
@@ -608,6 +609,255 @@ class FenixSpoonCore:
                 if name in tabulated
             },
             error=job.error,
+        )
+
+    # ------------------------------------------------------------- optimization (#22)
+
+    def _optimization_plan(self, ref: str, principal: Principal):
+        """Everything both optimization operations need — the study plan's twin.
+
+        Deliberately shaped like :meth:`_study_plan` and deliberately *not* merged with it:
+        the two share four lines of resolution and differ in what they validate, and folding
+        them together would mean a function that takes a kind and branches, which is the
+        shape #48 avoided by giving a study a body instead.
+        """
+        record = self.workspace.get_typed(ref, principal.id, "optimization")
+        try:
+            body = optimize.OptimizationBody.model_validate(record.body)
+        except ValidationError as exc:  # pragma: no cover - create() already validated it
+            raise errors.InvalidObject("optimization", json.loads(exc.json())) from exc
+
+        geometry, resolved = self.workspace.resolve_design(body.design, principal.id)
+        solver_cls = self.capability(resolved.solver)
+
+        # The same guard a study gets, and the failure it prevents is worse here. A study
+        # varying an unknown parameter reports a converged table of one repeated solve; a
+        # *search* over one would evaluate the same point at every iteration, watch the
+        # objective never move, and report the midpoint of the bracket as the answer.
+        if body.parameter not in solver_cls.Params.model_fields:
+            raise errors.InvalidObject(
+                "optimization",
+                [
+                    {
+                        "type": "unknown_parameter",
+                        "loc": body.parameter_loc(body.parameter),
+                        "msg": (
+                            f"{solver_cls.name!r} has no parameter {body.parameter!r}; "
+                            f"it accepts {sorted(solver_cls.Params.model_fields)}"
+                        ),
+                    }
+                ],
+            )
+        declared = [spec.name for spec in solver_cls.metrics]
+        if body.objective.metric not in declared:
+            raise errors.InvalidObject(
+                "optimization",
+                [
+                    {
+                        "type": "unknown_metric",
+                        "loc": ["objective", "metric"],
+                        "msg": (
+                            f"this capability does not declare {body.objective.metric!r}; "
+                            f"it declares {sorted(declared)}"
+                        ),
+                    }
+                ],
+            )
+        return record, body, geometry, resolved, solver_cls
+
+    async def run_optimization(
+        self, ref: str, principal: Principal
+    ) -> optimize.OptimizationReport:
+        """Drive the search to its tolerance or its budget — `optimize.run` (roadmap M5, #22).
+
+        **This one waits, where `study.run` does not, and the asymmetry is the whole
+        difference between the two.** A study can hand back every job id immediately because
+        it knows them all before it starts. A search cannot hand back the second until the
+        first is answered — that is what "chooses the next point" means — so the call *is*
+        the loop, and it returns the report rather than a receipt.
+
+        Each evaluation is an ordinary submission: the cell budget, the quota and the result
+        cache all apply per job exactly as they do for a rung. Which is why running the same
+        optimization twice costs nothing — the second pass replays the identical sequence and
+        every point is a cache hit.
+
+        An evaluation with no answer **stops the search** rather than leaving a gap. A study
+        tabulates what it has and reports rung 4 as refused; here the next point is a function
+        of that missing value, so there is nowhere to continue from, and reporting a "best" out
+        of the points before it would present a truncated search as a finished one.
+        """
+        record, body, geometry, resolved, solver_cls = self._optimization_plan(ref, principal)
+
+        evaluations: list[optimize.Evaluation] = []
+        answered: list[float] = []
+        stopped = "converged"
+        while True:
+            point = optimize.next_point(body.bounds, answered, body.tolerance)
+            if point is None:
+                break
+            if len(evaluations) >= body.max_evaluations:
+                stopped = "budget"
+                break
+            variation = {body.parameter: point}
+            try:
+                job = await self.submit(
+                    resolved.solver,
+                    geometry,
+                    {**resolved.params, **variation},
+                    principal,
+                    inputs=optimize.variation_inputs(
+                        record.pinned, len(evaluations), variation, resolved
+                    ),
+                    conditions=resolved.conditions,
+                )
+            except errors.CoreError as refusal:
+                evaluations.append(
+                    optimize.Evaluation(
+                        iteration=len(evaluations),
+                        value=point,
+                        status="refused",
+                        error=str(refusal),
+                    )
+                )
+                stopped = "stalled"
+                break
+            job = await self._settled(job, principal)
+            evaluation = self._evaluation(len(evaluations), point, job, body.objective)
+            evaluations.append(evaluation)
+            if evaluation.objective is None:
+                stopped = "stalled"
+                break
+            answered.append(evaluation.objective)
+        return self._optimization_report(
+            record, body, resolved, evaluations, answered, stopped, solver_cls
+        )
+
+    async def _settled(self, job: Job, principal: Principal) -> Job:
+        """Wait for one evaluation, on the loop that submitted it.
+
+        Polling rather than subscribing, for the reason the Python API's `Job.wait` gives: a
+        subscriber asked to *wait* would be handed every progress tick it did not ask for. No
+        deadline of its own either — a solve already has one (`FENIXSPOON_JOB_TIMEOUT`), and a
+        second timeout here would be a different, quieter answer to the same question.
+        """
+        while job.status not in TERMINAL:
+            await asyncio.sleep(0.02)
+            job = self.job(job.id, principal)
+        return job
+
+    def optimization_report(
+        self, ref: str, principal: Principal
+    ) -> optimize.OptimizationReport:
+        """The trajectory — `optimize.get` (roadmap M5, #22).
+
+        Rebuilt by **replaying the method**, not by reading a stored run: the sequence is a
+        pure function of the answers, and each point's job is found by content address exactly
+        as a study rung's is. Where there is no cache key (caching off, or an adapter that does
+        not declare itself deterministic) the recorded `inputs` answer instead, which is the
+        same fallback and the same reason.
+
+        So a report of a search that has never run is not an error — it is a search with no
+        evaluations, `stopped: "not_run"`. The optimization object is a question, and asking
+        what a question has found before anyone has run it has a true answer: nothing yet.
+        """
+        record, body, geometry, resolved, solver_cls = self._optimization_plan(ref, principal)
+        by_input = {
+            job.inputs.get("variation_index"): job
+            for job in self.jobs_for_object(
+                record.pinned, principal, limit=body.max_evaluations * 4
+            )
+        }
+
+        evaluations: list[optimize.Evaluation] = []
+        answered: list[float] = []
+        stopped = "converged"
+        while True:
+            point = optimize.next_point(body.bounds, answered, body.tolerance)
+            if point is None:
+                break
+            if len(evaluations) >= body.max_evaluations:
+                stopped = "budget"
+                break
+            job = self._variation_job(
+                solver_cls, geometry, resolved, {body.parameter: point}, principal
+            )
+            if job is None:
+                job = by_input.get(len(evaluations))
+            if job is None:
+                # The trajectory stops here and the jobs do not say why — the one place the
+                # absence of a run record costs something real, so it is reported rather than
+                # guessed at. A submission the server refused leaves *no job*, so a replay
+                # cannot tell "stalled there" from "nobody ran it that far", and the first
+                # version called both `budget`: a search that stalled on a quota would be
+                # reported as one that spent its evaluations, by an operation whose whole job
+                # is to say what happened. Raised in review of #22.
+                #
+                # `optimize.run` never returns `incomplete` — it was there, and says
+                # `stalled`. That asymmetry is the honest one: the run knows why it stopped
+                # and a replay knows only how far it got.
+                stopped = "not_run" if not evaluations else "incomplete"
+                break
+            evaluation = self._evaluation(len(evaluations), point, job, body.objective)
+            evaluations.append(evaluation)
+            if evaluation.objective is None:
+                stopped = "stalled"
+                break
+            answered.append(evaluation.objective)
+        return self._optimization_report(
+            record, body, resolved, evaluations, answered, stopped, solver_cls
+        )
+
+    @staticmethod
+    def _evaluation(
+        iteration: int, point: float, job: Job | None, objective: optimize.Objective
+    ) -> optimize.Evaluation:
+        """One row of the trajectory: where it looked, and what came back."""
+        if job is None:
+            return optimize.Evaluation(
+                iteration=iteration,
+                value=point,
+                status="refused",
+                error="this evaluation was not accepted; run the optimization to see why",
+            )
+        metric = (job.summary.metrics if job.summary else {}).get(objective.metric)
+        return optimize.Evaluation(
+            iteration=iteration,
+            value=point,
+            job_id=job.id,
+            status=job.status,
+            cached=job.reused > 0,
+            metric=metric,
+            objective=None if metric is None else objective.as_minimum(metric),
+            error=job.error
+            or (
+                None
+                if metric is not None or job.status != "done"
+                else f"the solve reported no {objective.metric!r} to optimise"
+            ),
+        )
+
+    def _optimization_report(
+        self, record, body, resolved, evaluations, answered, stopped, solver_cls
+    ):
+        """Assemble the report, including where the search has narrowed the parameter to."""
+        unit = next(
+            (spec.unit for spec in solver_cls.metrics if spec.name == body.objective.metric),
+            "",
+        )
+        graded = [e for e in evaluations if e.objective is not None]
+        best = min(graded, key=lambda e: e.objective) if graded else None
+        return optimize.OptimizationReport(
+            optimization=record.pinned,
+            design=resolved.design,
+            solver=resolved.solver,
+            parameter=body.parameter,
+            objective=body.objective,
+            evaluations=evaluations,
+            best=best,
+            bracket=optimize.bracket_of(body.bounds, answered) if graded else None,
+            evaluations_spent=len(evaluations),
+            stopped="not_run" if not evaluations else stopped,
+            history=optimize.history_curve(body.objective, evaluations, unit),
         )
 
     # ---------------------------------------------------------------- workspace (#44)

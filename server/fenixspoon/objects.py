@@ -62,6 +62,7 @@ PREFIXES: dict[str, str] = {
     "load_case": "lc",
     "design": "d",
     "study": "s",
+    "optimization": "o",
 }
 
 OBJECT_TYPES: tuple[str, ...] = tuple(PREFIXES)

@@ -88,6 +88,8 @@ COMMANDS: dict[tuple[str, str], tuple[str, list[str], str]] = {
     ("artifact", "get"): ("artifact.get", ["job_id", "name"], "resolve an artifact to a path"),
     ("study", "run"): ("study.run", ["ref"], "submit every variation of a study"),
     ("study", "get"): ("study.get", ["ref"], "the (variation → metric) table"),
+    ("optimize", "run"): ("optimize.run", ["ref"], "search until the tolerance or the budget"),
+    ("optimize", "get"): ("optimize.get", ["ref"], "the trajectory and the best point"),
 }
 
 #: Optional flags, per RPC parameter name, and how to parse them. Shared across commands

@@ -31,7 +31,7 @@
     `mesh_convergence` first ([#48](https://github.com/mandaloriat/fenix-spoon/issues/48)) and
     `sweep` since ([#21](https://github.com/mandaloriat/fenix-spoon/issues/21)), both
     orchestrated through object references and compact results; and the **MCP adapter**
-    §11 — thirteen tools over the JSON-RPC method table, an optional extra
+    §11 — fifteen tools over the JSON-RPC method table, an optional extra
     ([#49](https://github.com/mandaloriat/fenix-spoon/issues/49)), documented at
     [MCP adapter](09-mcp.md); and the **CLI and Python API** §11
     ([#50](https://github.com/mandaloriat/fenix-spoon/issues/50)), documented at
@@ -142,8 +142,9 @@ Explicitly out of scope for this interface — not "later", but *not this*:
 - **General-purpose HPC orchestration.** No cluster scheduling, no job arrays across nodes, no
   resource brokering. MPI-capable solvers may *report* that capability; running them across a
   cluster is somebody else's tool.
-- **A universal optimizer.** M2.5 ships a study abstraction and one small study kind. Optimization
-  loops stay M5 (#22).
+- **A universal optimizer.** M2.5 ships a study abstraction, which now carries two kinds
+  (#48, #21). Both *enumerate*; neither chooses the next point. Optimization loops stay M5
+  (#22).
 - **Autonomous interpretation of unstructured engineering requirements inside the core.** The core
   does not read "make it lighter but keep the safety factor" and decide what to do. Agents
   translate human goals into typed requests; the core validates and executes defined engineering
@@ -161,6 +162,7 @@ The workspace holds typed objects with stable identifiers of the form `<type>:<i
 | `load_case` | what happens on each boundary the geometry names — `{"root": {"fixed": 1}}` | validated since #85; the keys are open per capability, and each capability declares the ones it reads |
 | `design` | a geometry reference + material/BC/load-case references + solver params | the unit an iteration patches |
 | `study` | a study kind + its base design + a variation spec | orchestrates several jobs |
+| `optimization` | a base design + a parameter, a bracket and an objective | orchestrates a *sequence* of jobs |
 | `job` | one submitted solve | **already exists and is already durable** (`JobRecord` in `store.py`) |
 | `result` | metrics, diagnostics, provenance, references to fields and artifacts | the compact object an agent reads; the payload itself is already stored on disk |
 | `artifact` | a file produced by a solve (VTK, VTU, mesh, log) | **already exists** per job, under the data directory |
@@ -248,6 +250,8 @@ The whole vocabulary should stay small enough to hold in one page. A first cut:
 | `artifact.get` | resolve an artifact reference to a path or bytes |
 | `study.run` | run a study over a design *(implemented — `mesh_convergence` #48, `sweep` #21)* |
 | `study.get` | study status and its per-job result references *(implemented, #48)* |
+| `optimize.run` | search a parameter for an objective *(implemented, #22 — one method)* |
+| `optimize.get` | the trajectory, the best point and the bracket *(implemented, #22)* |
 
 Deliberately absent: anything that takes code, a command line, a package name or an image
 reference. Deliberately *not* per-physics: there is no `solve_magnetostatics` — the physics is a
@@ -283,9 +287,40 @@ series-level one, because a point with no answer has no legal encoding against a
 it would have to become a zero, or shift every later value onto the wrong abscissa. A partial
 sweep says exactly what it knows.
 
-**What neither kind does is choose the next point.** That is an optimizer, it is
-[#22](https://github.com/mandaloriat/fenix-spoon/issues/22), and the boundary is §15's: given
-`study:s-1@2` you can say which solves it implies without running any of them.
+**What neither kind does is choose the next point.** That is an optimizer, and the boundary
+is §15's: given `study:s-1@2` you can say which solves it implies without running any of them.
+
+### Optimization
+
+[#22](https://github.com/mandaloriat/fenix-spoon/issues/22), and the far side of that line. An
+`optimization` object names a design, one parameter, a bracket to search and an objective — a
+declared metric to `minimize`, `maximize` or hit as a `target`. `optimize.run` drives the
+search and **returns when it is done**, which no other operation does: a study hands back its
+job ids immediately because it knows them all, and a search cannot name its second point until
+the first is answered.
+
+**It still has no run record**, and the reason is a distinction worth keeping:
+
+- **Predictable** — you can say what it will solve before it runs. A study is; a search is not.
+- **Reproducible** — running it twice walks the same path. A study is, *and so is a search*,
+  as long as the method and the objective are deterministic.
+
+Storage would have been for the second property, not the first. The method here is a pure
+function from the answers so far to the next point, so a second run replays the identical
+sequence and every evaluation is a content-addressed cache hit — which is exactly how
+`optimize.get` recovers a trajectory nobody wrote down. Where the objective is *not*
+reproducible, the recorded job `inputs` answer instead, as they do for a study; what is lost
+is the free second run, not the record.
+
+Two consequences worth stating. An evaluation with no answer **stops** the search rather than
+leaving a gap, because the next point is a function of that missing value. And the report
+carries a **bracket** beside the best point: the best evaluation is where the lowest value was
+seen, the bracket is where the minimum is known to be, and a search stopped by its budget has
+a bracket wider than its tolerance.
+
+The one method is bounded scalar golden-section search. Multi-parameter search, gradients and
+the adjoint half of #22 are not built; :func:`~fenixspoon.core.optimize.next_point` is the
+seam they would implement.
 
 ## 8. Workspace
 
@@ -295,6 +330,9 @@ sweep says exactly what it knows.
     with RFC 6902, and a `job.submit` that takes a design reference and freezes the revisions
     it resolved. The four questions this section left open are answered in
     [§15](#15-open-questions) with the evidence that decided each one.
+
+    *A seventh joined them with [#22](https://github.com/mandaloriat/fenix-spoon/issues/22):
+    `optimization`, which is a question worth keeping for the same reason a study is.*
 
     Reachable through :class:`FenixSpoonCore` and not over HTTP: the workspace's first
     transport is the JSON-RPC adapter (#45), and binding it to HTTP now would mean designing

@@ -137,6 +137,68 @@ numbers are, in the `Series1DData` shape `<fs-plot>` takes.
 0, reused: 6` — every point is a content-addressed cache hit — so widening a polar costs only
 the angles you added.
 
+### The same question, searched instead of tabulated
+
+The polar above crosses zero somewhere between −3° and 0°. An
+[optimization](07-local-agent-interface.md#optimization) finds where, on the same design,
+without tabulating anything either side of it.
+
+```json title="trim.json"
+{
+  "design": "design:d-1",
+  "parameter": "alpha",
+  "bounds": [-10, 10],
+  "objective": { "metric": "c_l", "sense": "target", "target": 0.0 },
+  "max_evaluations": 12,
+  "tolerance": 0.02
+}
+```
+
+```console
+$ fenix-spoon object create optimization < trim.json
+ref: optimization:o-1
+…
+$ fenix-spoon optimize run optimization:o-1
+optimization: optimization:o-1@1
+design: design:d-1@1
+solver: mock.laplace2d
+parameter: alpha
+objective:
+  metric: c_l
+  sense: target
+  target: 0
+evaluations:
+  iteration  value      job_id          status  cached  metric       objective    error
+  ---------  ---------  --------------  ------  ------  -----------  -----------  -----
+  0          -2.36068   j-c571ee49563b  done    no      0.00360304   1.29819e-05  -
+  1          2.36068    j-df6cb9686eb3  done    no      0.570692     0.32569      -
+  2          -5.27864   j-8d8538ae935f  done    no      -0.347135    0.120503     -
+  3          -0.557281  j-1dd14576c5bd  done    no      0.220424     0.0485869    -
+  …
+  10         -2.42279   j-beab6508a532  done    no      -0.00386598  1.49458e-05  -
+best:
+  iteration: 0
+  value: -2.36068
+  metric: 0.00360304
+bracket:
+  - -2.42279
+  - -2.26018
+evaluations_spent: 11
+stopped: converged
+```
+
+Eleven solves to locate the zero-lift angle at −2.36°, inside a bracket of 0.16° — and the
+sweep above puts the crossing between −3° and 0°, which is the same answer at lower
+resolution. **`best` is iteration 0 here**, which is the reason a report carries a bracket as
+well: the first probe happened to land almost on the answer, and "where the lowest value was
+seen" and "where the minimum is known to be" are different claims. A search stopped by its
+budget rather than its tolerance would show the difference more starkly.
+
+Note what `optimize run` does *not* have: a `--detach`. `job submit` and `study run` take one
+because there is a moment when the work is accepted and not yet done. A search has no such
+moment — choosing the next point *is* the waiting — so the call returns the finished
+trajectory.
+
 ### Exit codes
 
 A script branches without parsing prose.

@@ -46,7 +46,7 @@ from concurrent.futures import Future
 from pathlib import Path
 from typing import Any
 
-from .core import FenixSpoonCore, errors, results, studies
+from .core import FenixSpoonCore, errors, optimize, results, studies
 from .core.discovery import CapabilityDescription, CapabilitySummary, EnvironmentInfo
 from .core.identity import ANONYMOUS, Principal, Quotas
 from .core.service import ArtifactHandle, EventPage
@@ -311,6 +311,20 @@ class Session:
             if self._now() > deadline:
                 raise TimeoutError(f"study {ref} did not finish within {timeout:g}s")
             self._sleep(poll)
+
+    # ------------------------------------------------------------- optimizations
+
+    def run_optimization(self, ref: str) -> optimize.OptimizationReport:
+        """Search until the tolerance or the budget, and return the trajectory.
+
+        No `wait_for_optimization` beside it, and the absence is the point: a search *is* the
+        waiting. `run_study` hands back what was started because a study's jobs all exist at
+        once; there is no equivalent moment here to hand anything back at.
+        """
+        return self._run(self.core.run_optimization(ref, self.principal))
+
+    def optimization(self, ref: str) -> optimize.OptimizationReport:
+        return self.core.optimization_report(ref, self.principal)
 
 
 def open_workspace(

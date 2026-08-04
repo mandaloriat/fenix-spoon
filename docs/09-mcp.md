@@ -37,7 +37,7 @@ Here a tool **is** an RPC method plus a schema. So "the same request over MCP an
 JSON-RPC produces the same result" is true by construction, and MCP inherits the parameter
 typing, the error mapping and the compact-answer rules for free.
 
-## Thirteen tools, not twenty-six
+## Fifteen tools, not twenty-eight
 
 The vocabulary is a curated subset. A host's tool list is something a model reads *every
 turn*, which makes this the one surface where exposing everything is actively wrong.
@@ -47,7 +47,7 @@ turn*, which makes this the one surface where exposing everything is actively wr
 | `inspect_environment` | what this installation is — capabilities, limits, quotas, cache |
 | `list_capabilities` | one line per capability, no schemas |
 | `describe_capability` | selected sections of one capability |
-| `create_object` | create a geometry, material, design or study |
+| `create_object` | create a geometry, material, load case, design, study or optimization |
 | `get_object` | one object revision |
 | `patch_object` | apply an RFC 6902 patch, write the next revision |
 | `submit_job` | solve a design, or an inline solver + geometry + load case |
@@ -55,8 +55,10 @@ turn*, which makes this the one surface where exposing everything is actively wr
 | `get_result` | the answer at the levels you ask for |
 | `query_result` | one bounded question about one field |
 | `get_artifact` | resolve an artifact to a path |
-| `run_study` | submit every rung of a study |
-| `get_study` | the (variation → metric) table |
+| `run_study` | submit every variation of a study — a ladder or a sweep |
+| `get_study` | the (variation → metric) table, and a sweep's response curves |
+| `run_optimization` | search for the parameter value that hits an objective — runs the solves |
+| `get_optimization` | the trajectory, the best point, and the bracket it narrowed to |
 
 Absent on purpose, each for a reason: `job.list`, `job.for_object`, `object.revisions` and
 `design.resolve` are real operations reachable over JSON-RPC that would spend a model's

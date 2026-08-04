@@ -28,6 +28,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from counts import stated_count
 
 from fenixspoon.core import FenixSpoonCore, errors
 from fenixspoon.core.identity import Principal, Quotas
@@ -909,4 +910,30 @@ def test_the_default_result_answer_stays_small(core, me):
         f"sections: {breakdown}\n"
         "If a capability simply declares more metrics, moving the budget is the right fix — "
         "see the docstring. If a field array got in, it is not."
+    )
+
+
+#: Where a person is told how many methods this transport carries. Every one of these was
+#: hand-written and unchecked until now — the same shape as the protocol-version drift, and
+#: found the same way: by adding to the thing the number counts.
+METHOD_COUNT_CLAIMS = {
+    "README.md": r"`fenix-spoon rpc --stdio`: ([0-9]+|[a-z-]+) methods",
+    "docs/09-mcp.md": r"tools, not ([0-9]+|[a-z-]+)\b",
+    "docs/03-roadmap.md": r"tools, not ([0-9]+|[a-z-]+)\.\*",
+}
+
+
+@pytest.mark.parametrize("filename", sorted(METHOD_COUNT_CLAIMS))
+def test_the_prose_counts_the_methods_this_transport_actually_has(filename):
+    """A count in prose is a claim, and this one had nothing behind it.
+
+    `rpc.describe` derives its list, so a caller is never misled — but a reader deciding
+    whether to build against this transport reads the README, and "26 methods" was a number
+    somebody typed once. The MCP suite makes the same check for the tool list.
+    """
+    root = Path(__file__).resolve().parents[2]
+    text = (root / filename).read_text()
+    assert stated_count(text, METHOD_COUNT_CLAIMS[filename]) == len(method_names()), (
+        f"{filename} states a method count the transport does not have; "
+        f"there are {len(method_names())}"
     )

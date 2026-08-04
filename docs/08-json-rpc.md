@@ -110,31 +110,59 @@ vocabulary costs a few hundred bytes rather than every method's schema.
 | `result.get` | a finished job's answer, at the levels asked for |
 | `result.query` | one bounded question about one field |
 | `artifact.get` | resolve an artifact to a path on this machine |
-| `study.run` | submit every rung of a study |
+| `study.run` | submit every variation of a study |
 | `study.get` | the (variation → metric) table, and where each metric settled |
+| `optimize.run` | search for the value that hits an objective — runs the solves |
+| `optimize.get` | the trajectory, the best point, and the bracket it narrowed to |
 
-That is the design draft's operation table in full. `study.run` and `study.get` were absent
-until [#48](https://github.com/mandaloriat/fenix-spoon/issues/48) gave the study object a body
-— binding a method to nothing so the vocabulary looks complete would be a caller asking what
-exists and being told about something that does not.
+That is the design draft's operation table in full, plus one pair the draft did not have.
+`study.run` and `study.get` were absent until
+[#48](https://github.com/mandaloriat/fenix-spoon/issues/48) gave the study object a body —
+binding a method to nothing so the vocabulary looks complete would be a caller asking what
+exists and being told about something that does not. `optimize.*` arrived with
+[#22](https://github.com/mandaloriat/fenix-spoon/issues/22) as **separate methods rather than
+a third study kind**, which is the boundary #48 drew showing up in the vocabulary: a study
+enumerates, an optimizer chooses, and a caller reading this table should be able to tell which
+one it is asking for.
 
 ### Studies
 
-A study **enumerates** a variation space: a base design, one parameter, and a ladder of values.
-One kind is implemented, `mesh_convergence`, and the object says which.
+A study **enumerates** a variation space over a base design. Two kinds are implemented and the
+object says which.
+
+**`mesh_convergence`** ([#48](https://github.com/mandaloriat/fenix-spoon/issues/48)) — one
+parameter, a ladder of values, read for where the metrics stop moving:
 
 ```json
 {"kind": "mesh_convergence", "design": "design:d-1", "parameter": "resolution",
  "values": [24, 32, 48, 64], "tolerance": 0.01}
 ```
 
-`study.run` submits each rung and returns immediately with how many started, how many the
-result cache answered for free, and how many the server refused. `study.get` returns the
-table: per rung the value, the job id, the status and the metrics; then per metric the values
-up the ladder, the relative change between rungs, and **the value from which every later change
-stays under the tolerance** — which is the sentence a convergence study exists to produce.
+**`sweep`** ([#21](https://github.com/mandaloriat/fenix-spoon/issues/21)) — one or more
+parameters, read for what the metrics *do* across them. Either `axes`, a full factorial with
+the last axis varying fastest and the first as the abscissa of the response curves, or explicit
+`points` for a design a grid cannot express:
 
-Three things worth knowing before you write one:
+```json
+{"kind": "sweep", "design": "design:d-1",
+ "axes": [{"parameter": "alpha", "values": [-6, -3, 0, 3, 6, 9]}],
+ "metrics": ["c_l", "c_m_c4"]}
+```
+
+`study.run` submits each variation and returns immediately with how many started, how many the
+result cache answered for free, and how many the server refused. `study.get` returns the table:
+per variation the values it set, the job id, the status and the metrics. A ladder adds, per
+metric, the values up the rungs, the relative change between them, and **the value from which
+every later change stays under the tolerance** — the sentence a convergence study exists to
+produce. A sweep adds a **response curve** per metric as `Series1DData`, the same model a
+`series1d` result carries, so anything that draws a curve draws these.
+
+Two bounds a sweep has and a ladder does not. It carries at most **64 points**, counted from
+the axis lengths and never enumerated — a grid multiplies, and four axes of four values is 256
+solves from a body that fits on one line. And its **first axis needs at least two values**,
+because it is the abscissa and a curve needs two points.
+
+Four things worth knowing before you write one:
 
 - **A name the study gets wrong is refused, not tabulated.** Both the parameter and the
   metric names are checked against what the capability declares, on the run path and the read
@@ -146,14 +174,59 @@ Three things worth knowing before you write one:
   spells it differently. A name the capability does not have is refused — a solver's params
   model ignores unknown fields, so an unchecked typo would submit every rung identically, the
   cache would collapse them onto one job, and the table would show a *perfectly converged*
-  answer that is entirely fabricated.
-- **Each rung is an ordinary submission.** It obeys the cell budget and the quota per job, not
-  per study, and an already-computed rung costs nothing. A rung the server refuses does not
-  fail the study — rung 4 exceeding the budget says nothing about rungs 1–3.
+  answer that is entirely fabricated. Over a grid the same typo is worse: it collapses every
+  point that differs only along that axis, and the table reads as a parameter with no effect.
+- **Each variation is an ordinary submission.** It obeys the cell budget and the quota per job,
+  not per study, and an already-computed one costs nothing — which is why widening a sweep from
+  six angles to eight costs two solves. One the server refuses does not fail the study: rung 4
+  exceeding the budget says nothing about rungs 1–3.
+- **No randomized design is generated here.** A Latin hypercube or a Sobol sequence arrives as
+  explicit `points`, because generating one server-side would break the property below unless
+  the seed were frozen in the body — at which point the caller is specifying the design anyway.
 - **It does not choose the next point.** That is an optimizer and it is M5
   ([#22](https://github.com/mandaloriat/fenix-spoon/issues/22)). The line is drawn at a
   concrete place: a study's job list is a pure function of its object revision, so you can say
   which solves it implies without running any of them. An optimizer cannot promise that.
+
+### Optimization
+
+Where a study **enumerates** a variation space, an optimization **searches** one: it chooses
+its next point from what the last one answered. That is the whole difference, and it is why
+these are separate methods — given `study:s-1@2` you can say which solves it implies without
+running any of them, and no optimization can promise that.
+
+```json
+{"design": "design:d-1", "parameter": "alpha", "bounds": [-10, 10],
+ "objective": {"metric": "c_l", "sense": "target", "target": 0.0},
+ "max_evaluations": 12, "tolerance": 0.02}
+```
+
+`sense` is `minimize`, `maximize` or `target`; all three become one minimisation internally —
+negated, or squared distance from the target — so the method never learns what the caller
+meant. The objective is a **declared metric**, refused if the capability does not declare it,
+for the reason a study refuses an unknown column.
+
+Four things worth knowing before you write one:
+
+- **`optimize.run` waits.** It is the only method whose duration is the work. `study.run`
+  hands back every job id immediately because it knows them all; a search cannot name its
+  second point until the first is answered, so this returns the finished trajectory rather
+  than a receipt for one.
+- **Every evaluation is an ordinary submission.** Cell budget, quota and result cache apply
+  per job exactly as they do for a rung — which is why running the same optimization twice
+  costs nothing. The second pass replays the identical sequence and every point is a cache
+  hit, and that is also how `optimize.get` recovers a trajectory nobody stored.
+- **An evaluation with no answer stops the search.** A study tabulates what it has and marks
+  rung 4 refused; here the next point is a function of the missing value, so there is nowhere
+  to continue from. `stopped` says which of `converged`, `budget`, `stalled` or `not_run`.
+- **`bracket` is not `best`.** The best evaluation is where the lowest value was *seen*; the
+  bracket is where the minimum is *known to be*. A search that stopped on its budget has a
+  bracket wider than its tolerance, and reading only the best point would take that for a
+  located answer.
+
+The method is bounded scalar golden-section search, which assumes the objective is
+**unimodal** on the bracket. Given two minima it converges to one of them and says nothing
+about the other — an assumption the caller checks, not a detail.
 
 ### Progress: poll or subscribe
 
