@@ -66,14 +66,26 @@ def test_the_corpus_and_the_server_agree_on_the_protocol_version():
 #: Every entry is a place a *person* learns what this server speaks, which is exactly the kind
 #: of claim nothing else checks — no code imports a markdown preamble.
 #:
-#: The list has two entries because one was not enough, and the way that was discovered is
-#: worth keeping: the CHANGELOG check was added *because* its number had drifted three minors
+#: The list grew twice, and both times for the same reason, which is why it is worth keeping
+#: the history: the CHANGELOG check was added *because* its number had drifted three minors
 #: behind, and the README then drifted one commit later, in the very change that introduced the
-#: check. A guard aimed at one file taught nothing about the others. Anything that says the
-#: version in words belongs here.
+#: check. A guard aimed at one file taught nothing about the others. The third entry is the
+#: one that should have been first — **the wire-protocol document itself**, which said 1.5
+#: while the server spoke 1.9, in both its opening sentence and the sample payload underneath
+#: it. The comment above already said "anything that says the version in words belongs here";
+#: what it missed is that the document *defining* the version is the most likely place for a
+#: reader to take the number from, and was the only one nothing checked.
+#:
+#: Each entry is a list, because a file can state the version more than once and the sentence
+#: is not always the copy a reader trusts — `04-wire-protocol.md` prints a whole `version`
+#: payload, and someone reaching for an example reaches for that.
 PROSE_CLAIMS = {
-    "CHANGELOG.md": r"`MAJOR\.MINOR`, currently ([0-9]+\.[0-9]+)\)",
-    "README.md": r"\*\*The wire protocol is at ([0-9]+\.[0-9]+)\.\*\*",
+    "CHANGELOG.md": [r"`MAJOR\.MINOR`, currently ([0-9]+\.[0-9]+)\)"],
+    "README.md": [r"\*\*The wire protocol is at ([0-9]+\.[0-9]+)\.\*\*"],
+    "docs/04-wire-protocol.md": [
+        r"versioned `MAJOR\.MINOR`, currently \*\*([0-9]+\.[0-9]+)\*\*",
+        r'\{ "protocol": "([0-9]+\.[0-9]+)", "implementation"',
+    ],
 }
 
 
@@ -85,13 +97,44 @@ def test_the_prose_states_the_current_protocol(filename):
     number should stay free to change, and only the number is the claim being checked.
     """
     text = (FIXTURES.parents[1] / filename).read_text()
-    stated = re.search(PROSE_CLAIMS[filename], text)
-    assert stated is not None, (
-        f"{filename} no longer states the protocol version in the form this test reads; "
-        "restore the phrasing or update the pattern, but do not delete the claim"
+    for pattern in PROSE_CLAIMS[filename]:
+        stated = re.search(pattern, text)
+        assert stated is not None, (
+            f"{filename} no longer states the protocol version in the form this test reads "
+            f"({pattern}); restore the phrasing or update the pattern, but do not delete the "
+            "claim"
+        )
+        assert stated.group(1) == PROTOCOL_VERSION, (
+            f"{filename} says the protocol is {stated.group(1)}, "
+            f"the server says {PROTOCOL_VERSION}"
+        )
+
+
+def test_the_wire_protocol_document_lists_the_whole_result_envelope():
+    """The other claim in that document nothing was reading: what a result contains.
+
+    It closes with "the result envelope is exactly what is documented above", followed by the
+    field names — and it had been *exactly* wrong twice over, missing `provenance` from 1.4 and
+    the derived `frames` from 1.7. A list that says "exactly" and is short by two is worse than
+    no list: a reader building against it concludes the fields do not exist.
+
+    Checked against the model rather than against a second hand-written list, since a second
+    list is a second thing to forget. `frames` is a computed field, so it comes from
+    `model_computed_fields` — and it is the one that drifted, which is the argument for reading
+    both maps rather than the convenient one.
+    """
+    text = (FIXTURES.parents[1] / "docs" / "04-wire-protocol.md").read_text()
+    sentence = re.search(
+        r"the result envelope is exactly what is documented above:(.+?)\.\n", text, re.S
     )
-    assert stated.group(1) == PROTOCOL_VERSION, (
-        f"{filename} says the protocol is {stated.group(1)}, the server says {PROTOCOL_VERSION}"
+    assert sentence is not None, (
+        "docs/04-wire-protocol.md no longer closes with the envelope's field list; restore it "
+        "or update this pattern, but do not drop the claim"
+    )
+    documented = set(re.findall(r"`([a-z_]+)`", sentence.group(1)))
+    declared = set(ResultEnvelope.model_fields) | set(ResultEnvelope.model_computed_fields)
+    assert documented == declared, (
+        f"the document lists {sorted(documented)}; a result envelope carries {sorted(declared)}"
     )
 
 

@@ -427,15 +427,10 @@ capability rather than on an argument.
 Goal: multi-user deployments are safe and boring. *Everything below has landed except the Helm
 chart, which is deliberately unwritten — see #15.*
 
-Scope note: M3 is the *multi-user, distributed* milestone — queue, separate workers, Redis,
-server-side persistence, authentication, per-user quotas, deployment and load testing. M2.5
-depends on none of it and must not grow a second parallel job system: the job service it extracts
-wraps the same `ExecutionBackend` interface the arq backend already implements.
-
 Scope note: M3 is the *multi-user, distributed* axis — queue, separate workers, Redis,
 server-side persistence, authentication, per-user quotas, object storage, deployment and load
-testing. M2.5 requires none of it at runtime and must not grow a second job system beside the
-`ExecutionBackend` and `JobStore` this milestone built.
+testing. M2.5 required none of it at runtime and did not grow a second job system: the job
+service it extracted wraps the same `ExecutionBackend` and `JobStore` this milestone built.
 
 - [x] Pluggable job backend: Celery or arq implementation (Redis), worker containers with
       dolfinx (#12) — an `ExecutionBackend` with an in-process pool (the default) and an

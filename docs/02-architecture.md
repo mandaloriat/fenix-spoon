@@ -109,7 +109,7 @@ services (#44, #46, #48) go into `core/` beside what is there now.
    `artifacts` fetched by URL. For non-human consumers the same principle is sharpened at M2.5:
    the default answer is scalar metrics and diagnostics, and fields are fetched or queried
    explicitly.
-5. **Transports are adapters, the core is the product** (planned, M2.5). HTTP/WebSocket,
+5. **Transports are adapters, the core is the product** (landed, M2.5). HTTP/WebSocket,
    JSON-RPC over stdio, CLI, Python and MCP all map onto one application core with one set of
    models. An operation added to the core is available everywhere; a shared conformance suite
    keeps the adapters from drifting apart.
@@ -131,22 +131,19 @@ the same protocol.
   a pluggable execution backend. `FENIXSPOON_REDIS_URL` switches solving from a bounded thread
   pool in the API process to worker containers draining an arq queue; the API layer is unchanged
   either way, which is what the job-manager interface was shaped for.
-- **M2.5 (planned):** the same backends, driven from somewhere other than a route. Submitting a
-  job stops being something only a FastAPI handler can do, and results gain a content-addressed
-  identity so an equivalent resubmission hits a local cache instead of recomputing. No new
-  execution path — a layering change on the existing one.
+- **M2.5 (landed):** the manager surface (submit / get / cancel / subscribe) was lifted into a job
+  *service* in the transport-neutral core, so a local process drives jobs without an HTTP server.
+  The `ExecutionBackend` split above had already put the seam in the right place — what M2.5
+  added is a caller that is not FastAPI, plus a content-addressed result identity so an equivalent
+  resubmission hits the cache instead of recomputing. A layering change, not a second job system,
+  and the vertical slice asserts the "no HTTP server" half by running in a subprocess that fails
+  if FastAPI was imported.
 
-  [Load testing](06-load-test.md) made the case concretely: one API process handles 50 concurrent
-  clients without dropping a stream, but every in-process solve shares the interpreter with the
-  event loop, so a Python-heavy solver's throughput *falls* as concurrency rises. Workers remove
-  that ceiling, make a per-job memory limit expressible at last, and let the API scale separately
-  from the solving.
-- **M2.5 (planned):** the manager surface (submit / get / cancel / subscribe) is lifted into a job
-  *service* in the transport-neutral core, so a local process can drive jobs without an HTTP
-  server. The `ExecutionBackend` split above already put the seam in the right place — what M2.5
-  adds is a caller that is not FastAPI, plus a content-addressed result identity so an equivalent
-  resubmission hits a local cache instead of recomputing. A layering change, not a second job
-  system.
+  [Load testing](06-load-test.md) made the worker case concretely, and it is M3's rather than this
+  one's: one API process handles 50 concurrent clients without dropping a stream, but every
+  in-process solve shares the interpreter with the event loop, so a Python-heavy solver's
+  throughput *falls* as concurrency rises. Workers remove that ceiling, make a per-job memory
+  limit expressible at last, and let the API scale separately from the solving.
 
 ### Distributed execution: three things cross the boundary, and only three
 The API and its workers share a job store and a Redis, nothing else. What moves between them:
