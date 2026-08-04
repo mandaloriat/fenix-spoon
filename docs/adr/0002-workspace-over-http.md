@@ -67,7 +67,8 @@ splits them, so a route builds the canonical reference back from its own path pa
 which means a caller cannot construct a URL whose type and prefix disagree (`design/g-12`
 resolves to `design:g-12`, which does not exist, and 404s honestly).
 
-**The revision is a query parameter, not a path segment.** `/objects/geometry/g-12/3` would
+**The revision is a query parameter, not a path segment.** `/api/v1/objects/geometry/g-12/3`
+would
 make a revision look like a sub-resource with its own identity, and it is not one — it is a
 *view* of the object at a point in its history. A pinned reference and a head reference return
 the same shape from the same route, which is exactly what the local API does.
@@ -75,7 +76,7 @@ the same shape from the same route, which is exactly what the local API does.
 `PATCH` takes `application/json-patch+json`, the media type RFC 6902 defines. A patch is not
 a partial object and the header should not claim it is.
 
-### 2. `POST /jobs` accepts a design reference, and that is the actual payoff
+### 2. `POST /api/v1/jobs` accepts a design reference, and that is the actual payoff
 
 Everything above is plumbing until this:
 
@@ -124,15 +125,16 @@ example, minutes on a FEniCSx adapter. That is fine on a pipe a child process ow
 it is a request held open through whatever proxies, load balancers and browser timeouts sit
 between a page and the server, and those will close it long before a real search ends.
 
-So the HTTP binding **diverges deliberately**: `POST /optimizations/{id}/run` answers `202`
-immediately, and the trajectory is polled from `GET /optimizations/{id}` — which already
+So the HTTP binding **diverges deliberately**: `POST /api/v1/optimizations/{id}/run` answers
+`202` immediately, and the trajectory is polled from `GET /api/v1/optimizations/{id}` — which already
 works, because `optimize.get` replays the search from the jobs rather than reading a stored
 run. The design that made the optimizer need no run record is what makes it pollable.
 
 Two consequences to accept with open eyes. First, the search has to keep running after the
 request that started it returns, which means it becomes a **background task owned by the
 server process** — the first thing in this codebase that is neither a job nor a request.
-Second, `optimize.run` over JSON-RPC and `POST /run` over HTTP will return *different things*
+Second, `optimize.run` over JSON-RPC and `POST /api/v1/optimizations/{id}/run` over HTTP will
+return *different things*
 (a report and a receipt), which is the first real divergence between transports and must be
 written into the conformance corpus as an intended one, or the suite will read it as drift.
 
@@ -173,10 +175,26 @@ this **1.10** — and the wire-protocol document has warned since 1.0 that
 > `protocol` is a **string**, not a number: as a float, `1.10` parses to `1.1` and sorts below
 > `1.9`.
 
-That has been a footnote for ten releases. It becomes a live hazard the moment this ships, and
-any client that ever parsed the version with a float comparison breaks here. The bump should
-land with a fixture pinning `"1.10" > "1.9"` under whatever comparison the SDK uses, so the
-first version where the reasoning bites is also the version that tests it.
+That has been a footnote for ten releases and becomes a live hazard the moment this ships.
+
+**And the footnote is necessary but not sufficient, which this record got wrong in its first
+draft.** It proposed landing the bump with a fixture pinning `"1.10" > "1.9"` — an assertion
+that is *false*, and false in exactly the second way the note does not mention. Compared as a
+float, `1.10` becomes `1.1` and sorts below `1.9`. Compared as a **string**, `"1.10"` also
+sorts below `"1.9"`, because `'1' < '9'` at the third character. Taking "it is a string" as
+the advice and comparing strings gets the same wrong answer by a different route, and the
+record nearly shipped that as a test.
+
+The rule that survives both is the one the SDK already implements and this pass verified
+rather than assumed: `checkProtocolCompatibility` matches `^(\d+)\.(\d+)$` and compares the two
+halves **as integers**, refusing anything it cannot parse. So the SDK handles 1.10 correctly
+today, with no change — the hazard is entirely for third-party clients, and for prose that
+tells them half the story.
+
+Two things belong with the bump, then. The corpus gains 1.10 as a version case, so both suites
+exercise the two-integer parse against a minor that breaks naive comparisons; and the
+wire-protocol document's sentence widens from "not a number" to "not a number **and not a
+string comparison** — split it and compare the halves".
 
 ### 7. What stays off HTTP, and why
 
@@ -212,7 +230,8 @@ right thing.
 **Estimated shape of the work**, in landable pieces rather than one change:
 
 1. Objects on HTTP (decisions 1, 5) + SDK + conformance. The protocol bump lands here.
-2. `POST /jobs` by reference (decision 2). Small, and the one with the most immediate value.
+2. `POST /api/v1/jobs` by reference (decision 2). Small, and the one with the most immediate
+   value.
 3. Studies: create, run, read (decision 3) + the sweep view in the browser. Closes #21.
 4. Optimizations, including the background-task question (decision 4). Closes #22's first half
    in the browser.
