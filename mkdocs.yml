@@ -66,6 +66,7 @@ nav:
       - Decision records:
           - Index: adr/index.md
           - 0001 — An explorable viewer: adr/0001-explorable-viewer.md
+          - 0002 — The workspace over HTTP: adr/0002-workspace-over-http.md
 
 # Every warning is an error: a broken internal link in the docs is a bug like any other,
 # and the whole point of this site is that following it gets you somewhere.
