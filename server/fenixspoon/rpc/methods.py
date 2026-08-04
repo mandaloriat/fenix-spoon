@@ -383,9 +383,12 @@ def study_get(core: FenixSpoonCore, principal: Principal, params: dict) -> Any:
 
 
 async def optimize_run(core: FenixSpoonCore, principal: Principal, params: dict) -> Any:
-    # The one method whose duration is the work. A study hands back job ids and lets the
-    # caller poll; a search cannot name its second point until the first is answered, so this
-    # returns the finished trajectory rather than a receipt for one.
+    # Returns a receipt, not the finished trajectory — ADR 0002 decision 4. It *was* the
+    # trajectory for as long as this method has existed, and the comment here argued that a
+    # search's duration is the work so there was no moment to hand anything back at. There
+    # is: the moment the search is accepted, which is exactly where `job.submit` and
+    # `study.run` return. Waiting is a convenience the CLI and the Python API build on top,
+    # the same way they do for those two, so no transport diverges.
     return await core.run_optimization(_required(params, "ref"), principal)
 
 

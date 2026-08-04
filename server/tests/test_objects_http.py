@@ -457,3 +457,146 @@ def test_another_principals_study_cannot_be_run_or_read(two_principals):
         f"/api/v1/studies/{study_id}/run", headers=auth(BOB)
     ).status_code == 404
     assert two_principals.get(f"/api/v1/studies/{study_id}", headers=auth(BOB)).status_code == 404
+
+
+# --------------------------------------------------------------- optimizations (1.12)
+#
+# ADR 0002 decision 4, and the last of its four pieces. Same object-that-runs shape as a
+# study, with the one behaviour change the whole record turns on: `optimize.run` returns a
+# receipt instead of blocking for the search.
+
+
+def optimization_body(design: str, **overrides) -> dict:
+    body = {
+        "design": design,
+        "parameter": "alpha",
+        "bounds": [-10.0, 10.0],
+        "objective": {"metric": "c_l", "sense": "target", "target": 0.0},
+        # Ten and 5% of the span: golden section shrinks the bracket by φ⁻¹ per evaluation,
+        # so a 20° bracket needs eight of them to reach 1°. Six converged on nothing and the
+        # report said `budget`, correctly — which is the field earning its place in a test
+        # that was not about it.
+        "max_evaluations": 10,
+        "tolerance": 0.05,
+    }
+    body.update(overrides)
+    return body
+
+
+def trim(client) -> str:
+    geometry = create(client, "geometry", GEOMETRY).json()["ref"]
+    design = create(
+        client,
+        "design",
+        {"solver": "mock.laplace2d", "geometry": geometry, "params": FAST_PARAMS},
+    ).json()["ref"]
+    return create(client, "optimization", optimization_body(design)).json()["ref"]
+
+
+def settled(client, optimization_id: str, timeout: float = 60.0) -> dict:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        report = client.get(f"/api/v1/optimizations/{optimization_id}").json()
+        if not report["running"]:
+            return report
+        time.sleep(0.05)
+    raise TimeoutError("the search did not finish")
+
+
+def test_a_search_runs_in_the_background_and_the_page_polls_it(client):
+    """#22's browser half, and the shape ADR 0002 decision 4 argued for.
+
+    The receipt comes back in milliseconds — it has to, because the alternative was holding a
+    response open through whatever proxies sit between a page and a server for the length of
+    a search. What the page then does is poll, and the trajectory grows a row at a time.
+    """
+    optimization = trim(client)
+    optimization_id = optimization.split(":")[1]
+
+    # Before anything has run: an answer, not a 404. The object is a question, and what a
+    # question has found before anyone asked it is a true and empty answer.
+    empty = client.get(f"/api/v1/optimizations/{optimization_id}").json()
+    assert empty["stopped"] == "not_run"
+    assert empty["evaluations"] == [] and empty["running"] is False
+
+    started = client.post(f"/api/v1/optimizations/{optimization_id}/run")
+    assert started.status_code == 202
+    assert started.json() == {"optimization": f"{optimization}@1", "started": True}
+
+    report = settled(client, optimization_id)
+    assert report["stopped"] == "converged"
+    assert report["best"]["metric"] == pytest.approx(0.0, abs=0.02)
+    assert report["bracket"][0] <= report["best"]["value"] <= report["bracket"][1]
+    # The convergence history is a `Series1DData`, so `<fs-plot>` draws it with no adapter —
+    # the same property that made the sweep's response curve free in 1.11.
+    assert report["history"]["traces"][0]["x"]["name"] == "evaluation"
+
+
+def test_a_second_run_joins_the_first_rather_than_racing_it(client):
+    """Two searches over one revision would agree — they replay the same sequence and every
+    point is a cache hit — so this is not a correctness guard. It is two loops declining to
+    do one loop's work, and `started` is how the caller is told."""
+    optimization_id = trim(client).split(":")[1]
+
+    first = client.post(f"/api/v1/optimizations/{optimization_id}/run").json()
+    second = client.post(f"/api/v1/optimizations/{optimization_id}/run").json()
+    assert (first["started"], second["started"]) == (True, False)
+
+    settled(client, optimization_id)
+    # And once it is over, a third call starts a fresh one — which costs nothing, because
+    # every point it walks is already in the cache.
+    third = client.post(f"/api/v1/optimizations/{optimization_id}/run").json()
+    assert third["started"] is True
+    report = settled(client, optimization_id)
+    assert all(evaluation["cached"] for evaluation in report["evaluations"])
+
+
+def test_a_pinned_optimization_runs_and_reports_as_it_was_written_then(client):
+    """`?revision=`, on the same argument as the study routes: an object that runs must be
+    runnable as it was written, or "you can pin it" was never true of this binding."""
+    optimization = trim(client)
+    optimization_id = optimization.split(":")[1]
+    client.post(f"/api/v1/optimizations/{optimization_id}/run")
+    settled(client, optimization_id)
+
+    widened = client.patch(
+        f"/api/v1/objects/optimization/{optimization_id}",
+        json={"patch": [{"op": "replace", "path": "/bounds", "value": [-20.0, 20.0]}]},
+    )
+    assert widened.json()["revision"] == 2
+
+    pinned = client.get(f"/api/v1/optimizations/{optimization_id}?revision=1").json()
+    assert pinned["optimization"].endswith("@1")
+    assert pinned["stopped"] == "converged", "revision 1 is the one that ran"
+
+    head = client.get(f"/api/v1/optimizations/{optimization_id}").json()
+    assert head["stopped"] == "not_run", "revision 2 is a different question, unanswered"
+
+    assert client.get(f"/api/v1/optimizations/{optimization_id}?revision=9").status_code == 404
+
+
+def test_an_optimization_route_will_not_run_something_that_is_not_one(client):
+    create(client, "geometry", GEOMETRY)
+    assert client.post("/api/v1/optimizations/g-1/run").status_code == 422
+    assert client.get("/api/v1/optimizations/o-99").status_code == 404
+
+
+def test_another_principals_optimization_cannot_be_run_or_read(two_principals):
+    geometry = create(two_principals, "geometry", GEOMETRY, headers=auth(ALICE)).json()["ref"]
+    design = create(
+        two_principals,
+        "design",
+        {"solver": "mock.laplace2d", "geometry": geometry, "params": FAST_PARAMS},
+        headers=auth(ALICE),
+    ).json()["ref"]
+    optimization = create(
+        two_principals, "optimization", optimization_body(design), headers=auth(ALICE)
+    ).json()["ref"]
+    optimization_id = optimization.split(":")[1]
+
+    assert two_principals.post(
+        f"/api/v1/optimizations/{optimization_id}/run", headers=auth(BOB)
+    ).status_code == 404
+    assert two_principals.get(
+        f"/api/v1/optimizations/{optimization_id}", headers=auth(BOB)
+    ).status_code == 404

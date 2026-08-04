@@ -314,17 +314,48 @@ class Session:
 
     # ------------------------------------------------------------- optimizations
 
-    def run_optimization(self, ref: str) -> optimize.OptimizationReport:
-        """Search until the tolerance or the budget, and return the trajectory.
+    def run_optimization(self, ref: str) -> optimize.OptimizationRun:
+        """Start the search and hand back a receipt.
 
-        No `wait_for_optimization` beside it, and the absence is the point: a search *is* the
-        waiting. `run_study` hands back what was started because a study's jobs all exist at
-        once; there is no equivalent moment here to hand anything back at.
+        It used to return the finished trajectory, and the docstring here argued that a
+        search *is* the waiting, so there was no moment to hand anything back at. There is —
+        the moment the search is accepted — and ADR 0002 decision 4 is why that matters:
+        HTTP cannot hold a request open for minutes of solving, and the alternative was two
+        transports answering one request differently.
+
+        The search keeps running on this session's loop. :meth:`wait_for_optimization` is the
+        convenience that was supposedly impossible, and it is the same shape as
+        :meth:`wait_for_study` — which is the argument for the change in one sentence.
         """
         return self._run(self.core.run_optimization(ref, self.principal))
 
     def optimization(self, ref: str) -> optimize.OptimizationReport:
         return self.core.optimization_report(ref, self.principal)
+
+    def wait_for_optimization(
+        self, ref: str, timeout: float = 900.0, poll: float = 0.05
+    ) -> optimize.OptimizationReport:
+        """Block until the search stops, and return its trajectory.
+
+        Polls `running` rather than `stopped`, and the difference is a race worth naming: a
+        search that has been accepted but has not yet submitted its first point reports
+        `stopped: "not_run"`, which a waiter reading `stopped` alone would take for a finished
+        search with nothing in it. `running` is set before :meth:`run_optimization` returns,
+        so there is no window where the search exists and nothing says so.
+
+        Closing the session cancels the loop the search runs on. Nothing is lost that a
+        re-run does not recover — every answered point is a cache hit — but a script that
+        starts a search and exits gets less than it asked for, which is the same warning
+        `--detach` carries on the CLI.
+        """
+        deadline = self._now() + timeout
+        while True:
+            report = self.optimization(ref)
+            if not report.running:
+                return report
+            if self._now() > deadline:
+                raise TimeoutError(f"optimization {ref} did not finish within {timeout:g}s")
+            self._sleep(poll)
 
 
 def open_workspace(

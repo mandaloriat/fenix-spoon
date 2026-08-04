@@ -112,7 +112,7 @@ vocabulary costs a few hundred bytes rather than every method's schema.
 | `artifact.get` | resolve an artifact to a path on this machine |
 | `study.run` | submit every variation of a study |
 | `study.get` | the (variation → metric) table, and where each metric settled |
-| `optimize.run` | search for the value that hits an objective — runs the solves |
+| `optimize.run` | start a search for the value that hits an objective; returns a receipt |
 | `optimize.get` | the trajectory, the best point, and the bracket it narrowed to |
 
 That is the design draft's operation table in full, plus one pair the draft did not have.
@@ -208,17 +208,20 @@ for the reason a study refuses an unknown column.
 
 Four things worth knowing before you write one:
 
-- **`optimize.run` waits.** It is the only method whose duration is the work. `study.run`
-  hands back every job id immediately because it knows them all; a search cannot name its
-  second point until the first is answered, so this returns the finished trajectory rather
-  than a receipt for one.
+- **`optimize.run` returns a receipt**, `{optimization, started}`, as soon as the search is
+  accepted — and it did wait, until protocol 1.12. The reason it stopped is
+  [ADR 0002](adr/0002-workspace-over-http.md) decision 4: HTTP cannot hold a response open
+  for minutes of solving, and the alternative to changing this was one operation behaving
+  differently on two transports. Waiting is a convenience the CLI and the Python API build on
+  top, exactly as they always have for `job.submit`. No job ids on the receipt, unlike
+  `study.run`'s: a search cannot name its second point until the first is answered.
 - **Every evaluation is an ordinary submission.** Cell budget, quota and result cache apply
   per job exactly as they do for a rung — which is why running the same optimization twice
   costs nothing. The second pass replays the identical sequence and every point is a cache
   hit, and that is also how `optimize.get` recovers a trajectory nobody stored.
 - **An evaluation with no answer stops the search.** A study tabulates what it has and marks
   rung 4 refused; here the next point is a function of the missing value, so there is nowhere
-  to continue from. `stopped` says which of `converged`, `budget`, `stalled` or `not_run`.
+  to continue from. `stopped` says which of `converged`, `budget`, `stalled`, `incomplete` or `not_run`.
 - **`bracket` is not `best`.** The best evaluation is where the lowest value was *seen*; the
   bracket is where the minimum is *known to be*. A search that stopped on its budget has a
   bracket wider than its tolerance, and reading only the best point would take that for a

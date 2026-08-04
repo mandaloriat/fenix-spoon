@@ -651,13 +651,22 @@ vocabulary introduced in M2.5, M2.5 provides the abstraction and M5 provides the
       the sharpest difference from a study, which would tabulate the rest. The report carries
       a **bracket** beside the best point, because "where the lowest value was seen" and
       "where the minimum is known to be" are different claims and a budget-stopped search
-      shows the gap. And `optimize.run` is the one operation whose duration *is* the work, so
-      it has no `--detach`: there is no moment at which a search is accepted and not yet done.
+      shows the gap. ~~And `optimize.run` is the one operation whose duration *is* the work, so
+      it has no `--detach`: there is no moment at which a search is accepted and not yet
+      done.~~ **That last sentence was wrong and is struck rather than deleted.** There is such
+      a moment — the one `job.submit` and `study.run` return at — and ADR 0002 decision 4 found
+      it by asking what `optimize.run` would do over HTTP, which cannot hold a response open
+      for minutes of solving. Protocol 1.12 makes it a receipt everywhere, `--detach` and all;
+      the waiting moved to the CLI and the Python API, where it always belonged.
 - [ ] Optimization: several parameters, gradients, and watching it (#22, second half) —
       multi-parameter search, dolfinx-adjoint for gradients where an adapter can supply them,
       per-iteration progress on the event channel, and the browser view that watches the shape
-      morph. *The last of those wants the HTTP surface #21's second half is waiting on, and the
-      first two want `next_point` implemented again rather than changed.*
+      morph. *The HTTP surface the last of those was waiting on landed with protocol 1.12
+      (ADR 0002 decision 4): `POST /optimizations/{id}/run` returns a receipt and
+      `GET /optimizations/{id}` grows a row per evaluation, so a page can already poll a search
+      to a stop. What is left here is the view itself, per-iteration progress on the **event**
+      channel rather than by polling, and `next_point` implemented again rather than changed —
+      several parameters and a gradient are different methods, not a different loop.*
 - [ ] Offline/degraded mode: scikit-fem under Pyodide behind the same JS SDK interface (#23)
 - [ ] Sandboxed arbitrary-UFL mode (explicitly opt-in; see security posture in architecture
       doc) (#24)

@@ -22,6 +22,8 @@ import {
   type ObjectSummary,
   type ObjectType,
   type ObjectView,
+  type OptimizationReport,
+  type OptimizationRun,
   type ProtocolVersion,
   type SolverInfo,
   type StudyReport,
@@ -59,7 +61,7 @@ function splitRef(ref: string): { type: string; id: string; revision?: number } 
 }
 
 /**
- * The study routes' URL for `study:s-3`, or `study:s-3@2` for a pinned one.
+ * The route for an object that *runs* — `study:s-3`, or `study:s-3@2` for a pinned one.
  *
  * Both halves of that are refusals the SDK can make without a round trip, and both were asked
  * for in review of #21. A reference of the wrong *type* — `geometry:g-1` — would otherwise
@@ -67,18 +69,30 @@ function splitRef(ref: string): { type: string; id: string; revision?: number } 
  * the right answer arriving later and from further away than necessary. And a revision must be
  * *carried*, not dropped: the routes take one as `?revision=`, so a client that parsed `@2` and
  * then ignored it would run the head while its caller believed it had pinned something.
+ *
+ * Shared with the optimization routes from 1.12, which have the same shape for the same
+ * reason — an optimization is the other object that runs.
  */
 function studyPath(ref: string, suffix = ''): string {
-  const { type, id, revision } = splitRef(ref);
-  if (type !== 'study') {
+  return objectRoute('study', 'studies', ref, suffix);
+}
+
+/** The same, for the optimization routes protocol 1.12 added. */
+function optimizationPath(ref: string, suffix = ''): string {
+  return objectRoute('optimization', 'optimizations', ref, suffix);
+}
+
+function objectRoute(type: string, collection: string, ref: string, suffix: string): string {
+  const parsed = splitRef(ref);
+  if (parsed.type !== type) {
     throw new FenixSpoonError(
-      `not a study reference: ${JSON.stringify(ref)} names a ${type}`,
+      `not a ${type} reference: ${JSON.stringify(ref)} names a ${parsed.type}`,
       0,
       undefined,
     );
   }
-  const query = revision === undefined ? '' : `?revision=${revision}`;
-  return `/api/v1/studies/${id}${suffix}${query}`;
+  const query = parsed.revision === undefined ? '' : `?revision=${parsed.revision}`;
+  return `/api/v1/${collection}/${parsed.id}${suffix}${query}`;
 }
 
 export class FenixSpoonError extends Error {
@@ -333,6 +347,29 @@ export class FenixSpoonClient {
    */
   async studyReport(ref: string): Promise<StudyReport> {
     return this.request<StudyReport>(studyPath(ref));
+  }
+
+  /**
+   * Start a search. Resolves when it is *accepted*, in milliseconds — the search keeps
+   * running on the server.
+   *
+   * `started: false` means one was already in flight for this revision and this call joined
+   * it. There are no job ids on the receipt: a search chooses each point from the last
+   * answer, so it cannot say in advance which solves it will ask for.
+   */
+  async runOptimization(ref: string): Promise<OptimizationRun> {
+    return this.request<OptimizationRun>(optimizationPath(ref, '/run'), { method: 'POST' });
+  }
+
+  /**
+   * A search's trajectory, the best point so far, and why it stopped.
+   *
+   * Poll it while one runs: it grows a row per evaluation, and `running` says whether a
+   * search is in flight in the process that answered. Safe to call before any run — an
+   * optimization nobody has started reports `stopped: 'not_run'` rather than a 404.
+   */
+  async optimizationReport(ref: string): Promise<OptimizationReport> {
+    return this.request<OptimizationReport>(optimizationPath(ref));
   }
 
   /**

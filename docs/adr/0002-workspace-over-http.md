@@ -1,7 +1,7 @@
 # 0002 — The workspace over HTTP
 
-**Status:** accepted — *decisions 1, 2, 5 and 6 are implemented as protocol 1.10, decision 3 as
-protocol 1.11; decision 4 is not yet*
+**Status:** accepted and complete — *decisions 1, 2, 5 and 6 are implemented as protocol 1.10,
+decision 3 as 1.11, decision 4 as 1.12*
 **Affects:** the wire protocol (`/api/v1`), `@fenix-spoon/client`, the conformance corpus,
 [#21](https://github.com/mandaloriat/fenix-spoon/issues/21) and
 [#22](https://github.com/mandaloriat/fenix-spoon/issues/22), both waiting on it
@@ -281,6 +281,16 @@ introduced against a surface that already exists.
 routes are listed in `environment.inspect` so a client can feature-detect them, and whether a
 `study.run` that is already running is idempotent or a `409`. Both are small; neither changes
 the shape above; both are named here so they are decided rather than defaulted.
+
+*One thing decision 4 did not foresee, found while building piece 4.* Moving the report out of
+`optimize.run`'s reply made `stopped: "stalled"` — and the refusal message beside it —
+**unreachable through every transport**. A replay cannot recover either, and for a good
+reason this record already gives: a submission the server refused leaves no job behind. The
+answer is a small process-local memory of the last search's tail, sitting beside `running` on
+the same terms — used only when the replay stops at exactly the point the search did, lost on
+restart, and never claiming to be the run record decision 4 was careful not to introduce. A
+process that did not run the search still says `incomplete`, and there is a test that builds a
+second core over the same data directory to prove it.
 
 *Answered while building piece 3, and the second one was not a decision after all.* A
 `study.run` on a study that is already running is **idempotent**, and nothing was added to make

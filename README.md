@@ -48,14 +48,18 @@ and the FEniCSx solver.
 > 50 concurrent clients. What remains for M3 is deployment packaging — see the
 > [roadmap](docs/03-roadmap.md).
 >
-> **The wire protocol is at 1.11.** Four of the last five minors came from adding physics
+> **The wire protocol is at 1.12.** Four of the last five minors came from adding physics
 > rather than from planning: a transient needed a metric to say what it is taken over (1.6)
 > and a way to index its instants (1.7), and elasticity needed a geometry that can *name*
-> pieces of its own boundary (1.8) and a load case to say what happens there (1.9). 1.10 is
-> the exception and was designed first, in [ADR 0002](docs/adr/0002-workspace-over-http.md):
-> the workspace on HTTP, so a browser can keep its designs under stable ids and solve by
-> reference instead of resending a geometry it already sent. Every one is additive — a 1.0
-> client still works. *Read the version by splitting on the dot and comparing the halves as
+> pieces of its own boundary (1.8) and a load case to say what happens there (1.9). 1.10 and
+> 1.11 are the exceptions and were designed first, in
+> [ADR 0002](docs/adr/0002-workspace-over-http.md): the workspace on HTTP, so a browser can
+> keep its designs under stable ids and solve by reference instead of resending a geometry it
+> already sent, then studies, so it can run one and read the curve back, and then optimizations
+> (1.12), which finishes that record. Every one is additive on the wire — a 1.0 client still
+> works — though 1.12 also changes one shipped behaviour: `optimize.run` returns a receipt
+> instead of blocking for the search, on every transport, and the waiting moved to the callers
+> that can afford it. *Read the version by splitting on the dot and comparing the halves as
 > integers: 1.10 is below 1.9 both as a float and as a string.*
 
 ## Why
@@ -78,11 +82,11 @@ see the [state-of-the-art survey](docs/01-state-of-the-art.md). Fenix Spoon is t
 | **Workspace** — versioned `geometry` / `material` / `design` / `study` / `optimization` objects as diffable JSON files under stable ids, edited with RFC 6902 patches, solved by reference. Reachable from every transport, HTTP included since 1.10 | [`objects.py`](server/fenixspoon/objects.py), [`core/workspace.py`](server/fenixspoon/core/workspace.py), [ADR 0002](docs/adr/0002-workspace-over-http.md) | ✅ protocol 1.10 |
 | **Compact results** — five response levels, declared engineering metrics, diagnostics, and nine bounded field queries (peak + location, integral, section, hotspots) that never move the array | [`core/results.py`](server/fenixspoon/core/results.py), [`fields.py`](server/fenixspoon/fields.py) | ✅ protocol 1.3 |
 | **Result cache + provenance** — an identical resubmission is answered from the solve that already ran, opt-in per adapter, with `cached` and the pinned input revisions on every result | [`cache.py`](server/fenixspoon/cache.py) | ✅ protocol 1.4 |
-| **Studies** — a sequence of solves that answers one question. A mesh ladder refines until the metrics settle and reports the rung it settled at; a **sweep** runs a grid (or a list of DOE points) and returns the response curve per metric, drawn against its first axis — one submission, N jobs, every one of them a cache hit the second time | [`core/studies.py`](server/fenixspoon/core/studies.py) | ✅ mesh convergence, sweeps |
+| **Studies** — a sequence of solves that answers one question. A mesh ladder refines until the metrics settle and reports the rung it settled at; a **sweep** runs a grid (or a list of DOE points) and returns the response curve per metric, drawn against its first axis — one submission, N jobs, every one of them a cache hit the second time. Reachable from every transport, HTTP included since 1.11, where a study is an object that *runs* rather than an endpoint that computes | [`core/studies.py`](server/fenixspoon/core/studies.py) | ✅ protocol 1.11 |
 | **Time** — a metric declares whether it is taken over the payload or over the whole run, and a transient's instants are indexed by the artifacts that carry them: `frames` is derived from the files, so it cannot name one the result does not serve | [`frames.py`](server/fenixspoon/frames.py), [`solvers/base.py`](server/fenixspoon/solvers/base.py) | ✅ protocol 1.6–1.7 |
 | **Named boundaries** — a geometry can name pieces of its own outline, by topology (`outer`, `obstacle`), by stable point id, or by position (`near`, `box`); each resolves to the `f(x) -> bool` predicate `locate_entities_boundary` takes, so a mock and a FEniCSx adapter cannot disagree about which edge was meant | [`boundaries.py`](server/fenixspoon/boundaries.py), [`geometry.py`](server/fenixspoon/geometry.py) | ✅ protocol 1.8 |
 | **Load cases** — what happens on those boundaries, as a reusable object rather than a block in the design: one set of restraints and loads solves a family of shapes. A key no capability declares is a 422 at submit, never a no-op — an unread material key leaves a default, an unread condition leaves a clamp out of the assembly | [`core/conditions.py`](server/fenixspoon/core/conditions.py) | ✅ protocol 1.9 |
-| **Optimization** — the other half of a study: an `optimization` object searches a bracket for the parameter value that minimises, maximises or hits a target on a declared metric. No run record, because the method is a pure function of the answers so far — a second run replays the same path at cache cost, and the report is recovered rather than stored | [`core/optimize.py`](server/fenixspoon/core/optimize.py) | ✅ bounded scalar search |
+| **Optimization** — the other half of a study: an `optimization` object searches a bracket for the parameter value that minimises, maximises or hits a target on a declared metric. No run record, because the method is a pure function of the answers so far — a second run replays the same path at cache cost, and the report is recovered rather than stored. Reachable from every transport, HTTP included since 1.12, where the search runs on as a task the server owns and a page polls the trajectory | [`core/optimize.py`](server/fenixspoon/core/optimize.py) | ✅ protocol 1.12 |
 | **JSON-RPC 2.0 over stdio** — `fenix-spoon rpc --stdio`: 28 methods, no port opened and no web framework imported, NDJSON out and both framings in | [`rpc/`](server/fenixspoon/rpc/), [`docs/08-json-rpc.md`](docs/08-json-rpc.md) | ✅ working |
 | **MCP adapter** — the same operations as 15 tools for a Model Context Protocol host, bound to the RPC method table rather than to the core, so it cannot drift from the other transports | [`mcp_adapter.py`](server/fenixspoon/mcp_adapter.py), [`docs/09-mcp.md`](docs/09-mcp.md) | ✅ optional extra (`pip install "fenix-spoon[mcp]"`) |
 | **CLI and Python API** — `fenix-spoon capability list`, `job submit`, `study run`… and the same operations in-process via `from fenixspoon import local` | [`commands.py`](server/fenixspoon/commands.py), [`local.py`](server/fenixspoon/local.py), [`docs/10-cli-and-python.md`](docs/10-cli-and-python.md) | ✅ working |

@@ -59,8 +59,8 @@ $ fenix-spoon job submit --solver mock.elasticity2d --json < cantilever.json
 
 ### `job submit` waits
 
-**By default, `job submit` and `study run` block until the work is finished.** That is not a
-convenience — it is the only behaviour that is not broken. With the in-process backend a
+**By default, `job submit`, `study run` and `optimize run` block until the work is finished.**
+That is not a convenience — it is the only behaviour that is not broken. With the in-process backend a
 solve runs on this process's thread pool, so a command that submitted and exited would kill
 the work it just started and leave a row saying `running`, which the next startup reconciles
 to *failed*. Fire-and-forget from a one-shot process is a shell script's most natural
@@ -158,7 +158,8 @@ without tabulating anything either side of it.
 $ fenix-spoon object create optimization < trim.json
 ref: optimization:o-1
 …
-$ fenix-spoon optimize run optimization:o-1
+$ fenix-spoon optimize run optimization:o-1 > /dev/null   # waits for the search
+$ fenix-spoon optimize get optimization:o-1
 optimization: optimization:o-1@1
 design: design:d-1@1
 solver: mock.laplace2d
@@ -194,10 +195,26 @@ well: the first probe happened to land almost on the answer, and "where the lowe
 seen" and "where the minimum is known to be" are different claims. A search stopped by its
 budget rather than its tolerance would show the difference more starkly.
 
-Note what `optimize run` does *not* have: a `--detach`. `job submit` and `study run` take one
-because there is a moment when the work is accepted and not yet done. A search has no such
-moment — choosing the next point *is* the waiting — so the call returns the finished
-trajectory.
+*The trajectory above comes from `optimize get`.* Until protocol 1.12 it came from
+`optimize run`, and this section argued that `optimize run` could not take a `--detach`
+because a search has no moment at which the work is accepted and not yet done — choosing the
+next point *is* the waiting. **That was wrong, and [ADR 0002](adr/0002-workspace-over-http.md)
+decision 4 says why.** There is such a moment: the moment the search is accepted, which is
+exactly where `job submit` and `study run` return. The old shape held a response open for
+minutes of solving, which is fine on a pipe a child process owns and impossible over HTTP —
+and the alternative to fixing it was two transports answering one request differently.
+
+So `optimize run` now returns a receipt on every transport, takes `--detach` like the other
+two, and waits by default here for the same reason they do. The receipt is two lines:
+
+```console
+$ fenix-spoon optimize run optimization:o-1
+optimization: optimization:o-1@1
+started: true
+```
+
+No job ids on it, unlike `study run`'s, and that absence is structural: a search cannot name
+its second point until the first is answered.
 
 ### Exit codes
 

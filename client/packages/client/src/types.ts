@@ -42,7 +42,7 @@
  * physics is not a protocol change — which is why `ConditionValues` is `Record<string,
  * number>` rather than a union this file would have to grow.
  */
-export const PROTOCOL_VERSION = '1.11';
+export const PROTOCOL_VERSION = '1.12';
 
 /** What `GET /api/v1/version` returns. The one endpoint that never requires a key. */
 export interface ProtocolVersion {
@@ -701,4 +701,62 @@ export interface SweepReport {
 /** The rows of a report, whichever kind it is — `rungs` on a ladder, `points` on a sweep. */
 export function studyVariations(report: StudyReport): StudyVariation[] {
   return report.kind === 'sweep' ? report.points : report.rungs;
+}
+
+// ---------------------------------------------------------------- optimizations (1.12)
+
+/** What better meant: a declared metric, and which way to move it. */
+export interface Objective {
+  metric: string;
+  sense: 'minimize' | 'maximize' | 'target';
+  target?: number | null;
+}
+
+/** One row of a search's trajectory: where it looked, and what came back. */
+export interface Evaluation {
+  iteration: number;
+  value: number;
+  job_id?: string | null;
+  status: string;
+  cached?: boolean;
+  metric?: number | null;
+  objective?: number | null;
+  error?: string | null;
+}
+
+/**
+ * What `POST /api/v1/optimizations/{id}/run` returns — that the search *started*.
+ *
+ * No job ids, unlike a study's receipt, and the absence is structural: a search chooses each
+ * point from the last answer, so it cannot say in advance which solves it will ask for.
+ * `started: false` means a search for this revision was already in flight and this call
+ * joined it.
+ */
+export interface OptimizationRun {
+  optimization: string;
+  started: boolean;
+}
+
+/** What `GET /api/v1/optimizations/{id}` returns: the trajectory, and why it stopped. */
+export interface OptimizationReport {
+  optimization: string;
+  design: string;
+  solver: string;
+  parameter: string;
+  objective: Objective;
+  evaluations: Evaluation[];
+  best?: Evaluation | null;
+  /** Where the minimum is *known* to be, which is not where the best value was seen. */
+  bracket?: [number, number] | null;
+  evaluations_spent: number;
+  stopped: 'converged' | 'budget' | 'stalled' | 'incomplete' | 'not_run';
+  /** The convergence history, drawable by `<fs-plot>` like any other `series1d`. */
+  history?: Series1DData | null;
+  /**
+   * Whether a search is in flight **in the process that answered this call** — the one field
+   * here that is not a replay of the object and its jobs. Poll on it, and read it as the
+   * local statement it is: behind two API replicas a search driven by the other one reads as
+   * `false` with `stopped: "incomplete"`.
+   */
+  running: boolean;
 }
