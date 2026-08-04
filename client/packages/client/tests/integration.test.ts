@@ -283,4 +283,37 @@ describeLive('against a live server', () => {
       status: 0,
     });
   });
+
+  it('refuses a study reference that names something else, without a round trip', async () => {
+    // Well-formed, and not a study. Without the type check these reach
+    // `/api/v1/studies/g-1/run` and come back a 422 from the server's own reference parser —
+    // the right answer, arriving later and from further away than necessary.
+    await expect(client.runStudy('geometry:g-1')).rejects.toMatchObject({ status: 0 });
+    await expect(client.studyReport('design:d-1')).rejects.toMatchObject({ status: 0 });
+  });
+
+  it('carries a pinned revision through to the study routes instead of dropping it', async () => {
+    const geometry = await client.createObject('geometry', AIRFOIL);
+    const design = await client.createObject('design', {
+      solver: 'mock.laplace2d',
+      geometry: geometry.ref,
+      params: FAST,
+    });
+    const study = await client.createObject('study', {
+      kind: 'sweep',
+      design: design.ref,
+      axes: [{ parameter: 'alpha', values: [-2, 2] }],
+      metrics: ['c_l'],
+    });
+    await client.patchObject(study.ref, [
+      { op: 'replace', path: '/axes/0/values', value: [-2, 0, 2] },
+    ]);
+
+    // The head has three points and revision 1 has two, so a client that parsed `@1` and then
+    // dropped it would report the head here and look entirely correct doing it.
+    expect(studyVariations(await client.studyReport(study.ref))).toHaveLength(3);
+    const pinned = await client.studyReport(`${study.ref}@1`);
+    expect(pinned.study).toMatch(/@1$/);
+    expect(studyVariations(pinned)).toHaveLength(2);
+  });
 });

@@ -37,9 +37,12 @@ import {
  * from naming something unintended. A reference that is not one is a `FenixSpoonError`
  * rather than a request the server will reject a round trip later.
  *
- * Every method that calls this is `async`, deliberately: a synchronous throw from a function
- * that returns a promise makes a caller write both `await` and `try` around one call, and
- * `await client.getObject(bad)` would not catch it at all.
+ * Every method that calls this is `async`, deliberately, so a bad reference comes back as a
+ * *rejected promise* rather than as a throw before any promise exists. `await` catches both —
+ * an earlier version of this comment claimed otherwise and was wrong — but `.catch()`,
+ * `Promise.all` and vitest's `rejects` only ever see the rejection, so a promise-returning
+ * function that throws synchronously is a function with two error channels. Raised in review
+ * of #21, after the same asymmetry had already made a test silently vacuous.
  */
 function splitRef(ref: string): { type: string; id: string; revision?: number } {
   const match = /^([a-z_]+):([a-z]+-\d+)(?:@(\d+))?$/.exec(ref);
@@ -53,6 +56,29 @@ function splitRef(ref: string): { type: string; id: string; revision?: number } 
     id: match[2]!,
     revision: match[3] === undefined ? undefined : Number(match[3]),
   };
+}
+
+/**
+ * The study routes' URL for `study:s-3`, or `study:s-3@2` for a pinned one.
+ *
+ * Both halves of that are refusals the SDK can make without a round trip, and both were asked
+ * for in review of #21. A reference of the wrong *type* — `geometry:g-1` — would otherwise
+ * reach `/api/v1/studies/g-1/run` and come back a 422 from the server's own parser, which is
+ * the right answer arriving later and from further away than necessary. And a revision must be
+ * *carried*, not dropped: the routes take one as `?revision=`, so a client that parsed `@2` and
+ * then ignored it would run the head while its caller believed it had pinned something.
+ */
+function studyPath(ref: string, suffix = ''): string {
+  const { type, id, revision } = splitRef(ref);
+  if (type !== 'study') {
+    throw new FenixSpoonError(
+      `not a study reference: ${JSON.stringify(ref)} names a ${type}`,
+      0,
+      undefined,
+    );
+  }
+  const query = revision === undefined ? '' : `?revision=${revision}`;
+  return `/api/v1/studies/${id}${suffix}${query}`;
 }
 
 export class FenixSpoonError extends Error {
@@ -293,10 +319,11 @@ export class FenixSpoonClient {
   /**
    * Submit every variation of a study. Resolves when the work is accepted, not when it is
    * done — `reused` says how much of it the result cache answered for free.
+   *
+   * Pass a pinned reference, `study:s-3@2`, to run the study as it was written then.
    */
   async runStudy(ref: string): Promise<StudyRun> {
-    const { id } = splitRef(ref);
-    return this.request<StudyRun>(`/api/v1/studies/${id}/run`, { method: 'POST' });
+    return this.request<StudyRun>(studyPath(ref, '/run'), { method: 'POST' });
   }
 
   /**
@@ -305,8 +332,7 @@ export class FenixSpoonClient {
    * 404 — which is what lets a page draw the shape before anything is pressed.
    */
   async studyReport(ref: string): Promise<StudyReport> {
-    const { id } = splitRef(ref);
-    return this.request<StudyReport>(`/api/v1/studies/${id}`);
+    return this.request<StudyReport>(studyPath(ref));
   }
 
   /**

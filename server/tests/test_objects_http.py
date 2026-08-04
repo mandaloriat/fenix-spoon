@@ -159,6 +159,16 @@ def test_the_inline_form_still_works_and_the_two_are_not_mixed(client):
 
     assert client.post("/api/v1/jobs", json={"solver": "mock.laplace2d"}).status_code == 422
 
+    # `params` beside a design is the form nobody checked until #21's review: it was accepted,
+    # and the route solved the design as written with the overrides discarded. Silently
+    # ignoring an instruction is the failure this refusal exists to prevent, so it is refused
+    # here for the same reason a geometry is.
+    overridden = client.post(
+        "/api/v1/jobs", json={"design": design, "params": {"resolution": 512}}
+    )
+    assert overridden.status_code == 422, overridden.text
+    assert "not both" in overridden.text
+
 
 # -------------------------------------------------------------------------- isolation
 #
@@ -385,6 +395,43 @@ def test_the_report_is_readable_before_the_run_and_free_afterwards(client):
 
     again = client.post(f"/api/v1/studies/{study_id}/run")
     assert again.json() == {**again.json(), "submitted": 0, "reused": 3, "refused": 0}
+
+
+def test_a_pinned_study_runs_and_reports_as_it_was_written_then(client):
+    """`?revision=`, and the reason it is not decoration.
+
+    "You cannot pin it" is the first thing ADR 0002 holds against a sweep posted as a request
+    body, so a binding that could only ever act on the head would refute the argument it was
+    built on. Widen the grid, then ask the old revision what it said: three points, not five,
+    and every one of them free — a study's job list is a pure function of its revision, so
+    re-running one that has already run costs nothing.
+    """
+    study = polar(client)
+    study_id = study.split(":")[1]
+    client.post(f"/api/v1/studies/{study_id}/run")
+    completed(client, study_id)
+
+    widened = client.patch(
+        f"/api/v1/objects/study/{study_id}",
+        json={"patch": [{"op": "replace", "path": "/axes/0/values", "value": [-4, -2, 0, 2, 4]}]},
+    )
+    assert widened.status_code == 200
+    assert widened.json()["revision"] == 2
+
+    head = client.get(f"/api/v1/studies/{study_id}").json()
+    assert len(head["points"]) == 5
+
+    pinned = client.get(f"/api/v1/studies/{study_id}?revision=1").json()
+    assert pinned["study"].endswith("@1")
+    assert [point["values"]["alpha"] for point in pinned["points"]] == [-4.0, 0.0, 4.0]
+
+    rerun = client.post(f"/api/v1/studies/{study_id}/run?revision=1").json()
+    assert (rerun["submitted"], rerun["reused"], rerun["refused"]) == (0, 3, 0)
+
+    # A revision that does not exist is a 404, not a silent fall back to the head — the
+    # failure mode of a pin that quietly stops pinning is a report about the wrong question.
+    assert client.get(f"/api/v1/studies/{study_id}?revision=9").status_code == 404
+    assert client.get(f"/api/v1/studies/{study_id}?revision=0").status_code == 422
 
 
 def test_a_study_route_will_not_run_something_that_is_not_a_study(client):

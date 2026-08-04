@@ -29,6 +29,11 @@ speak shapes four other transports have carried since #48.
   re-read next week, re-run into the cache, or handed to a colleague as an id. So the study is
   created through the object routes like anything else and these two act on it. Change the
   grid by patching the study.
+- **`?revision=` on both study routes**, the same way and for the same reason the object routes
+  have it. Not decoration: *"you cannot pin it"* is the first thing ADR 0002 holds against a
+  sweep posted as a request body, so a binding that could only ever act on the head would
+  refute the argument it was built on. Re-running a pinned study is free — its job list is a
+  pure function of its revision, so every job is already in the cache.
 - **Running a study twice is idempotent, including mid-flight, and nothing was added for it.**
   Every variation goes through `POST /jobs`, and the result cache has matched `queued` and
   `running` jobs since 1.4 — the mechanism that stops two identical submissions from racing.
@@ -47,6 +52,19 @@ speak shapes four other transports have carried since #48.
   range moves every angle by a fraction of a degree and a widening that should have cost one
   solve costs seven. Anchored at `from`, extending the range reuses everything already
   computed — 6 of 7 free, in the screenshot.
+- **Three refusals that were missing, all found by a review of #21 asking about shapes nobody
+  had sent.** `{"design": ..., "params": {...}}` was accepted by `POST /api/v1/jobs` and the
+  overrides were then discarded — the exact "a job whose inputs are not what the caller thinks"
+  the both-forms rule exists to prevent, arrived at from the one direction unchecked; it is a
+  `422` now. The SDK's `validateJobRequest` had gone through the whole of 1.10 still demanding
+  a `solver`, so a caller who validated a design-form request before sending it was told the
+  protocol's own new shape was invalid; the shared corpus could not catch that, having had no
+  design-form case in it, and now has four. And `runStudy`/`studyReport` used only the id half
+  of a reference, so `geometry:g-1` reached `/studies/g-1/run` and a pinned `study:s-3@2` ran
+  the head — both are refused or carried client-side now.
+- **`JobRequest` is a union in the SDK**, `InlineJobRequest | DesignJobRequest`, where it had
+  been one interface with every field optional — which typed `{ params: {} }` as valid. A
+  client type that permits what the server refuses has stopped describing the protocol.
 - *One stale claim removed from the code.* `SweepReport`'s docstring argued for sharing
   `Series1DData` and then noted that no browser could fetch one. The note is kept and marked
   as having paid off rather than deleted: a design bet that came off is worth more in the

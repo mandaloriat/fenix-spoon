@@ -256,19 +256,10 @@ export function isTerminal(status: JobState): status is TerminalState {
  */
 export type ConditionValues = Record<string, number>;
 
-export interface JobRequest {
-  /**
-   * A `design` reference — `design:d-18`, optionally pinned (protocol 1.10). The design names
-   * its geometry, params and load cases, so the fields below are not used with it and sending
-   * both forms is a 422.
-   *
-   * Prefer this in a page that iterates: an inline geometry is resent whole on every solve,
-   * can never hit the result cache on an unchanged design, and leaves the result unable to
-   * say which design revision produced it.
-   */
-  design?: string;
-  solver?: string;
-  geometry?: Geometry;
+/** The form every version before 1.10 accepted, and the only one before the workspace. */
+export interface InlineJobRequest {
+  solver: string;
+  geometry: Geometry;
   params?: Record<string, unknown>;
   /**
    * An inline load case (protocol 1.9): boundary name to the scalars in force there. Every
@@ -277,7 +268,35 @@ export interface JobRequest {
    * answers a different problem.
    */
   conditions?: Record<string, ConditionValues>;
+  design?: never;
 }
+
+/** Protocol 1.10: name a design instead of describing a solve. */
+export interface DesignJobRequest {
+  /**
+   * A `design` reference — `design:d-18`, optionally pinned. The design names its geometry,
+   * params and load cases, so none of the inline fields are used beside it.
+   *
+   * Prefer this in a page that iterates: an inline geometry is resent whole on every solve,
+   * can never hit the result cache on an unchanged design, and leaves the result unable to
+   * say which design revision produced it.
+   */
+  design: string;
+  solver?: never;
+  geometry?: never;
+  params?: never;
+  conditions?: never;
+}
+
+/**
+ * A union, rather than one interface with everything optional — which is what this was until a
+ * review of #21 pointed out that the loose form types `{ params: {} }` as a valid request. The
+ * server has refused that since 1.10, it being neither form, and a client type that permits
+ * what the server refuses is a type that has stopped describing the protocol. The `?: never`
+ * arms are what make "one form or the other, never both" a compile error rather than a 422 a
+ * round trip later.
+ */
+export type JobRequest = InlineJobRequest | DesignJobRequest;
 
 export interface JobCreated {
   job_id: string;

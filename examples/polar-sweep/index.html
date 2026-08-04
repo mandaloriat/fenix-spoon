@@ -200,26 +200,48 @@ async function ensureObjects() {
   }
 }
 
+/**
+ * Build a cell. `textContent`, never `innerHTML`.
+ *
+ * A metric name and a status are strings the *server* chose, and a page that concatenates
+ * them into markup is a page whose escaping depends on a solver adapter's naming taste. The
+ * risk here is small — you own the server this talks to — and the reason to do it properly
+ * anyway is that a demo is read as reference code. Raised in review of #21.
+ */
+function cell(tag, text, className) {
+  const el = document.createElement(tag);
+  el.textContent = text;
+  if (className) el.className = className;
+  return el;
+}
+
 function renderTable(report) {
   const columns = Object.keys(report.points[0]?.metrics ?? {});
-  const head = ['alpha', ...columns, ''].map((c) => `<th>${c}</th>`).join('');
-  const rows = report.points
-    .map((point) => {
-      const cells = columns.map((name) => {
-        const value = point.metrics[name];
-        return `<td>${value === undefined ? '—' : value.toFixed(4)}</td>`;
-      });
-      const free = point.cached ? '<td class="free">cached</td>' : `<td>${point.status}</td>`;
-      return `<tr><td>${point.values.alpha}</td>${cells.join('')}${free}</tr>`;
-    })
-    .join('');
-  tableEl.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;
+  const table = document.createElement('table');
+
+  const head = table.createTHead().insertRow();
+  for (const name of ['alpha', ...columns, '']) head.append(cell('th', name));
+
+  const body = table.createTBody();
+  for (const point of report.points) {
+    const row = body.insertRow();
+    row.append(cell('td', String(point.values.alpha)));
+    for (const name of columns) {
+      const value = point.metrics[name];
+      row.append(cell('td', value === undefined ? '—' : value.toFixed(4)));
+    }
+    row.append(
+      point.cached ? cell('td', 'cached', 'free') : cell('td', point.status),
+    );
+  }
+
+  tableEl.replaceChildren(table);
 }
 
 function draw(report) {
   const names = report.curves.map((curve) => curve.name);
   if (names.join() !== [...metricSel.options].map((o) => o.value).join()) {
-    metricSel.innerHTML = names.map((n) => `<option value="${n}">${n}</option>`).join('');
+    metricSel.replaceChildren(...names.map((n) => new Option(n, n)));
     if (names.includes('c_l')) metricSel.value = 'c_l';
   }
   // `Series1DData` straight from the report — the widget needs nothing else.

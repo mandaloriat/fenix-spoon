@@ -588,8 +588,8 @@ other. These two routes act on one:
 
 | | Route | |
 |---|---|---|
-| `POST` | `/api/v1/studies/{study_id}/run` | submit every variation, `202` |
-| `GET` | `/api/v1/studies/{study_id}` | the (variation → metric) table, and what it means |
+| `POST` | `/api/v1/studies/{study_id}/run` | submit every variation, `202`, `?revision=` to pin |
+| `GET` | `/api/v1/studies/{study_id}` | the table and what it means, `?revision=` to pin |
 
 **There is no request body on either.** A study says what to solve — which design, which
 parameter, which values, which metrics — so a run has nothing left to be told, and the answer
@@ -617,6 +617,15 @@ free. `refused` counts variations the server would not accept — a cell budget,
 nothing was added to make it so: every variation goes through `POST /jobs`, and the cache has
 matched `queued` and `running` jobs since 1.4. The second run returns the same job ids with
 `reused` counting them.
+
+**`?revision=` pins**, the same way and for the same reason it does on the object routes — and
+it is not decoration. *"You cannot pin it"* is the first thing this design holds against a
+sweep posted as a request body, so a binding that could only ever act on the head would refute
+its own argument. `GET /studies/s-3?revision=1` reports the study as it was written then, which
+is how a table stays readable after the grid has been widened twice, and
+`POST /studies/s-3/run?revision=1` re-runs it — free, because a study's job list is a pure
+function of its revision and every one of those jobs is already in the cache. A revision that
+does not exist is a `404`, never a quiet fall back to the head.
 
 **`GET` is free to call before the run, during it, and after.** There is no stored run record
 that could be absent: the study says what to solve, the jobs are the answer, and the report is
@@ -663,9 +672,11 @@ or an inline solve, which is what every version before 1.10 accepted and still w
 
 **Both together is a `422`**, not a precedence rule: a request carrying a design *and* a
 geometry holds two intents, and honouring one silently produces a job whose inputs are not what
-the caller thinks they are. The design form takes no parameter overrides either — to change a
+the caller thinks they are. **`params` beside a design is the same `422`** — to change a
 parameter, patch the design, which is one small JSON Patch and leaves the next solve
-reproducible from the workspace alone.
+reproducible from the workspace alone. That last refusal was missing until a review of #21
+asked what became of the overrides: they were accepted and then discarded, which is the failure
+this rule exists to prevent, reached from the one direction nobody had checked.
 
 What the design form buys, beyond the bytes: a job submitted by reference records the exact
 object revisions it resolved, so `provenance` can answer *which design this picture came from*.

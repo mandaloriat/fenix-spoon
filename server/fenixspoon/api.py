@@ -96,7 +96,17 @@ class JobRequest(BaseModel):
 
     @model_validator(mode="after")
     def _one_form_only(self) -> "JobRequest":
-        inline = self.solver is not None or self.geometry is not None or bool(self.conditions)
+        # `params` counts as the inline form, which it did not until a review of #21 asked
+        # what happens to `{"design": ..., "params": {"resolution": 512}}`. The answer was
+        # that the route dropped the parameters on the floor and solved the design as
+        # written — the exact "a job whose inputs are not what the caller thinks they are"
+        # this refusal exists to prevent, arrived at from the one direction nobody checked.
+        inline = (
+            self.solver is not None
+            or self.geometry is not None
+            or bool(self.conditions)
+            or bool(self.params)
+        )
         if self.design is not None and inline:
             raise ValueError(
                 "send a design reference or an inline solve, not both: a request carrying "
@@ -384,6 +394,12 @@ def patch_object(
 # shown to a colleague. So the object is created like any other and these two routes act on
 # it, which is also why there is no request body here: everything the run needs is in the
 # revision it names.
+#
+# `?revision=` for the same reason it is on the object routes — and it is not decoration.
+# "You cannot pin it" is the *first* thing the ADR holds against a sweep posted as a body, so
+# a binding that could only ever act on the head would refute its own argument. The core has
+# resolved a pinned reference since #44 and the other four transports pass one straight
+# through; without this parameter HTTP alone could not say `study:s-1@2`.
 
 
 @router.post("/studies/{study_id}/run", response_model=StudyRun, status_code=202)
@@ -391,6 +407,7 @@ async def run_study(
     study_id: str,
     request: Request,
     principal: CurrentPrincipal,
+    revision: int | None = Query(default=None, ge=1),
 ) -> StudyRun:
     """Submit every variation of a study.
 
@@ -398,8 +415,13 @@ async def run_study(
     has, for the same reason: a five-rung ladder takes minutes and this is a request a
     browser is holding open. `reused` is worth reading on the way past, because it says how
     much of the ladder the result cache just made free.
+
+    Pin with `?revision=` to run the study as it was written then. Worth having rather than
+    worth documenting: a study's job list is a pure function of its revision, so re-running
+    an old one is answered entirely from the cache and costs nothing — which is the property
+    ADR 0002 argued a body-shaped sweep could never have.
     """
-    return await _core(request).run_study(f"study:{study_id}", principal)
+    return await _core(request).run_study(_ref("study", study_id, revision), principal)
 
 
 @router.get("/studies/{study_id}", response_model=StudyReport)
@@ -407,6 +429,7 @@ def study_report(
     study_id: str,
     request: Request,
     principal: CurrentPrincipal,
+    revision: int | None = Query(default=None, ge=1),
 ) -> StudyReport:
     """The (variation → metric) table, and what it means.
 
@@ -414,8 +437,11 @@ def study_report(
     absent, because the study says what to solve and the jobs are the answer. A ladder adds
     where each metric settled; a sweep adds a response curve per metric as `Series1DData`,
     which is the model `<fs-plot>` already draws.
+
+    `?revision=` reads the study as it was written then, and reports against *that* — which
+    is how a table from last week stays readable after the grid has been widened twice.
     """
-    return _core(request).study_report(f"study:{study_id}", principal)
+    return _core(request).study_report(_ref("study", study_id, revision), principal)
 
 
 @router.post("/jobs", response_model=JobCreated, status_code=202)

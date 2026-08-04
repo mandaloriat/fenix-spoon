@@ -23,6 +23,15 @@
         },
         "params": { "resolution": 64, "output": "mesh2d" }
       }
+    },
+    {
+      "name": "design reference instead of an inline solve",
+      "$comment": "Protocol 1.10. The design names its geometry, params and load cases, so nothing else belongs beside it. The corpus had no case of this form until a review of #21; the SDK's runtime validator had gone on demanding a solver through the whole of 1.10 as a result.",
+      "payload": { "design": "design:d-18" }
+    },
+    {
+      "name": "design reference pinned to a revision",
+      "payload": { "design": "design:d-18@3" }
     }
   ],
   "invalid": [
@@ -42,6 +51,29 @@
           "obstacle": { "type": "polygon2d", "points": [[0, 0], [1, 1]] }
         }
       }
+    },
+    {
+      "name": "both forms at once",
+      "reason": "a request carrying a design and a geometry holds two intents, and honouring one silently produces a job whose inputs are not what the caller thinks they are",
+      "payload": {
+        "design": "design:d-18",
+        "solver": "mock.laplace2d",
+        "geometry": {
+          "type": "domain2d",
+          "bounds": [-1.0, -1.0, 2.0, 1.0],
+          "obstacle": { "type": "polygon2d", "points": [[0.4, 0.4], [0.6, 0.4], [0.5, 0.6]] }
+        }
+      }
+    },
+    {
+      "name": "design reference with parameter overrides",
+      "reason": "the design form takes no overrides — to change a parameter, patch the design. Accepted until a review of #21 asked what became of them: the route dropped them and solved the design as written.",
+      "payload": { "design": "design:d-18", "params": { "resolution": 512 } }
+    },
+    {
+      "name": "neither form",
+      "reason": "params alone names no solve",
+      "payload": { "params": {} }
     }
   ]
 }
