@@ -117,26 +117,49 @@ GET  /api/v1/studies/{id}                     the table and the curves
 Same for `optimizations`. Two routes per kind rather than one, and the extra route is the
 thing that makes the answer re-readable a week later.
 
-### 4. `optimize.run` cannot cross HTTP the way it crosses a pipe
+### 4. Waiting is a convenience, not an operation — so `optimize.run` stops blocking
 
-**This is the one place the local shape does not survive the binding, and it is worth being
-loud about it.** `optimize.run` blocks for the whole search — eleven solves in the shipped
-example, minutes on a FEniCSx adapter. That is fine on a pipe a child process owns. Over HTTP
-it is a request held open through whatever proxies, load balancers and browser timeouts sit
-between a page and the server, and those will close it long before a real search ends.
+`optimize.run` blocks for the whole search: eleven solves in the shipped example, minutes on a
+FEniCSx adapter. That is fine on a pipe a child process owns and impossible over HTTP, where
+the request is held open through whatever proxies, load balancers and browser timeouts sit
+between a page and the server, and those close it long before a real search ends.
 
-So the HTTP binding **diverges deliberately**: `POST /api/v1/optimizations/{id}/run` answers
-`202` immediately, and the trajectory is polled from `GET /api/v1/optimizations/{id}` — which already
-works, because `optimize.get` replays the search from the jobs rather than reading a stored
-run. The design that made the optimizer need no run record is what makes it pollable.
+**The first draft of this record concluded that the two transports must therefore diverge**,
+and proposed teaching the conformance suite that the divergence was intended. That was the
+most expensive decision in this document and the one flagged for review, so it got looked at
+hardest — and it turns out to be unnecessary. The codebase already answered this question, for
+jobs, and the answer is better:
 
-Two consequences to accept with open eyes. First, the search has to keep running after the
-request that started it returns, which means it becomes a **background task owned by the
-server process** — the first thing in this codebase that is neither a job nor a request.
-Second, `optimize.run` over JSON-RPC and `POST /api/v1/optimizations/{id}/run` over HTTP will
-return *different things*
-(a report and a receipt), which is the first real divergence between transports and must be
-written into the conformance corpus as an intended one, or the suite will read it as drift.
+> **`job submit` and `study run` wait by default.** […] `--detach` skips the wait.
+
+`job.submit` over JSON-RPC returns *immediately*, with a receipt. The CLI waits — and nobody
+calls that a divergence, because the waiting is not part of the operation. It is a **convenience
+belonging to the caller-facing layer**, built out of the two primitives underneath: start, then
+poll. HTTP declines the convenience because it cannot hold a request open; the CLI offers it
+because a person at a terminal wants the answer, not a receipt and a second command.
+
+So the corrected decision is that `optimize.run` joins that pattern rather than breaking it:
+
+- **over every transport it returns as soon as the search is accepted**, exactly as
+  `job.submit` and `study.run` do;
+- **the CLI and the Python API keep waiting**, through the same `_settle` machinery that
+  already waits for the other two, so nothing regresses for the caller who noticed;
+- **`optimize.get` is identical everywhere**, and always was.
+
+There is then **no divergence to declare**, no exception to teach the conformance suite, and
+no precedent for the next person to lean on. The rule that every transport answers the same
+request identically survives intact — which matters more than this feature does, because that
+rule is what has kept five transports from drifting apart for two milestones.
+
+*The cost is honest and small: this changes a behaviour that shipped in #22 hours ago.*
+`optimize.run` currently returns the finished report over JSON-RPC and will return a receipt.
+It has no external consumers yet, and the alternative is carrying the wrong shape forever
+because it was written down first.
+
+What remains true from the first draft is the mechanism: the search keeps running after the
+call that started it returns, so it becomes a **background task owned by the server process** —
+the first thing here that is neither a job nor a request, and the one genuinely new piece of
+machinery in this whole design.
 
 An alternative was considered and rejected: making an optimization *be* a job, so the existing
 lifecycle carries it. It fails on the cell budget and the quota — an optimization is N jobs and
@@ -222,10 +245,16 @@ here, and the unmetered object store (decision 5) is the one genuine gap.
 **The SDK grows an object client**, with the same runtime validators the result path has. That
 is the part that keeps a browser from having to know the reference grammar.
 
-**The conformance corpus grows a case it has never had**: an intended divergence between
-transports (decision 4). Every previous case asserts that five renderings agree; this one has
-to assert that two of them differ, and say why, or the suite becomes a reason not to do the
-right thing.
+**The conformance corpus grows nothing it has never had**, which is the outcome of decision 4
+and worth recording as a result rather than a non-event. The first draft was going to teach the
+suite its first intended divergence; asking whether that was really necessary produced a shape
+where it is not. `optimize.run` gains a conformance case of the ordinary kind — every transport
+answers it identically — and the rule that has kept five transports together stays absolute.
+
+**One shipped behaviour changes**, and it is the price of the above: `optimize.run` stops
+returning the finished report over JSON-RPC and returns a receipt like its two siblings. Hours
+old, no external consumers, and the alternative is keeping a shape because it was written down
+first.
 
 **Estimated shape of the work**, in landable pieces rather than one change:
 
@@ -233,8 +262,9 @@ right thing.
 2. `POST /api/v1/jobs` by reference (decision 2). Small, and the one with the most immediate
    value.
 3. Studies: create, run, read (decision 3) + the sweep view in the browser. Closes #21.
-4. Optimizations, including the background-task question (decision 4). Closes #22's first half
-   in the browser.
+4. Optimizations: the background task, and `optimize.run` becoming non-blocking on every
+   transport with the wait moving to the CLI and the Python API (decision 4). Closes #22's
+   first half in the browser.
 
 Pieces 1 and 2 are worth doing together and are worth doing first; 3 is the demonstrable one;
 4 is the one carrying a genuinely new mechanism and should be last, so that the mechanism is
