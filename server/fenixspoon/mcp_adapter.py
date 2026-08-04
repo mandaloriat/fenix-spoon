@@ -154,8 +154,8 @@ TOOLS: dict[str, tuple[str, str, dict[str, Any]]] = {
     ),
     "create_object": (
         "object.create",
-        "Create a workspace object — `geometry`, `material`, `design`, or `study` — and get "
-        "back a stable reference to name it by later.",
+        "Create a workspace object — `geometry`, `material`, `load_case`, `design` or "
+        "`study` — and get back a stable reference to name it by later.",
         _schema(
             {
                 "type": {"type": "string", "description": "Object type."},

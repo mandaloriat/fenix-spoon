@@ -142,8 +142,9 @@ Explicitly out of scope for this interface — not "later", but *not this*:
 - **General-purpose HPC orchestration.** No cluster scheduling, no job arrays across nodes, no
   resource brokering. MPI-capable solvers may *report* that capability; running them across a
   cluster is somebody else's tool.
-- **A universal optimizer.** M2.5 ships a study abstraction and one small study kind. Optimization
-  loops stay M5 (#22).
+- **A universal optimizer.** M2.5 ships a study abstraction, which now carries two kinds
+  (#48, #21). Both *enumerate*; neither chooses the next point. Optimization loops stay M5
+  (#22).
 - **Autonomous interpretation of unstructured engineering requirements inside the core.** The core
   does not read "make it lighter but keep the safety factor" and decide what to do. Agents
   translate human goals into typed requests; the core validates and executes defined engineering

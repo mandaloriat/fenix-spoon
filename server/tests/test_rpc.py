@@ -910,3 +910,68 @@ def test_the_default_result_answer_stays_small(core, me):
         "If a capability simply declares more metrics, moving the budget is the right fix — "
         "see the docstring. If a field array got in, it is not."
     )
+
+
+#: Number words the prose uses for counts, so a claim can be written either way. Small on
+#: purpose: the day a count leaves this range, the failure says so rather than passing by
+#: silently matching nothing.
+_NUMBER_WORDS = {
+    word: value
+    for value, word in enumerate(
+        "zero one two three four five six seven eight nine ten eleven twelve thirteen "
+        "fourteen fifteen sixteen seventeen eighteen nineteen twenty".split()
+    )
+}
+_NUMBER_WORDS |= {
+    "twenty-one": 21, "twenty-two": 22, "twenty-three": 23, "twenty-four": 24,
+    "twenty-five": 25, "twenty-six": 26, "twenty-seven": 27, "twenty-eight": 28,
+    "twenty-nine": 29, "thirty": 30, "thirty-one": 31, "thirty-two": 32,
+}
+
+
+def stated_count(text: str, pattern: str) -> int:
+    """Read a count out of prose, written as digits or as a word.
+
+    Shared with the MCP suite, which makes the same kind of claim about its tool list. Both
+    forms because the documents use both — a heading says "Thirteen tools, not twenty-six" and
+    a table cell says "26 methods", and a check that only understood one would leave the other
+    exactly as unguarded as it is today.
+    """
+    import re
+
+    found = re.search(pattern, text, re.I)
+    assert found is not None, (
+        f"the prose no longer states this count in the form the test reads ({pattern}); "
+        "restore the phrasing or update the pattern, but do not delete the claim"
+    )
+    stated = found.group(1)
+    if stated.isdigit():
+        return int(stated)
+    assert stated.lower() in _NUMBER_WORDS, f"unknown number word {stated!r}"
+    return _NUMBER_WORDS[stated.lower()]
+
+
+#: Where a person is told how many methods this transport carries. Every one of these was
+#: hand-written and unchecked until now — the same shape as the protocol-version drift, and
+#: found the same way: by adding to the thing the number counts.
+METHOD_COUNT_CLAIMS = {
+    "README.md": r"`fenix-spoon rpc --stdio`: ([0-9]+|[a-z-]+) methods",
+    "docs/09-mcp.md": r"tools, not ([0-9]+|[a-z-]+)\b",
+    "docs/03-roadmap.md": r"tools, not ([0-9]+|[a-z-]+)\.\*",
+}
+
+
+@pytest.mark.parametrize("filename", sorted(METHOD_COUNT_CLAIMS))
+def test_the_prose_counts_the_methods_this_transport_actually_has(filename):
+    """A count in prose is a claim, and this one had nothing behind it.
+
+    `rpc.describe` derives its list, so a caller is never misled — but a reader deciding
+    whether to build against this transport reads the README, and "26 methods" was a number
+    somebody typed once. The MCP suite makes the same check for the tool list.
+    """
+    root = Path(__file__).resolve().parents[2]
+    text = (root / filename).read_text()
+    assert stated_count(text, METHOD_COUNT_CLAIMS[filename]) == len(method_names()), (
+        f"{filename} states a method count the transport does not have; "
+        f"there are {len(method_names())}"
+    )

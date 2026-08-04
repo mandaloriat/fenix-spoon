@@ -251,6 +251,36 @@ def test_the_tool_list_is_a_curated_subset_not_the_whole_rpc_table():
     assert len(mcp_adapter.TOOLS) < len(METHODS) / 1.5, "barely a subset is not curation"
 
 
+#: Where a person is told how many tools this adapter exposes. The count is the *argument* —
+#: "thirteen, not twenty-six" is the curation claim in miniature — which makes it exactly the
+#: kind of number that has to stay true, and exactly the kind nothing was checking.
+TOOL_COUNT_CLAIMS = {
+    "README.md": r"host as ([0-9]+|[a-z-]+) tools",
+    "docs/09-mcp.md": r"## ([0-9]+|[A-Za-z-]+) tools, not",
+    "docs/03-roadmap.md": r"\*([0-9]+|[A-Za-z-]+) tools, not",
+    "docs/07-local-agent-interface.md": r"— ([0-9]+|[a-z-]+) tools over the JSON-RPC",
+}
+
+
+@pytest.mark.parametrize("filename", sorted(TOOL_COUNT_CLAIMS))
+def test_the_prose_counts_the_tools_this_adapter_actually_exposes(filename):
+    """Four documents state this number and none of them was checked against the table.
+
+    The JSON-RPC suite makes the same check for its method count and owns the parsing, since
+    both documents write counts as digits in one place and as words in another. This test
+    lives here rather than there because `mcp_adapter` cannot be imported without the extra —
+    so the guard runs in the `mcp` CI job, which is the job that installs it.
+    """
+    from .test_rpc import stated_count
+
+    root = Path(__file__).resolve().parents[2]
+    text = (root / filename).read_text()
+    assert stated_count(text, TOOL_COUNT_CLAIMS[filename]) == len(mcp_adapter.TOOLS), (
+        f"{filename} states a tool count the adapter does not have; "
+        f"there are {len(mcp_adapter.TOOLS)}"
+    )
+
+
 def test_every_tool_names_a_method_that_exists():
     """The table is the only place a tool and a method are tied together, so a typo here
     would be a tool that fails at call time rather than at import."""

@@ -200,7 +200,8 @@ the seams a second caller needs. The design specification is
       ladder of values, a tolerance — plus `study.run` and `study.get`. **One kind,
       `mesh_convergence`**, which is what the issue asked for: enough to prove several jobs can
       be orchestrated through object references and compact results, not a framework with one
-      user. `study.get` returns the (variation → metric) table *and* the sentence it is for —
+      user. *The second kind arrived with #21 under M5 below, and cost no new operation — which
+      is the claim this entry was making and the diff that had to answer for it.* `study.get` returns the (variation → metric) table *and* the sentence it is for —
       the value from which every later change stays under the tolerance.
       *A study may override a design's parameters where `job.submit` may not*, and that is not
       an exception to #44's rule but the same rule: the override is `values[i]` applied to
