@@ -309,6 +309,36 @@ class Evaluation(BaseModel):
     error: str | None = Field(default=None, description="Why this evaluation has no answer.")
 
 
+class OptimizationRun(BaseModel):
+    """The reply to `optimize.run` — the search has been *accepted*, not finished.
+
+    It used to be the finished report, and ADR 0002 decision 4 is the argument for the change:
+    a search is minutes of solving and HTTP cannot hold a request open across whatever proxies
+    and browser timeouts sit between a page and the server. The first draft of that record
+    concluded the transports would have to diverge, then found the codebase had already
+    answered the question for jobs — `job.submit` returns a receipt everywhere and the CLI
+    waits, and nobody calls that a divergence, because **waiting is a convenience of the
+    caller-facing layer**, not part of the operation. So this joins that pattern instead of
+    breaking it, and there is no exception to teach the conformance suite.
+
+    Deliberately not a job id or a list of them. A search cannot say which points it will
+    evaluate — that is what "chooses the next one from the last answer" means — so a receipt
+    promising jobs would be promising something unknowable. `optimize.get` is where the
+    trajectory appears, one row at a time, and it was already readable mid-search.
+    """
+
+    optimization: str = Field(description="The optimization revision that is running, pinned.")
+    started: bool = Field(
+        description=(
+            "False when a search for this revision was already in flight in this process and "
+            "this call joined it rather than starting a second one. The analogue of a study's "
+            "`reused`: it says you did not pay for this. Two searches over one revision would "
+            "not corrupt anything — they replay the same sequence and every point is a cache "
+            "hit — but they would be two loops doing one loop's work."
+        )
+    )
+
+
 class OptimizationReport(BaseModel):
     """The trajectory, the best point, and why the search stopped.
 
@@ -364,6 +394,19 @@ class OptimizationReport(BaseModel):
             "`series1d`. Not the parameter — where the search *looked* is the `value` column "
             "of every row above, in the order it looked, and putting a bracket in degrees on "
             "the same axis as a lift coefficient would caption neither."
+        ),
+    )
+    running: bool = Field(
+        default=False,
+        description=(
+            "Whether a search for this revision is in flight **in the process answering this "
+            "call** (protocol 1.12). The one field here that is not a replay: everything else "
+            "is a pure function of the object and the jobs, and this is process state, which "
+            "is why it says so rather than claiming to know globally. Behind two API replicas "
+            "a search driven by the other one reads as `false` with `stopped: incomplete` — "
+            "true statements both, and better than a `true` this process cannot substantiate. "
+            "It is what `optimize run` and `wait_for_optimization` poll, and those are "
+            "single-process by construction."
         ),
     )
 

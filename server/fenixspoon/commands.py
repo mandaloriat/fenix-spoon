@@ -134,7 +134,7 @@ def add_subcommands(subparsers) -> None:
             action="store_true",
             help="print the raw result — the same value JSON-RPC returns, pretty-printed",
         )
-        if (noun, verb) in (("job", "submit"), ("study", "run")):
+        if (noun, verb) in (("job", "submit"), ("study", "run"), ("optimize", "run")):
             command.add_argument(
                 "--detach",
                 action="store_true",
@@ -280,7 +280,7 @@ def _invoke(method: str, core: FenixSpoonCore, principal: Principal, params, *, 
     import asyncio
 
     handler = METHODS[method]
-    waits = method in ("job.submit", "study.run") and not detach
+    waits = method in ("job.submit", "study.run", "optimize.run") and not detach
 
     async def go():
         result = handler(core, principal, params)
@@ -307,7 +307,7 @@ def _refresh(core: FenixSpoonCore, principal: Principal, method: str, result):
         # answered — and every one of those stays true after the wait. Returning a report
         # here instead would make `study run`'s output type depend on `--detach`, so a script
         # would parse a different shape depending on a flag about timing. `study get` is the
-        # report.
+        # report, and `optimize get` is the trajectory, on the same reasoning.
         return result
     job = core.job(result["job_id"], principal)
     return {**result, "status": job.status}
@@ -326,6 +326,13 @@ async def _settle(core: FenixSpoonCore, principal: Principal, method: str, resul
     while True:
         if method == "job.submit":
             if core.job(result["job_id"], principal).status in TERMINAL:
+                return
+        elif method == "optimize.run":
+            # `running` rather than `stopped`, because a search that has been accepted but
+            # has not submitted its first point yet reports `stopped: "not_run"` — which
+            # reads as a finished search with nothing in it. `running` is set before
+            # `optimize.run` returns, so there is no window where it lies.
+            if not core.optimization_report(result.optimization, principal).running:
                 return
         elif core.study_report(result.study, principal).complete:
             return

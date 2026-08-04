@@ -13,13 +13,13 @@ protocol version below is shared: `rpc.describe` reports it too.
 
 ## Versioning
 
-The protocol is versioned `MAJOR.MINOR`, currently **1.11**, and a server reports what it
+The protocol is versioned `MAJOR.MINOR`, currently **1.12**, and a server reports what it
 speaks:
 
 ### `GET /api/v1/version`
 
 ```json
-{ "protocol": "1.11", "implementation": "0.1.0", "api_path": "/api/v1" }
+{ "protocol": "1.12", "implementation": "0.1.0", "api_path": "/api/v1" }
 ```
 
 **The one route that never requires an API key.** A client needs to know whether it can talk
@@ -129,7 +129,9 @@ the [MCP adapter](09-mcp.md) ([#49](https://github.com/mandaloriat/fenix-spoon/i
 models rather than an addition to them, which is the property the transport-neutral core exists
 to keep. Studies stopped being an exception at 1.11: they are bound here now, in
 [studies](#studies) below, on the same terms as the workspace and for the same reason — the
-shape had been carried by four transports before this document described it.
+shape had been carried by four transports before this document described it. 1.12 does the same
+for [optimizations](#optimizations), which finishes ADR 0002, and it is the one bump that
+changes a shipped behaviour rather than only adding: `optimize.run` stops blocking.
 
 **Protocol 1.5** adds two things to the domain contract and both are additive: a
 [`series1d` result kind](#one-dimensional-results) with a `series` key beside `data`
@@ -653,6 +655,69 @@ Errors are the object routes' errors, because the argument is an object referenc
 such study *or somebody else's* · `422` a reference that is not a study, or a study body whose
 parameter or metric names the capability does not declare — reported with a `loc` pointing at
 the axis that misspelled it rather than at the document as a whole.
+
+## Optimizations
+
+*Added in protocol 1.12 ([ADR 0002](adr/0002-workspace-over-http.md), decision 4) — the last of
+that record's four pieces, and the one carrying a genuinely new mechanism.*
+
+An **optimization** searches a bracket for the parameter value that minimises, maximises or hits
+a target on a declared metric. Like a study it is an object that runs, created and patched
+through the object routes, with two routes acting on it:
+
+| | Route | |
+|---|---|---|
+| `POST` | `/api/v1/optimizations/{id}/run` | start the search, `202`, `?revision=` to pin |
+| `GET` | `/api/v1/optimizations/{id}` | the trajectory so far, `?revision=` to pin |
+
+**The receipt names no jobs**, and that is structural rather than an omission:
+
+```json
+{ "optimization": "optimization:o-3@1", "started": true }
+```
+
+A study can hand back every job id at once because its job list is a pure function of its
+revision. A search cannot name its second point until the first is answered — that *is* what
+"chooses the next point" means — so a receipt promising job ids would be promising something
+unknowable. `started: false` means a search for this revision was already in flight in this
+process and the call joined it rather than starting a rival.
+
+**`optimize.run` used to block and return the finished report**, on every transport, and 1.12
+changes that. It is the one shipped behaviour this protocol has altered rather than added to,
+and the argument is in decision 4: a search is minutes of solving, HTTP cannot hold a request
+open across the proxies and browser timeouts between a page and a server, and the first draft of
+that record concluded the transports would have to diverge. They do not. `POST /jobs` has always
+returned a receipt while the CLI waits, and nobody calls that a divergence, because **waiting is
+a convenience of the caller-facing layer, not part of the operation**. So `optimize.run` joins
+that pattern: it returns as soon as the search is accepted everywhere, and
+[`fenix-spoon optimize run`](10-cli-and-python.md) and `local.wait_for_optimization` keep
+waiting on top of it — with `--detach` to skip the wait, exactly as `job submit` has.
+
+**The search then continues as a task owned by the server process.** That is the first thing
+here that is neither a job nor a request, and the property that keeps it honest is that it is a
+*driver, not state*: the state is the jobs. Kill the server mid-search and nothing is lost that
+a re-run does not recover for free — every point already answered is a cache hit, and
+`GET /optimizations/{id}` rebuilds the trajectory by replaying the method against the jobs
+either way.
+
+Poll that route while a search runs and it grows a row per evaluation. Two fields are worth
+reading beside the rows:
+
+- **`running`** — whether a search is in flight *in the process answering this call*. The one
+  field in the report that is not a replay, and it says so: behind two API replicas, a search
+  driven by the other one reads as `false`. That is a true statement this process can
+  substantiate, where `true` would not be.
+- **`stopped`** — `converged` (the bracket reached the tolerance), `budget`, `stalled` (an
+  evaluation had no answer, which ends a *search* where it would only leave a gap in a study's
+  table), `not_run`, or `incomplete`. The last one is the honest cost of having no run record:
+  a submission the server refused leaves no job behind, so a replay can see how far the
+  trajectory got and not why it ended. A process that ran the search remembers the reason and
+  the refusal's message for as long as it lives; a process that did not says `incomplete`
+  rather than guessing.
+
+Errors are the object routes' errors: `404` no such optimization *or somebody else's* · `422` a
+reference that is not an optimization, or a body whose parameter or metric the capability does
+not declare.
 
 ## Job lifecycle
 

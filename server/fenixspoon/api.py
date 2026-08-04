@@ -33,6 +33,7 @@ from .core.discovery import (
     CapabilitySummary,
     EnvironmentInfo,
 )
+from .core.optimize import OptimizationReport, OptimizationRun
 from .core.results import LEVELS, FieldQuery, FieldQueryResult, LeveledResult
 from .core.studies import StudyReport, StudyRun
 from .core.workspace import ObjectSummary, ObjectView
@@ -442,6 +443,56 @@ def study_report(
     is how a table from last week stays readable after the grid has been widened twice.
     """
     return _core(request).study_report(_ref("study", study_id, revision), principal)
+
+
+# ------------------------------------------------------------ optimizations (1.12)
+#
+# ADR 0002 decision 4, and the last of its four pieces. Same two-route shape as studies for
+# the same reason — an optimization is an object that *runs* — with one difference that is
+# the reason this piece was left until last: `optimize.run` used to block for the whole
+# search, which is impossible here. It now returns a receipt on every transport, and the
+# waiting moved to the callers that can afford it. The search keeps going as a task owned by
+# the server process, which is the one genuinely new mechanism in the whole design.
+
+
+@router.post(
+    "/optimizations/{optimization_id}/run", response_model=OptimizationRun, status_code=202
+)
+async def run_optimization(
+    optimization_id: str,
+    request: Request,
+    principal: CurrentPrincipal,
+    revision: int | None = Query(default=None, ge=1),
+) -> OptimizationRun:
+    """Start the search. `202`, and it comes back in milliseconds.
+
+    No job ids on the receipt, unlike a study's, and the absence is structural rather than an
+    omission: a search cannot say which points it will evaluate, because each one is chosen
+    from the last answer. `started: false` means a search for this revision was already in
+    flight and this call joined it.
+    """
+    return await _core(request).run_optimization(
+        _ref("optimization", optimization_id, revision), principal
+    )
+
+
+@router.get("/optimizations/{optimization_id}", response_model=OptimizationReport)
+def optimization_report(
+    optimization_id: str,
+    request: Request,
+    principal: CurrentPrincipal,
+    revision: int | None = Query(default=None, ge=1),
+) -> OptimizationReport:
+    """The trajectory, the best point so far, the bracket, and why it stopped.
+
+    Poll it while a search runs: it grows a row per evaluation and carries `running` while one
+    is in flight in this process. There is no stored run record — the trajectory is rebuilt by
+    replaying the method and resolving each point to its job — so this answers before a search
+    has ever started, with `stopped: "not_run"`.
+    """
+    return _core(request).optimization_report(
+        _ref("optimization", optimization_id, revision), principal
+    )
 
 
 @router.post("/jobs", response_model=JobCreated, status_code=202)

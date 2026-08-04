@@ -183,6 +183,31 @@ def _swept(core, me, study, timeout: float = 90.0):
     return asyncio.run(go())
 
 
+def _searched(core, me, optimization, timeout: float = 120.0):
+    """Start a search and wait for it — what the CLI and the Python API do.
+
+    Two calls rather than one because `optimize.run` returns a receipt now (ADR 0002
+    decision 4) and the search keeps going as a task on this loop. Both have to happen inside
+    one `asyncio.run`: the loop that submitted a solve is the loop that completes it, and a
+    loop closing takes the search with it.
+
+    Returns the *replayed* report, not the search's own. That is the one a caller can
+    actually get at now, so it is the one the tests should be asserting against — and if the
+    two ever disagreed, the replay is the one telling the truth.
+    """
+
+    async def go():
+        started = await core.run_optimization(optimization, me)
+        assert started.started is True
+        deadline = asyncio.get_running_loop().time() + timeout
+        while core.optimization_report(optimization, me).running:
+            assert asyncio.get_running_loop().time() < deadline, "the search did not finish"
+            await asyncio.sleep(0.02)
+
+    asyncio.run(go())
+    return core.optimization_report(optimization, me)
+
+
 # ------------------------------------------------------------------------- acceptance
 
 
@@ -201,7 +226,7 @@ def test_the_search_finds_the_zero_lift_angle(core, me):
     of them tabulating and one of them choosing, agreeing where they overlap.
     """
     design = design_of(core, me)
-    report = asyncio.run(core.run_optimization(optimization_of(core, me, design), me))
+    report = _searched(core, me, optimization_of(core, me, design))
 
     assert report.stopped == "converged"
     assert report.best is not None
@@ -237,7 +262,7 @@ def test_the_search_finds_the_zero_lift_angle(core, me):
 def test_the_trajectory_comes_back_as_a_drawable_curve(core, me):
     """`series1d` was introduced for "a sweep, a convergence history" in as many words. This
     is the second of those, so it is the model rather than a shape beside it."""
-    report = asyncio.run(core.run_optimization(optimization_of(core, me, design_of(core, me)), me))
+    report = _searched(core, me, optimization_of(core, me, design_of(core, me)))
 
     history = report.history
     assert history is not None and history.x is None
@@ -280,8 +305,8 @@ def test_running_it_again_costs_nothing_and_walks_the_same_path(core, me):
     storage would have been for. The second run replays the identical sequence and every
     evaluation is a content-addressed cache hit."""
     optimization = optimization_of(core, me, design_of(core, me))
-    first = asyncio.run(core.run_optimization(optimization, me))
-    again = asyncio.run(core.run_optimization(optimization, me))
+    first = _searched(core, me, optimization)
+    again = _searched(core, me, optimization)
 
     assert [e.value for e in again.evaluations] == [e.value for e in first.evaluations]
     assert all(e.cached for e in again.evaluations), "a replay should solve nothing"
@@ -292,7 +317,7 @@ def test_the_report_replays_the_search_without_running_it(core, me):
     """`optimize.get` resolves each point by content address, exactly as a study report
     resolves a rung — so the trajectory is recovered rather than recorded."""
     optimization = optimization_of(core, me, design_of(core, me))
-    ran = asyncio.run(core.run_optimization(optimization, me))
+    ran = _searched(core, me, optimization)
 
     read = core.optimization_report(optimization, me)
     assert read.evaluations_spent == ran.evaluations_spent
@@ -310,25 +335,40 @@ def test_a_search_nobody_has_run_reports_nothing_rather_than_failing(core, me):
     assert report.bracket is None and report.history is None
 
 
-def test_a_replay_says_the_trajectory_stops_rather_than_guessing_why(core, me):
+def test_a_replay_says_the_trajectory_stops_rather_than_guessing_why(core, me, tmp_path):
     """The one place the absence of a run record costs something, reported rather than
-    guessed at.
+    guessed at — and the process-local memory that keeps it reportable at all.
 
     A submission the server refused leaves **no job**, so a replay cannot tell "stalled
-    there" from "nobody ran it that far" — and the first version called both `budget`, so a
+    there" from "nobody ran it that far", and the first version called both `budget`: a
     search that stalled on a quota came back from `optimize.get` as one that had spent its
-    evaluations. `optimize.run` still says `stalled`, because it was there. Raised in review
-    of #22.
+    evaluations. Raised in review of #22, fixed with `incomplete`.
+
+    **Decision 4 nearly deleted the answer.** While `optimize.run` returned the finished
+    report it could say `stalled` itself; once it returned a receipt, nobody read that report
+    and the reason had nowhere to go. So the core remembers it — beside `running`, on the
+    same terms — and this test pins both halves: the process that ran the search says
+    `stalled`, and **a process that did not still says `incomplete`**, which is the claim
+    that has to keep being true or the memory is pretending to be a run record.
     """
     quota = Principal(id="tester", quotas=Quotas(jobs_per_hour=2))
     optimization = optimization_of(core, quota, design_of(core, quota))
-    ran = asyncio.run(core.run_optimization(optimization, quota))
-    assert ran.stopped == "stalled"
+    replayed = _searched(core, quota, optimization)
 
-    replayed = core.optimization_report(optimization, quota)
-    assert replayed.stopped == "incomplete", "a replay cannot know why, and must not say"
-    assert replayed.evaluations_spent == 2, "the two solves that did happen are still there"
+    assert replayed.stopped == "stalled", "this process was there and remembers why"
+    assert replayed.evaluations_spent == 3, "two solves, then the refusal that stopped it"
+    assert replayed.evaluations[-1].status == "refused"
+    assert "hour" in (replayed.evaluations[-1].error or ""), (
+        "the refusal's own message is the actionable half and must survive the run"
+    )
     assert replayed.best is not None and replayed.bracket is not None
+
+    elsewhere = FenixSpoonCore(JobManager(data_dir=core.jobs.data_dir))
+    blind = elsewhere.optimization_report(optimization, quota)
+    assert blind.stopped == "incomplete", (
+        "a replay with no memory of the run cannot know why, and must not say"
+    )
+    assert blind.evaluations_spent == 2, "only the two solves that left a job behind"
 
 
 def test_an_evaluation_records_the_optimization_it_came_from(core, me):
@@ -336,7 +376,7 @@ def test_an_evaluation_records_the_optimization_it_came_from(core, me):
     this sequence's `variation_index` so a reader of provenance learns one vocabulary."""
     design = design_of(core, me)
     optimization = optimization_of(core, me, design)
-    report = asyncio.run(core.run_optimization(optimization, me))
+    report = _searched(core, me, optimization)
 
     provenance = core.provenance(report.evaluations[1].job_id, me)
     assert provenance.inputs["optimization"].startswith(f"{optimization}@")
@@ -348,11 +388,7 @@ def test_an_evaluation_records_the_optimization_it_came_from(core, me):
 def test_the_budget_stops_the_search_and_the_bracket_says_how_far_it_got(core, me):
     """A search that runs out of evaluations has not failed and has not converged. Reporting
     only its best point would present a wide bracket as a located answer."""
-    report = asyncio.run(
-        core.run_optimization(
-            optimization_of(core, me, design_of(core, me), max_evaluations=3), me
-        )
-    )
+    report = _searched(core, me, optimization_of(core, me, design_of(core, me), max_evaluations=3))
 
     assert report.stopped == "budget" and report.evaluations_spent == 3
     lower, upper = report.bracket
@@ -369,10 +405,8 @@ def test_an_evaluation_with_no_answer_stops_the_search(core, me):
     reporting a "best" out of the points before it would present a truncated search as a
     finished one.
     """
-    report = asyncio.run(
-        core.run_optimization(
-            optimization_of(core, me, design_of(core, me), bounds=[20.0, 40.0]), me
-        )
+    report = _searched(
+        core, me, optimization_of(core, me, design_of(core, me), bounds=[20.0, 40.0])
     )
 
     assert report.stopped == "stalled"
@@ -385,9 +419,7 @@ def test_an_evaluation_is_an_ordinary_submission(core, me):
     that keeps a study from being a way around them, applied to the thing that spends more."""
     quota = Principal(id="tester", quotas=Quotas(jobs_per_hour=2))
     design = design_of(core, quota)
-    report = asyncio.run(
-        core.run_optimization(optimization_of(core, quota, design), quota)
-    )
+    report = _searched(core, quota, optimization_of(core, quota, design))
 
     assert report.stopped == "stalled", "the quota should stop the search like any refusal"
     assert report.evaluations_spent == 3, "two solves, then the refusal that stopped it"
@@ -458,8 +490,37 @@ def test_the_optimization_operations_are_reachable_over_json_rpc(core, me):
     assert {"optimize.run", "optimize.get"} <= set(method_names())
 
     optimization = optimization_of(core, me, design_of(core, me))
-    report = asyncio.run(core.run_optimization(optimization, me))
+    report = _searched(core, me, optimization)
     wire = jsonable(report)
     assert wire["stopped"] == "converged"
     assert wire["best"]["metric"] == report.best.metric
     assert wire["history"]["traces"][0]["x"]["name"] == "evaluation"
+
+
+def test_run_answers_with_a_receipt_and_a_second_call_joins_the_first(core, me):
+    """ADR 0002 decision 4 on the wire: `optimize.run` returns *that the search started*.
+
+    The shape it replaced was the finished trajectory, which is minutes of solving held in
+    one response — fine on a pipe a child process owns, impossible through the proxies and
+    browser timeouts between a page and a server. And a second call while one is in flight
+    joins it rather than starting a rival: two searches over one revision would agree, since
+    they replay the same sequence and every point is a cache hit, but they would be two loops
+    doing one loop's work.
+    """
+    optimization = optimization_of(core, me, design_of(core, me))
+
+    async def go():
+        first = await core.run_optimization(optimization, me)
+        second = await core.run_optimization(optimization, me)
+        assert core.optimization_report(optimization, me).running is True
+        while core.optimization_report(optimization, me).running:
+            await asyncio.sleep(0.02)
+        return first, second
+
+    first, second = asyncio.run(go())
+
+    assert first.started is True and second.started is False
+    assert first.optimization == second.optimization
+    assert first.optimization.startswith(f"{optimization}@"), "the receipt pins the revision"
+    # And once it is over, nothing claims to be running any more.
+    assert core.optimization_report(optimization, me).running is False

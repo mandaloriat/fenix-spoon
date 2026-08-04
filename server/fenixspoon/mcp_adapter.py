@@ -245,9 +245,10 @@ TOOLS: dict[str, tuple[str, str, dict[str, Any]]] = {
     "run_optimization": (
         "optimize.run",
         "Search for the parameter value that minimises, maximises or hits a target on a "
-        "declared metric. **This call runs the solves and returns when the search is done**, "
-        "unlike `run_study`, which returns as soon as the work is accepted — a search cannot "
-        "name its second point until the first is answered.",
+        "declared metric. Returns as soon as the search is accepted, exactly as `run_study` "
+        "does; the search keeps running on the server. Poll `get_optimization` for the "
+        "trajectory — it grows a row per evaluation and says `running` while one is in "
+        "flight.",
         _schema({"ref": _REF}, ["ref"]),
     ),
     "get_optimization": (

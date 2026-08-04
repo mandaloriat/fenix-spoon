@@ -1,7 +1,7 @@
 # Changelog
 
 Notable changes to Fenix Spoon. The **wire protocol** has a version of its own
-(`MAJOR.MINOR`, currently 1.11) and its history is in
+(`MAJOR.MINOR`, currently 1.12) and its history is in
 [docs/04-wire-protocol.md](docs/04-wire-protocol.md); this file records what changed for the
 people who build on the toolkit, protocol bump or not.
 
@@ -15,6 +15,45 @@ project is pre-1.0, so the packages are versioned together and nothing here is a
 promise yet.
 
 ## Unreleased
+
+### Changed — protocol 1.12: optimizations over HTTP, and `optimize.run` stops blocking (#22)
+
+[ADR 0002](docs/adr/0002-workspace-over-http.md) decision 4, the last of its four pieces, and
+the one carrying a genuinely new mechanism. **Additive on the wire and not additive in
+behaviour**, which is why this entry is *Changed*: one shipped operation answers differently.
+
+- **`POST /api/v1/optimizations/{id}/run` → `202` and `GET /api/v1/optimizations/{id}`**, with
+  `?revision=` on both, the same object-that-runs shape as a study. The receipt names no jobs,
+  and the absence is structural rather than an omission: a search chooses each point from the
+  last answer, so a receipt promising job ids would be promising something unknowable.
+- **`optimize.run` returns a receipt on every transport instead of the finished trajectory.**
+  It blocked for the whole search — minutes of solving — which is fine on a pipe a child
+  process owns and impossible over HTTP. The first draft of ADR 0002 concluded the two
+  transports would have to diverge; they do not, because `job.submit` had already settled the
+  question: **waiting is a convenience of the caller-facing layer, not part of the operation.**
+  So `fenix-spoon optimize run` and `local.wait_for_optimization` wait, with `--detach` to skip
+  it, exactly as `job submit` and `study run` have always done, and no transport is special.
+- **The search continues as a task owned by the server process** — the first thing here that is
+  neither a job nor a request. It is a *driver, not state*: the state is the jobs, so killing
+  the server mid-search costs a loop and nothing else, and a re-run recovers the whole
+  trajectory from the cache. A second `run` while one is in flight joins it (`started: false`)
+  rather than starting a rival.
+- **`running` on the report**, and it says what it means: whether a search is in flight *in the
+  process answering this call*. Behind two API replicas a search driven by the other one reads
+  as `false`. That is a statement this process can substantiate, where `true` would not be.
+- **One thing decision 4 did not foresee, and the fix is recorded rather than smoothed.**
+  Moving the report out of `run`'s reply made `stopped: "stalled"` — and the refusal message
+  beside it — unreachable everywhere, because a replay cannot recover them: a submission the
+  server *refused* leaves no job behind. So the core keeps a small process-local memory of the
+  last search's tail, beside `running` and on the same terms, applied only when a replay stops
+  at exactly the point the search did. A process that did not run the search still says
+  `incomplete`, and a test builds a second core over the same data directory to prove it.
+- *Three documents said this could not be done, and all three are corrected in place.* The
+  roadmap's #22 entry argued `optimize.run` could take no `--detach` because a search has no
+  moment at which the work is accepted and not yet done; the JSON-RPC guide called it "the only
+  method whose duration is the work"; `local.run_optimization`'s docstring said a search *is*
+  the waiting, so there was nothing to hand back. The roadmap's sentence is struck through
+  rather than deleted.
 
 ### Added — protocol 1.11: studies over HTTP, and a sweep in the browser (#21)
 
@@ -71,7 +110,7 @@ speak shapes four other transports have carried since #48.
   record than a sentence that only ever described the present.
 
 *Not in this release, and named in the roadmap:* the optimization run routes and the
-background task that makes a search pollable over HTTP (ADR 0002 decision 4).
+background task that makes a search pollable over HTTP (ADR 0002 decision 4 — landed in 1.12).
 
 ### Added — protocol 1.10: the workspace over HTTP (ADR 0002)
 

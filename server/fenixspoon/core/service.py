@@ -21,6 +21,7 @@ validation and authorization that used to sit in the routes.
 
 import asyncio
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -53,6 +54,23 @@ from .identity import (
 )
 from .results import LeveledResult
 from .workspace import ObjectSummary, ObjectView, ResolvedDesign, Workspace, WorkspaceInfo
+
+log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _SearchStop:
+    """The tail of a search that its replay cannot rebuild from the jobs.
+
+    Both fields exist because a *refused* submission leaves nothing behind: no job, so no
+    row, and no record of what the server said. `answered` is what makes the memory safe to
+    use — it is applied only to a replay that stopped in the same place, so a reason from a
+    shorter search is never reported about a longer one.
+    """
+
+    answered: int
+    reason: str
+    refused: "optimize.Evaluation | None"
 
 
 @dataclass(frozen=True)
@@ -122,6 +140,22 @@ class FenixSpoonCore:
         #: making every caller pass it would be ceremony — but it stays a parameter so a
         #: test can point a workspace somewhere else.
         self.workspace = workspace or Workspace(ObjectFileStore(jobs.data_dir))
+        #: Searches in flight in *this process*, keyed by (pinned optimization, principal)
+        #: — ADR 0002 decision 4, and the first thing here that is neither a job nor a
+        #: request. Deliberately not persisted: it is a driver, not state. The state is the
+        #: jobs, so a restart mid-search loses a loop and nothing else, and re-running
+        #: recovers the whole trajectory from the cache.
+        self._searches: dict[tuple[str, str], asyncio.Task[Any]] = {}
+        #: What the last search in this process knew that a replay cannot recover, keyed like
+        #: `_searches`. A submission the server *refused* leaves no job behind, so
+        #: `optimize.get` can see how far the trajectory got and neither why it ended nor
+        #: what it was told. That was tolerable while `optimize.run` returned the finished
+        #: report and could say so itself; once it returned a receipt instead (ADR 0002
+        #: decision 4) nobody read that report, and both facts would have become unreachable
+        #: through every transport. So they are remembered here, next to `running`, on the
+        #: same terms: process-local, lost on restart, and used only when the replay stops at
+        #: exactly the point the search did.
+        self._stops: dict[tuple[str, str], _SearchStop] = {}
 
     # -------------------------------------------------------------- capabilities
 
@@ -673,19 +707,68 @@ class FenixSpoonCore:
 
     async def run_optimization(
         self, ref: str, principal: Principal
-    ) -> optimize.OptimizationReport:
-        """Drive the search to its tolerance or its budget — `optimize.run` (roadmap M5, #22).
+    ) -> optimize.OptimizationRun:
+        """Start the search and hand back a receipt — `optimize.run` (roadmap M5, #22).
 
-        **This one waits, where `study.run` does not, and the asymmetry is the whole
-        difference between the two.** A study can hand back every job id immediately because
-        it knows them all before it starts. A search cannot hand back the second until the
-        first is answered — that is what "chooses the next point" means — so the call *is*
-        the loop, and it returns the report rather than a receipt.
+        **It used to return the finished report, and ADR 0002 decision 4 changed that.** A
+        search is minutes of solving; HTTP cannot hold a request open that long, and the first
+        draft of that record concluded the transports would have to diverge. They do not: the
+        codebase had already answered this for jobs, where `job.submit` returns a receipt on
+        every transport and the CLI waits on top of it. Waiting is a convenience of the
+        caller-facing layer, so this joins that pattern and the rule that every transport
+        answers identically survives intact.
+
+        What that costs is **the one genuinely new piece of machinery in this design**: the
+        loop keeps running after this returns, as a task owned by the process. It is a driver,
+        not state — the state is the jobs. Kill the server mid-search and nothing is lost that
+        a re-run does not recover for free, because every point already answered is a cache
+        hit and `optimize.get` replays the trajectory from the jobs either way.
+
+        The plan is resolved *here*, synchronously, rather than inside the task: an unknown
+        reference, somebody else's, a body whose parameter the capability does not declare —
+        all of those are answers this call owes its caller, not surprises to discover in a
+        background task nobody is reading.
+        """
+        record, body, _geometry, _resolved, _solver_cls = self._optimization_plan(ref, principal)
+        key = (record.pinned, principal.id)
+        if key in self._searches:
+            # Joining rather than starting a second. Two searches over one revision would
+            # agree — they replay the same sequence and every point is a cache hit — so this
+            # is not a correctness guard; it is two loops declining to do one loop's work.
+            return optimize.OptimizationRun(optimization=record.pinned, started=False)
+
+        task = asyncio.get_running_loop().create_task(self._search(record.pinned, principal))
+        self._searches[key] = task
+        task.add_done_callback(lambda finished, key=key: self._search_finished(key, finished))
+        return optimize.OptimizationRun(optimization=record.pinned, started=True)
+
+    def _search_finished(self, key: tuple[str, str], task: "asyncio.Task[Any]") -> None:
+        """Clear the in-flight entry, and do not let a failure disappear.
+
+        A task whose exception nobody retrieves is reported by asyncio at garbage-collection
+        time, from a stack that no longer says which optimization it was. Reading it here
+        gives the log the reference — and there is genuinely nowhere else for the error to
+        go, because the caller left with a receipt several minutes ago. `optimize.get` still
+        answers: it replays the jobs and reports how far the search got.
+        """
+        self._searches.pop(key, None)
+        if not task.cancelled() and task.exception() is not None:
+            log.exception("search for %s failed", key[0], exc_info=task.exception())
+
+    async def _search(
+        self, ref: str, principal: Principal
+    ) -> optimize.OptimizationReport:
+        """The loop itself: drive the search to its tolerance or its budget.
+
+        Was the body of `run_optimization` until ADR 0002 decision 4 separated starting from
+        waiting. Nothing about *the search* changed with it, which is the point — the report
+        it builds is the report `optimize.get` rebuilds by replay, and if those two ever
+        disagreed the replay would be the one telling the truth.
 
         Each evaluation is an ordinary submission: the cell budget, the quota and the result
-        cache all apply per job exactly as they do for a rung. Which is why running the same
-        optimization twice costs nothing — the second pass replays the identical sequence and
-        every point is a cache hit.
+        cache all apply per job exactly as they do for a study's rung. Which is why running
+        the same optimization twice costs nothing — the second pass replays the identical
+        sequence and every point is a cache hit.
 
         An evaluation with no answer **stops the search** rather than leaving a gap. A study
         tabulates what it has and reports rung 4 as refused; here the next point is a function
@@ -696,6 +779,7 @@ class FenixSpoonCore:
 
         evaluations: list[optimize.Evaluation] = []
         answered: list[float] = []
+        refused: optimize.Evaluation | None = None
         stopped = "converged"
         while True:
             point = optimize.next_point(body.bounds, answered, body.tolerance)
@@ -717,14 +801,13 @@ class FenixSpoonCore:
                     conditions=resolved.conditions,
                 )
             except errors.CoreError as refusal:
-                evaluations.append(
-                    optimize.Evaluation(
-                        iteration=len(evaluations),
-                        value=point,
-                        status="refused",
-                        error=str(refusal),
-                    )
+                refused = optimize.Evaluation(
+                    iteration=len(evaluations),
+                    value=point,
+                    status="refused",
+                    error=str(refusal),
                 )
+                evaluations.append(refused)
                 stopped = "stalled"
                 break
             job = await self._settled(job, principal)
@@ -734,8 +817,15 @@ class FenixSpoonCore:
                 stopped = "stalled"
                 break
             answered.append(evaluation.objective)
+        # Keyed by how far it got, so a remembered tail can only ever be applied to a replay
+        # that stopped in the same place. Two runs of one revision walk the identical
+        # sequence, so that is the same place — and a run that got *further* than the
+        # remembered one leaves the entry unmatched rather than reporting a stale reason.
+        self._stops[(record.pinned, principal.id)] = _SearchStop(
+            answered=len(answered), reason=stopped, refused=refused
+        )
         return self._optimization_report(
-            record, body, resolved, evaluations, answered, stopped, solver_cls
+            record, body, resolved, evaluations, answered, stopped, solver_cls, principal
         )
 
     async def _settled(self, job: Job, principal: Principal) -> Job:
@@ -801,7 +891,20 @@ class FenixSpoonCore:
                 # `optimize.run` never returns `incomplete` — it was there, and says
                 # `stalled`. That asymmetry is the honest one: the run knows why it stopped
                 # and a replay knows only how far it got.
-                stopped = "not_run" if not evaluations else "incomplete"
+                #
+                # Since the run returns a receipt (ADR 0002 decision 4) *nobody reads its
+                # report*, so that reason — and the refusal's own message, which is the
+                # actionable half — would have become unreachable. `_stops` remembers both
+                # for as long as this process lives, and they are used only when the replay
+                # stopped at exactly the same point: a remembered tail from a shorter search
+                # is not evidence about a longer one.
+                remembered = self._stops.get((record.pinned, principal.id))
+                if remembered is not None and remembered.answered == len(answered):
+                    stopped = remembered.reason
+                    if remembered.refused is not None:
+                        evaluations.append(remembered.refused)
+                else:
+                    stopped = "not_run" if not evaluations else "incomplete"
                 break
             evaluation = self._evaluation(len(evaluations), point, job, body.objective)
             evaluations.append(evaluation)
@@ -810,7 +913,7 @@ class FenixSpoonCore:
                 break
             answered.append(evaluation.objective)
         return self._optimization_report(
-            record, body, resolved, evaluations, answered, stopped, solver_cls
+            record, body, resolved, evaluations, answered, stopped, solver_cls, principal
         )
 
     @staticmethod
@@ -843,7 +946,7 @@ class FenixSpoonCore:
         )
 
     def _optimization_report(
-        self, record, body, resolved, evaluations, answered, stopped, solver_cls
+        self, record, body, resolved, evaluations, answered, stopped, solver_cls, principal
     ):
         """Assemble the report, including where the search has narrowed the parameter to."""
         unit = next(
@@ -864,6 +967,7 @@ class FenixSpoonCore:
             evaluations_spent=len(evaluations),
             stopped="not_run" if not evaluations else stopped,
             history=optimize.history_curve(body.objective, evaluations, unit),
+            running=(record.pinned, principal.id) in self._searches,
         )
 
     # ---------------------------------------------------------------- workspace (#44)

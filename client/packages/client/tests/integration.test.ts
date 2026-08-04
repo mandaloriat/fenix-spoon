@@ -284,12 +284,55 @@ describeLive('against a live server', () => {
     });
   });
 
+  it('runs an optimization in the background and polls it to a stop', async () => {
+    // ADR 0002 decision 4 from the browser's side. `runStudy` hands back job ids; this hands
+    // back only that the search started, because a search chooses each point from the last
+    // answer and cannot say in advance what it will ask for.
+    const geometry = await client.createObject('geometry', AIRFOIL);
+    const design = await client.createObject('design', {
+      solver: 'mock.laplace2d',
+      geometry: geometry.ref,
+      params: FAST,
+    });
+    const optimization = await client.createObject('optimization', {
+      design: design.ref,
+      parameter: 'alpha',
+      bounds: [-10, 10],
+      objective: { metric: 'c_l', sense: 'target', target: 0 },
+      max_evaluations: 10,
+      tolerance: 0.05,
+    });
+
+    const before = await client.optimizationReport(optimization.ref);
+    expect(before.stopped).toBe('not_run');
+    expect(before.running).toBe(false);
+
+    const started = await client.runOptimization(optimization.ref);
+    expect(started).toMatchObject({ started: true });
+    expect(started.optimization).toMatch(/@1$/);
+
+    let report = await client.optimizationReport(optimization.ref);
+    const deadline = Date.now() + 60_000;
+    while (report.running && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      report = await client.optimizationReport(optimization.ref);
+    }
+
+    expect(report.stopped).toBe('converged');
+    expect(report.best?.metric).toBeCloseTo(0, 1);
+    // The history is a `Series1DData` like a sweep's response curve, so `<fs-plot>` draws a
+    // search's convergence with nothing in between either.
+    expect(report.history?.traces[0]?.x?.name).toBe('evaluation');
+  });
+
   it('refuses a study reference that names something else, without a round trip', async () => {
     // Well-formed, and not a study. Without the type check these reach
     // `/api/v1/studies/g-1/run` and come back a 422 from the server's own reference parser —
     // the right answer, arriving later and from further away than necessary.
     await expect(client.runStudy('geometry:g-1')).rejects.toMatchObject({ status: 0 });
     await expect(client.studyReport('design:d-1')).rejects.toMatchObject({ status: 0 });
+    await expect(client.runOptimization('study:s-1')).rejects.toMatchObject({ status: 0 });
+    await expect(client.optimizationReport('geometry:g-1')).rejects.toMatchObject({ status: 0 });
   });
 
   it('carries a pinned revision through to the study routes instead of dropping it', async () => {

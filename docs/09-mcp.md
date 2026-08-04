@@ -57,7 +57,7 @@ turn*, which makes this the one surface where exposing everything is actively wr
 | `get_artifact` | resolve an artifact to a path |
 | `run_study` | submit every variation of a study — a ladder or a sweep |
 | `get_study` | the (variation → metric) table, and a sweep's response curves |
-| `run_optimization` | search for the parameter value that hits an objective — runs the solves |
+| `run_optimization` | start a search for the parameter value that hits an objective; returns a receipt |
 | `get_optimization` | the trajectory, the best point, and the bracket it narrowed to |
 
 Absent on purpose, each for a reason: `job.list`, `job.for_object`, `object.revisions` and
