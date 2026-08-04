@@ -27,6 +27,11 @@ class Quotas:
     concurrent_jobs: int = 0
     jobs_per_hour: int = 0
     artifact_bytes: int = 0
+    #: How many workspace objects one principal may own. Added by ADR 0002, and the reason
+    #: it did not exist before is the reason it is needed now: creating an object was free
+    #: and local, so nothing counted them. Over HTTP an authenticated caller can create them
+    #: without bound, and the design pass named this rather than leaving it to be found.
+    objects: int = 0
 
     @classmethod
     def from_env(cls) -> "Quotas":
@@ -34,6 +39,7 @@ class Quotas:
             concurrent_jobs=int(os.environ.get("FENIXSPOON_MAX_CONCURRENT_JOBS", "0")),
             jobs_per_hour=int(os.environ.get("FENIXSPOON_MAX_JOBS_PER_HOUR", "0")),
             artifact_bytes=int(os.environ.get("FENIXSPOON_MAX_ARTIFACT_BYTES", "0")),
+            objects=int(os.environ.get("FENIXSPOON_MAX_OBJECTS", "0")),
         )
 
 
@@ -114,3 +120,25 @@ def hour_ago() -> datetime:
     return datetime.now(UTC) - timedelta(hours=1)
 
 
+
+
+def check_object_quota(principal: Principal, owned: int) -> None:
+    """Raise if one more object is too many — the counterpart of :func:`check_quotas`.
+
+    Its own function rather than a fourth branch in that one, because the two are asked at
+    different moments about different things: `check_quotas` is asked whether a *solve* may
+    start and reads three numbers a job store computes, and this is asked whether an *object*
+    may be written and reads one number the object store counts.
+
+    **No `retry_after`.** The job quotas carry one where waiting genuinely relieves them —
+    an hourly window rolls, a running job finishes. Nothing about waiting deletes an object,
+    so a hint here would be a lie of exactly the kind the artifact-bytes quota already
+    refuses to tell.
+    """
+    limit = principal.quotas.objects
+    if limit and owned >= limit:
+        raise QuotaExceeded(
+            f"you own {owned} workspace objects, at this server's limit of {limit}. "
+            "Objects are kept until deleted and there is no deletion, so this does not "
+            "relieve itself — ask for a higher limit or use a separate workspace."
+        )

@@ -48,11 +48,15 @@ and the FEniCSx solver.
 > 50 concurrent clients. What remains for M3 is deployment packaging — see the
 > [roadmap](docs/03-roadmap.md).
 >
-> **The wire protocol is at 1.9.** The last four minors came from adding physics rather than
-> from planning: a transient needed a metric to say what it is taken over (1.6) and a way to
-> index its instants (1.7), and elasticity needed a geometry that can *name* pieces of its own
-> boundary (1.8) and a load case to say what happens there (1.9). Every one is additive — a
-> 1.0 client still works.
+> **The wire protocol is at 1.10.** Four of the last five minors came from adding physics
+> rather than from planning: a transient needed a metric to say what it is taken over (1.6)
+> and a way to index its instants (1.7), and elasticity needed a geometry that can *name*
+> pieces of its own boundary (1.8) and a load case to say what happens there (1.9). 1.10 is
+> the exception and was designed first, in [ADR 0002](docs/adr/0002-workspace-over-http.md):
+> the workspace on HTTP, so a browser can keep its designs under stable ids and solve by
+> reference instead of resending a geometry it already sent. Every one is additive — a 1.0
+> client still works. *Read the version by splitting on the dot and comparing the halves as
+> integers: 1.10 is below 1.9 both as a float and as a string.*
 
 ## Why
 
@@ -71,7 +75,7 @@ see the [state-of-the-art survey](docs/01-state-of-the-art.md). Fenix Spoon is t
 | **FEniCSx adapters** — the same five problems on unstructured Gmsh meshes, cross-validated against the mock solvers and against closed forms — Joukowski circulation, Kirsch stress concentration, `PL³/3EI` | [`dolfinx_poisson.py`](server/fenixspoon/solvers/dolfinx_poisson.py), [`dolfinx_magnetostatics.py`](server/fenixspoon/solvers/dolfinx_magnetostatics.py), [`dolfinx_heat.py`](server/fenixspoon/solvers/dolfinx_heat.py), [`dolfinx_elasticity.py`](server/fenixspoon/solvers/dolfinx_elasticity.py), [`dolfinx_transient_heat.py`](server/fenixspoon/solvers/dolfinx_transient_heat.py) | ✅ validated on dolfinx 0.11 (`pytest -m fenics`, CI job in the dolfinx image) |
 | **Wire protocol** — JSON schemas for geometry (`domain2d`, `regions2d`), jobs, events, `grid2d`/`mesh2d`/`series1d` results, artifacts — with a conformance fixture corpus | [`docs/04-wire-protocol.md`](docs/04-wire-protocol.md), [`protocol/fixtures/`](protocol/fixtures/) | ✅ v0 implemented |
 | **Progressive discovery** — ask what an installation *is*, list capabilities in a line each, describe one in the sections you need; solver adapters declare their metrics, artifacts and cost | [`core/discovery.py`](server/fenixspoon/core/discovery.py) | ✅ protocol 1.2 |
-| **Local workspace** — versioned `geometry` / `material` / `design` objects as diffable JSON files under stable ids, edited with RFC 6902 patches, solved by reference | [`objects.py`](server/fenixspoon/objects.py), [`core/workspace.py`](server/fenixspoon/core/workspace.py) | ✅ core API (no HTTP yet) |
+| **Workspace** — versioned `geometry` / `material` / `design` / `study` / `optimization` objects as diffable JSON files under stable ids, edited with RFC 6902 patches, solved by reference. Reachable from every transport, HTTP included since 1.10 | [`objects.py`](server/fenixspoon/objects.py), [`core/workspace.py`](server/fenixspoon/core/workspace.py), [ADR 0002](docs/adr/0002-workspace-over-http.md) | ✅ protocol 1.10 |
 | **Compact results** — five response levels, declared engineering metrics, diagnostics, and nine bounded field queries (peak + location, integral, section, hotspots) that never move the array | [`core/results.py`](server/fenixspoon/core/results.py), [`fields.py`](server/fenixspoon/fields.py) | ✅ protocol 1.3 |
 | **Result cache + provenance** — an identical resubmission is answered from the solve that already ran, opt-in per adapter, with `cached` and the pinned input revisions on every result | [`cache.py`](server/fenixspoon/cache.py) | ✅ protocol 1.4 |
 | **Studies** — a sequence of solves that answers one question. A mesh ladder refines until the metrics settle and reports the rung it settled at; a **sweep** runs a grid (or a list of DOE points) and returns the response curve per metric, drawn against its first axis — one submission, N jobs, every one of them a cache hit the second time | [`core/studies.py`](server/fenixspoon/core/studies.py) | ✅ mesh convergence, sweeps |

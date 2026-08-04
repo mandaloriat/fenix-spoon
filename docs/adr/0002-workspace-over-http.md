@@ -1,6 +1,6 @@
 # 0002 — The workspace over HTTP
 
-**Status:** proposed — *this record is the design pass, and no code implements it yet*
+**Status:** accepted — *decisions 1, 2, 5 and 6 are implemented as protocol 1.10; 3 and 4 are not yet*
 **Affects:** the wire protocol (`/api/v1`), `@fenix-spoon/client`, the conformance corpus,
 [#21](https://github.com/mandaloriat/fenix-spoon/issues/21) and
 [#22](https://github.com/mandaloriat/fenix-spoon/issues/22), both waiting on it
@@ -64,8 +64,14 @@ GET    /api/v1/objects                        list, `?type=` to filter
 
 `{type}` and `{id}` are the two halves of the reference and nothing else. `parse_ref` already
 splits them, so a route builds the canonical reference back from its own path parameters —
-which means a caller cannot construct a URL whose type and prefix disagree (`design/g-12`
-resolves to `design:g-12`, which does not exist, and 404s honestly).
+which means a caller cannot construct a URL whose type and prefix disagree.
+
+*Implementation note, added after the fact and correcting this record rather than the code:*
+`design/g-12` does not 404 as written above. It is a **422**, because `parse_ref` refuses the
+reference as malformed — a design id starts with `d`, the two halves encode the same fact, and
+a mismatch means the caller assembled the string wrongly. Its docstring has said so since #44:
+"much better caught here than by a lookup that quietly finds nothing." The stricter answer is
+the better one, and the record was wrong to promise the weaker.
 
 **The revision is a query parameter, not a path segment.** `/api/v1/objects/geometry/g-12/3`
 would

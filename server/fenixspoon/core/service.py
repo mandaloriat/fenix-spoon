@@ -44,7 +44,13 @@ from .discovery import (
     UsageInfo,
 )
 from .errors import CoreError  # noqa: F401  (re-export: adapters catch this one class)
-from .identity import Principal, QuotaUsage, check_quotas, hour_ago
+from .identity import (
+    Principal,
+    QuotaUsage,
+    check_object_quota,
+    check_quotas,
+    hour_ago,
+)
 from .results import LeveledResult
 from .workspace import ObjectSummary, ObjectView, ResolvedDesign, Workspace, WorkspaceInfo
 
@@ -882,6 +888,16 @@ class FenixSpoonCore:
         principal: Principal,
         label: str | None = None,
     ) -> ObjectView:
+        """Write revision 1 of a new object, if this principal may own another.
+
+        The quota check is here rather than in the workspace for the reason the job quotas
+        are in this layer: a workspace knows about files and revisions, and *how many a
+        caller may have* is an application rule that a local script with no principal should
+        not have to think about. It costs a listing, which the object store documents as the
+        right cost — hundreds of objects, a directory walk, and no index that can disagree
+        with the files.
+        """
+        check_object_quota(principal, len(self.workspace.list_objects(principal.id)))
         return self.workspace.create(object_type, body, principal.id, label)
 
     def object(self, ref: str, principal: Principal) -> ObjectView:

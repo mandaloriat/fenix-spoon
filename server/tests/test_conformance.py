@@ -181,6 +181,63 @@ def test_the_capability_list_is_the_same_over_http_and_json_rpc(core, me, http):
     assert http.get("/api/v1/capabilities").json() == rpc(core, me, "capability.list", {})
 
 
+def test_an_object_is_the_same_document_over_http_and_json_rpc(tmp_path, monkeypatch):
+    """The workspace's fifth binding (protocol 1.10, ADR 0002), held to the same rule as the
+    other four: one request, one answer.
+
+    One data directory for both, and the same reason the compact-result test gives — this has
+    to read the *same object* twice, not two objects that ought to look alike. The two routes
+    reach the core differently, a path pair rebuilt into a reference on one side and a
+    reference passed whole on the other, which is exactly the kind of difference invisible
+    from either side alone.
+    """
+    monkeypatch.setenv("FENIXSPOON_DATA_DIR", str(tmp_path / "shared"))
+    with TestClient(create_app()) as client:
+        core, me = client.app.state.core, Principal(id="anonymous", quotas=Quotas())
+        ref = client.post("/api/v1/objects/geometry", json={"body": AIRFOIL}).json()["ref"]
+        object_id = ref.split(":")[1]
+
+        assert client.get(f"/api/v1/objects/geometry/{object_id}").json() == rpc(
+            core, me, "object.get", {"ref": ref}
+        )
+        assert client.get("/api/v1/objects").json() == rpc(core, me, "workspace.list", {})
+
+        patched = client.patch(
+            f"/api/v1/objects/geometry/{object_id}",
+            json={"patch": [{"op": "replace", "path": "/bounds/0", "value": -2.0}]},
+        ).json()
+        assert patched["revision"] == 2
+        assert client.get(
+            f"/api/v1/objects/geometry/{object_id}", params={"revision": 1}
+        ).json() == rpc(core, me, "object.get", {"ref": f"{ref}@1"})
+        assert client.get(f"/api/v1/objects/geometry/{object_id}/revisions").json() == rpc(
+            core, me, "object.revisions", {"ref": ref}
+        )
+
+
+def test_a_design_reference_submits_the_same_job_over_http_and_json_rpc(tmp_path, monkeypatch):
+    """1.10's payoff on both bindings. The two submissions are the *same solve*, so the second
+    is a cache hit on the first — which is itself the assertion: a design reference that
+    resolved differently on the two transports would produce two different jobs."""
+    monkeypatch.setenv("FENIXSPOON_DATA_DIR", str(tmp_path / "shared"))
+    with TestClient(create_app()) as client:
+        core, me = client.app.state.core, Principal(id="anonymous", quotas=Quotas())
+        geometry = client.post("/api/v1/objects/geometry", json={"body": AIRFOIL}).json()["ref"]
+        design = client.post(
+            "/api/v1/objects/design",
+            json={"body": {"solver": "mock.laplace2d", "geometry": geometry, "params": FAST}},
+        ).json()["ref"]
+
+        over_http = client.post("/api/v1/jobs", json={"design": design}).json()
+        wait_for(client, over_http["job_id"])
+        over_rpc = rpc(core, me, "job.submit", {"design": design})
+
+    assert over_rpc["job_id"] == over_http["job_id"], (
+        "the same design resolved to two different solves on two transports"
+    )
+    assert over_rpc["cached"] is True
+
+
 def test_a_compact_result_is_the_same_over_http_and_json_rpc(tmp_path, monkeypatch):
     """The payload the milestone is about, through both bindings of it.
 

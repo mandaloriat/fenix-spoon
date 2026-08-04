@@ -130,12 +130,13 @@ A `load_case` workspace object: what happens on each named boundary.
 
 ## `JobRequest`
 
-What `POST /api/v1/jobs` accepts.
+What `POST /api/v1/jobs` accepts: a design reference, or an inline solve.
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `solver` | `str` | yes |  | A `name` from `GET /solvers`. |
-| `geometry` | `Domain2D \| Regions2D` | yes |  | Geometry to solve on; its `type` must be one the solver accepts. |
+| `design` | `str \| null` | no | `None` | A `design` reference, `design:d-18`, optionally pinned. The design names its geometry, params and load cases, so the other fields are not used with it — and are refused rather than ignored. |
+| `solver` | `str \| null` | no | `None` | A `name` from `GET /solvers`, for the inline form. |
+| `geometry` | `Annotated \| null` | no | `None` | Geometry to solve on; its `type` must be one the solver accepts. |
 | `params` | `dict[str, Any]` | no | `{}` | Solver parameters, validated against that solver's schema. |
 | `conditions` | `dict[str, dict[str, float]]` | no | `{}` | An inline load case (protocol 1.9, #85): boundary name to the condition keys in force there. Every name must be one this geometry's `boundaries` declares, and every key one the capability declares in its `conditions` section — both are refused rather than ignored. Omit it to let the solver's own parameters govern, which is what every capability shipped before #85 does. |
 

@@ -324,7 +324,7 @@ seam they would implement.
 
 ## 8. Workspace
 
-!!! success "Implemented (#44) — core only, no HTTP binding"
+!!! success "Implemented (#44), and bound to HTTP by ADR 0002"
 
     Six object types under ids like `geometry:g-1`, versioned rather than mutated, patched
     with RFC 6902, and a `job.submit` that takes a design reference and freezes the revisions
@@ -334,9 +334,13 @@ seam they would implement.
     *A seventh joined them with [#22](https://github.com/mandaloriat/fenix-spoon/issues/22):
     `optimization`, which is a question worth keeping for the same reason a study is.*
 
-    Reachable through :class:`FenixSpoonCore` and not over HTTP: the workspace's first
-    transport is the JSON-RPC adapter (#45), and binding it to HTTP now would mean designing
-    an object API that JSON-RPC might want a different shape for. `/api/v1` is unchanged.
+    Reachable through :class:`FenixSpoonCore`, and for five releases not over HTTP: the
+    workspace's first transport was the JSON-RPC adapter (#45), and binding it then would
+    have meant designing an object API that JSON-RPC might want a different shape for.
+    **Protocol 1.10 ended that**, once the deferral's own reason had — the shape had been
+    carried by three consumers and there was nothing left to guess at. The decisions are in
+    [ADR 0002](adr/0002-workspace-over-http.md); the routes are in
+    [the wire protocol](04-wire-protocol.md#workspace-objects).
 
 A workspace is a directory the caller names (default: `./.fenix-spoon`, or the existing
 `FENIXSPOON_DATA_DIR` when one is configured). It holds the object store, the result cache and the

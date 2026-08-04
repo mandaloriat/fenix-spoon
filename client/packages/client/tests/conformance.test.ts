@@ -117,6 +117,18 @@ describe('version.json', () => {
     expect(checkProtocolCompatibility('1.10', '1.9').reason).toMatch(/newer/);
   });
 
+  it('is not fooled by the comparison the string form invites either', () => {
+    // Being a string is necessary and not sufficient, which is the half the wire-protocol
+    // document was missing until 1.10 shipped and made it real: '1.10' < '1.9' as a string
+    // too, because '1' < '9' at the third character. A draft of ADR 0002 proposed pinning
+    // `"1.10" > "1.9"` as a test — false, and written by someone who had read the warning.
+    expect('1.10' < '1.9').toBe(true);
+    expect(Number('1.10') < Number('1.9')).toBe(true);
+    // Neither naive comparison is what this does: it splits and compares integers.
+    expect(checkProtocolCompatibility('1.10', '1.9').compatible).toBe(true);
+    expect(checkProtocolCompatibility('1.9', '1.10').reason).toMatch(/older/);
+  });
+
   it('refuses something it cannot parse rather than guessing', () => {
     expect(checkProtocolCompatibility('banana').compatible).toBe(false);
   });
