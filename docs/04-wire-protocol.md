@@ -13,13 +13,13 @@ protocol version below is shared: `rpc.describe` reports it too.
 
 ## Versioning
 
-The protocol is versioned `MAJOR.MINOR`, currently **1.10**, and a server reports what it
+The protocol is versioned `MAJOR.MINOR`, currently **1.11**, and a server reports what it
 speaks:
 
 ### `GET /api/v1/version`
 
 ```json
-{ "protocol": "1.10", "implementation": "0.1.0", "api_path": "/api/v1" }
+{ "protocol": "1.11", "implementation": "0.1.0", "api_path": "/api/v1" }
 ```
 
 **The one route that never requires an API key.** A client needs to know whether it can talk
@@ -127,7 +127,9 @@ the [MCP adapter](09-mcp.md) ([#49](https://github.com/mandaloriat/fenix-spoon/i
 [studies](07-local-agent-interface.md#7-minimum-operation-set)
 ([#48](https://github.com/mandaloriat/fenix-spoon/issues/48)) — each a further binding of these
 models rather than an addition to them, which is the property the transport-neutral core exists
-to keep.
+to keep. Studies stopped being an exception at 1.11: they are bound here now, in
+[studies](#studies) below, on the same terms as the workspace and for the same reason — the
+shape had been carried by four transports before this document described it.
 
 **Protocol 1.5** adds two things to the domain contract and both are additive: a
 [`series1d` result kind](#one-dimensional-results) with a `series` key beside `data`
@@ -575,6 +577,83 @@ owns and is checked at create. It carries no `Retry-After`: nothing about waitin
 object, and a hint that suggested otherwise would be the kind of lie the artifact-bytes quota
 already refuses to tell.
 
+## Studies
+
+*Added in protocol 1.11 ([ADR 0002](adr/0002-workspace-over-http.md), decision 3) — additive,
+and it adds no models: both routes speak shapes four other transports have carried since
+[#48](https://github.com/mandaloriat/fenix-spoon/issues/48).*
+
+A **study** is a `study` object, created and patched through the object routes above like any
+other. These two routes act on one:
+
+| | Route | |
+|---|---|---|
+| `POST` | `/api/v1/studies/{study_id}/run` | submit every variation, `202`, `?revision=` to pin |
+| `GET` | `/api/v1/studies/{study_id}` | the table and what it means, `?revision=` to pin |
+
+**There is no request body on either.** A study says what to solve — which design, which
+parameter, which values, which metrics — so a run has nothing left to be told, and the answer
+is a pure function of the revision it names. That is also why
+[#21](https://github.com/mandaloriat/fenix-spoon/issues/21)'s sketched `POST /sweeps`, with the
+grid in the body, is not what landed: a sweep posted that way is a computation with no
+identity. It cannot be pinned, re-read next week, re-run into the cache, or handed to a
+colleague as an id. Change the grid by patching the study, which costs one JSON Patch and
+leaves a revision behind saying what changed.
+
+**`run` returns before the solving does**, `202`, exactly as `POST /jobs` does and for the same
+reason — a five-rung ladder takes minutes and this is a request a browser is holding open:
+
+```json
+{ "study": "study:s-3@2", "jobs": ["j-1a2b...", "j-9f0e..."],
+  "submitted": 4, "reused": 2, "refused": 0 }
+```
+
+`reused` counts variations the [result cache](#the-result-cache) answered without solving,
+and this reply is the one place it is interesting: it says how much of the study just came
+free. `refused` counts variations the server would not accept — a cell budget, a quota — and
+`GET` says why, per variation. One rung over the budget does not fail the other four.
+
+**Running a study twice is idempotent**, including while the first run is still in flight, and
+nothing was added to make it so: every variation goes through `POST /jobs`, and the cache has
+matched `queued` and `running` jobs since 1.4. The second run returns the same job ids with
+`reused` counting them.
+
+**`?revision=` pins**, the same way and for the same reason it does on the object routes — and
+it is not decoration. *"You cannot pin it"* is the first thing this design holds against a
+sweep posted as a request body, so a binding that could only ever act on the head would refute
+its own argument. `GET /studies/s-3?revision=1` reports the study as it was written then, which
+is how a table stays readable after the grid has been widened twice, and
+`POST /studies/s-3/run?revision=1` re-runs it — free, because a study's job list is a pure
+function of its revision and every one of those jobs is already in the cache. A revision that
+does not exist is a `404`, never a quiet fall back to the head.
+
+**`GET` is free to call before the run, during it, and after.** There is no stored run record
+that could be absent: the study says what to solve, the jobs are the answer, and the report is
+assembled from them each time. Poll it while a run is in flight and `complete` goes true when
+every variation has reached a terminal state, answered or refused.
+
+The report's shape is discriminated on the study's own `kind`. A `mesh_convergence` study
+answers with the ladder, plus `relative_change` between rungs and the value each metric
+`settled_at`. A `sweep` answers with one row per point, plus **one
+[`Series1DData`](#one-dimensional-results) per tabulated metric** — the same model a `series1d`
+result uses, so anything that already draws a curve draws this one, `<fs-plot>` included, with
+no adapter in between. That was the reason for choosing that model for sweeps a release before
+anything could fetch one.
+
+```json
+{ "study": "study:s-3@2", "kind": "sweep", "design": "design:d-1@1",
+  "parameters": ["alpha"], "solver": "mock.laplace2d",
+  "points": [ { "values": { "alpha": -6 }, "job_id": "j-1a2b...", "status": "done",
+                "cached": true, "metrics": { "c_l": -0.4411 } } ],
+  "curves": [ { "name": "c_l", "...": "..." } ],
+  "complete": true }
+```
+
+Errors are the object routes' errors, because the argument is an object reference: `404` no
+such study *or somebody else's* · `422` a reference that is not a study, or a study body whose
+parameter or metric names the capability does not declare — reported with a `loc` pointing at
+the axis that misspelled it rather than at the document as a whole.
+
 ## Job lifecycle
 
 ### `POST /api/v1/jobs` → `202`
@@ -593,9 +672,11 @@ or an inline solve, which is what every version before 1.10 accepted and still w
 
 **Both together is a `422`**, not a precedence rule: a request carrying a design *and* a
 geometry holds two intents, and honouring one silently produces a job whose inputs are not what
-the caller thinks they are. The design form takes no parameter overrides either — to change a
+the caller thinks they are. **`params` beside a design is the same `422`** — to change a
 parameter, patch the design, which is one small JSON Patch and leaves the next solve
-reproducible from the workspace alone.
+reproducible from the workspace alone. That last refusal was missing until a review of #21
+asked what became of the overrides: they were accepted and then discarded, which is the failure
+this rule exists to prevent, reached from the one direction nobody had checked.
 
 What the design form buys, beyond the bytes: a job submitted by reference records the exact
 object revisions it resolved, so `provenance` can answer *which design this picture came from*.

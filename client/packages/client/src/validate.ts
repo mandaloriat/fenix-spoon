@@ -197,8 +197,35 @@ function outlinesCross(a: [number, number][], b: [number, number][]): boolean {
   return false;
 }
 
+/**
+ * Both forms of `POST /api/v1/jobs`: a design reference, or an inline solve.
+ *
+ * The design half was missing until a review of #21 asked for it. This validator had gone on
+ * demanding a `solver` through the whole of 1.10, so an SDK caller who checked a design-form
+ * request before sending it was told the protocol's own new shape was invalid. The shared
+ * corpus could not catch that, having had no design-form case in it; it has one now, and both
+ * implementations read the same file.
+ */
 export function validateJobRequest(value: unknown): JobRequest {
   if (!isRecord(value)) fail('job request must be an object');
+
+  if (value.design !== undefined) {
+    if (typeof value.design !== 'string' || value.design.length === 0) {
+      fail('design must be an object reference');
+    }
+    // Refused rather than resolved by precedence, exactly as the server refuses it: a request
+    // carrying both holds two intents, and honouring one produces a job whose inputs are not
+    // what the caller thinks they are. `params` counts — it is an override the design form
+    // has nowhere to put, and the server dropped it silently until the same review asked.
+    const inline =
+      value.solver !== undefined ||
+      value.geometry !== undefined ||
+      value.params !== undefined ||
+      value.conditions !== undefined;
+    if (inline) fail('send a design reference or an inline solve, not both');
+    return { design: value.design };
+  }
+
   if (typeof value.solver !== 'string' || value.solver.length === 0) {
     fail('job request needs a solver name');
   }

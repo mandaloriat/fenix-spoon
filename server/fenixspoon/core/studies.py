@@ -474,9 +474,12 @@ class SweepReport(BaseModel):
     types it without an addition. A parallel "response" model would have been a second way to
     say the same thing, one of them undrawable.
 
-    *Which is a claim about the shape, not about reach.* A study has no HTTP binding — #44's
-    decision, unchanged — so a browser cannot fetch one of these today. What the shared model
-    buys is that when it can, there is nothing to write.
+    *Which was a claim about the shape before it was one about reach.* When this was written a
+    study had no HTTP binding, and the note here said a browser could not fetch one; protocol
+    1.11 bound `POST /studies/{id}/run` and `GET /studies/{id}`, and the prediction paid off
+    exactly as stated — the browser demo feeds these curves to `<fs-plot>` with no adapter and
+    the SDK needed no new curve type. The sentence is kept rather than deleted because a design
+    note whose bet came off is worth more than one that only ever described the present.
 
     **The curves repeat numbers the table already carries, deliberately.** A table reader and
     a plot are different consumers and neither should have to pivot the other's shape; both

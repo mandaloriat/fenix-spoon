@@ -42,7 +42,7 @@
  * physics is not a protocol change — which is why `ConditionValues` is `Record<string,
  * number>` rather than a union this file would have to grow.
  */
-export const PROTOCOL_VERSION = '1.10';
+export const PROTOCOL_VERSION = '1.11';
 
 /** What `GET /api/v1/version` returns. The one endpoint that never requires a key. */
 export interface ProtocolVersion {
@@ -256,7 +256,8 @@ export function isTerminal(status: JobState): status is TerminalState {
  */
 export type ConditionValues = Record<string, number>;
 
-export interface JobRequest {
+/** The form every version before 1.10 accepted, and the only one before the workspace. */
+export interface InlineJobRequest {
   solver: string;
   geometry: Geometry;
   params?: Record<string, unknown>;
@@ -267,7 +268,35 @@ export interface JobRequest {
    * answers a different problem.
    */
   conditions?: Record<string, ConditionValues>;
+  design?: never;
 }
+
+/** Protocol 1.10: name a design instead of describing a solve. */
+export interface DesignJobRequest {
+  /**
+   * A `design` reference — `design:d-18`, optionally pinned. The design names its geometry,
+   * params and load cases, so none of the inline fields are used beside it.
+   *
+   * Prefer this in a page that iterates: an inline geometry is resent whole on every solve,
+   * can never hit the result cache on an unchanged design, and leaves the result unable to
+   * say which design revision produced it.
+   */
+  design: string;
+  solver?: never;
+  geometry?: never;
+  params?: never;
+  conditions?: never;
+}
+
+/**
+ * A union, rather than one interface with everything optional — which is what this was until a
+ * review of #21 pointed out that the loose form types `{ params: {} }` as a valid request. The
+ * server has refused that since 1.10, it being neither form, and a client type that permits
+ * what the server refuses is a type that has stopped describing the protocol. The `?: never`
+ * arms are what make "one form or the other, never both" a compile error rather than a 422 a
+ * round trip later.
+ */
+export type JobRequest = InlineJobRequest | DesignJobRequest;
 
 export interface JobCreated {
   job_id: string;
@@ -516,6 +545,8 @@ export interface Series1DResult {
   stats: JobStats;
   metrics?: JobMetrics;
   diagnostics?: JobDiagnostics;
+  /** As on the field kinds. `GET /jobs/{id}/result` sends it for every kind, since 1.4. */
+  provenance?: JobProvenance;
   series?: never[];
   artifacts: ArtifactRef[];
   /** Stored instants, in time order — derived from the artifacts carrying a `t`. */
@@ -569,4 +600,105 @@ export function traceAbscissa(
   trace: SeriesTrace,
 ): SeriesAxis | undefined {
   return trace.x ?? series.x ?? undefined;
+}
+
+
+// --------------------------------------------------------------- workspace (1.10, 1.11)
+
+/** The workspace object types a caller can create. */
+export type ObjectType =
+  | 'geometry'
+  | 'material'
+  | 'boundary_condition'
+  | 'load_case'
+  | 'design'
+  | 'study'
+  | 'optimization';
+
+/** One object revision, body included — what create, get and patch return. */
+export interface ObjectView {
+  /** Stable identifier without a revision, e.g. `geometry:g-1`. */
+  ref: string;
+  /** This exact revision, `geometry:g-1@3` — quote it to freeze an input. */
+  pinned: string;
+  type: string;
+  revision: number;
+  label?: string | null;
+  created_at: string;
+  body: Record<string, unknown>;
+}
+
+/** One line of a workspace listing. No body: that is the payload references exist to avoid. */
+export interface ObjectSummary {
+  ref: string;
+  type: string;
+  revision: number;
+  label?: string | null;
+  created_at: string;
+}
+
+/** What `study.run` answers with: what was started, and what the cache made free. */
+export interface StudyRun {
+  study: string;
+  jobs: string[];
+  submitted: number;
+  reused: number;
+  refused: number;
+}
+
+/** One row of a study's table, whichever kind produced it. */
+export interface StudyVariation {
+  job_id?: string | null;
+  status: string;
+  cached: boolean;
+  metrics: Record<string, number>;
+  error?: string | null;
+  /** A ladder's rung: the single value it was solved at. */
+  value?: number;
+  /** A sweep's point: every parameter it set. */
+  values?: Record<string, number>;
+}
+
+/** How one metric behaved up a convergence ladder. */
+export interface MetricConvergence {
+  metric: string;
+  values: (number | null)[];
+  relative_change: (number | null)[];
+  settled_at?: number | null;
+}
+
+/**
+ * What `GET /api/v1/studies/{id}` returns, discriminated on `kind` exactly as a result is.
+ *
+ * A ladder reports where each metric settled; a sweep reports response curves as
+ * {@link Series1DData} — the same model a `series1d` result carries, so `<fs-plot>` draws a
+ * sweep with nothing in between.
+ */
+export type StudyReport = ConvergenceReport | SweepReport;
+
+export interface ConvergenceReport {
+  kind: 'mesh_convergence';
+  study: string;
+  design: string;
+  parameter: string;
+  solver: string;
+  rungs: StudyVariation[];
+  convergence: MetricConvergence[];
+  complete: boolean;
+}
+
+export interface SweepReport {
+  kind: 'sweep';
+  study: string;
+  design: string;
+  parameters: string[];
+  solver: string;
+  points: StudyVariation[];
+  curves: Series1DData[];
+  complete: boolean;
+}
+
+/** The rows of a report, whichever kind it is — `rungs` on a ladder, `points` on a sweep. */
+export function studyVariations(report: StudyReport): StudyVariation[] {
+  return report.kind === 'sweep' ? report.points : report.rungs;
 }
