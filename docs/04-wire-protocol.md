@@ -13,13 +13,13 @@ protocol version below is shared: `rpc.describe` reports it too.
 
 ## Versioning
 
-The protocol is versioned `MAJOR.MINOR`, currently **1.9**, and a server reports what it
+The protocol is versioned `MAJOR.MINOR`, currently **1.10**, and a server reports what it
 speaks:
 
 ### `GET /api/v1/version`
 
 ```json
-{ "protocol": "1.9", "implementation": "0.1.0", "api_path": "/api/v1" }
+{ "protocol": "1.10", "implementation": "0.1.0", "api_path": "/api/v1" }
 ```
 
 **The one route that never requires an API key.** A client needs to know whether it can talk
@@ -28,7 +28,13 @@ a misconfigured client could not tell "wrong key" from "wrong protocol". It disc
 version strings and a path prefix — the same things the OpenAPI page already serves.
 
 `protocol` is a **string**, not a number: as a float, `1.10` parses to `1.1` and sorts below
-`1.9`.
+`1.9`. **And it is not a string comparison either** — `"1.10"` also sorts below `"1.9"`,
+because `'1' < '9'` at the third character. Split on the dot and compare the halves as
+integers, which is what `checkProtocolCompatibility` does and what the corpus's `1.10` case
+exists to keep honest. The second half of this warning was missing until 1.10 made it real,
+and its absence produced a draft of [ADR 0002](adr/0002-workspace-over-http.md) proposing
+`"1.10" > "1.9"` as a test — a false assertion written by someone who had read the first
+half.
 
 ### What is a breaking change
 
@@ -101,12 +107,13 @@ transport-neutral core ([#42](https://github.com/mandaloriat/fenix-spoon/issues/
 on the wire. Progressive discovery ([#43](https://github.com/mandaloriat/fenix-spoon/issues/43))
 is the four routes below. The **workspace**
 ([#44](https://github.com/mandaloriat/fenix-spoon/issues/44)) — versioned objects under ids like
-`geometry:g-1`, RFC 6902 patches, submission by design reference — deliberately has **no HTTP
-binding at all**: its first transport is the JSON-RPC adapter (#45), and binding it here first
-would mean designing an object API that the transport it exists for might want differently. The
-only trace it leaves on this contract is the `workspace` path in `environment.inspect`, which
-[#43](https://github.com/mandaloriat/fenix-spoon/issues/43) had specified and had nothing to point
-at until now. Finally, **compact results**
+`geometry:g-1`, RFC 6902 patches, submission by design reference — had **no HTTP binding at
+all** until 1.10, deliberately: its first transport was the JSON-RPC adapter (#45), and binding
+it here first would have meant designing an object API that the transport it exists for might
+want differently. That deferral ended when the deferral's own reason did — JSON-RPC carried the
+shape through five releases and three consumers, so 1.10 binds a proven shape rather than a
+guessed one. See [workspace objects](#workspace-objects) below and
+[ADR 0002](adr/0002-workspace-over-http.md) for the decisions. Finally, **compact results**
 ([#46](https://github.com/mandaloriat/fenix-spoon/issues/46)) are protocol 1.3: response levels,
 declared metric *values*, formalised diagnostics and bounded field queries, all bound below. And
 the **result cache** ([#47](https://github.com/mandaloriat/fenix-spoon/issues/47)) is protocol
@@ -527,13 +534,72 @@ Every region is *filled*; the mesh covers the whole rectangle.
 
 Planned kinds: `spline2d` profiles, `axisymmetric2d`, `step3d` (uploaded CAD).
 
+## Workspace objects
+
+*Added in protocol 1.10 ([ADR 0002](adr/0002-workspace-over-http.md)) — additive, so every route
+here is new and nothing that worked at 1.9 changed.*
+
+Versioned objects under stable ids, so a client stops resending what it already sent. Seven
+types — `geometry`, `material`, `boundary_condition`, `load_case`, `design`, `study`,
+`optimization` — reachable from every transport since 1.10 and from a local process since #44.
+
+| | Route | |
+|---|---|---|
+| `GET` | `/api/v1/objects` | this principal's objects, newest first, `?type=` to filter |
+| `POST` | `/api/v1/objects/{type}` | create, `201` with revision 1 |
+| `GET` | `/api/v1/objects/{type}/{id}` | the head, or `?revision=3` for a pinned one |
+| `GET` | `/api/v1/objects/{type}/{id}/revisions` | which revisions exist |
+| `PATCH` | `/api/v1/objects/{type}/{id}` | apply an RFC 6902 patch, `200` with the new revision |
+
+**A reference is not a path segment.** An object is named `geometry:g-12`, optionally pinned as
+`geometry:g-12@3` — and `{type}/{id}` is the pair that identifier decomposes into, so a client
+never percent-encodes a colon and the server rebuilds the canonical reference from its own path
+parameters. A URL whose halves disagree — `/objects/design/g-1`, where a design id starts with
+`d` — is a `422` naming both, not a lookup that quietly finds nothing.
+
+**The revision is a query parameter** because it is a *view* of an object at a point in its
+history, not a sub-resource with an identity of its own. One route answers both, in one shape.
+
+**Objects are never mutated and never deleted.** `PATCH` reads the head, applies the patch and
+writes the next revision; the one it came from stays readable forever. There is no `DELETE`, on
+any transport: a job is a computation and losing it costs a re-run, an object is something a
+person authored and losing it is data loss.
+
+Errors: `404` no such object *or somebody else's* — the same answer, because confirming an id
+exists is itself a disclosure · `422` unknown type, malformed reference, a body that fails its
+schema, or a patch that is not valid RFC 6902 · `409` a patch that changed nothing, or a patch
+aimed at a pinned revision · `429` over the object quota.
+
+**The object quota** (`FENIXSPOON_MAX_OBJECTS`, `0` for unlimited) counts objects a principal
+owns and is checked at create. It carries no `Retry-After`: nothing about waiting deletes an
+object, and a hint that suggested otherwise would be the kind of lie the artifact-bytes quota
+already refuses to tell.
+
 ## Job lifecycle
 
 ### `POST /api/v1/jobs` → `202`
 
+Either a design reference — protocol 1.10, and the reason the object routes exist:
+
+```json
+{ "design": "design:d-18" }
+```
+
+or an inline solve, which is what every version before 1.10 accepted and still works:
+
 ```json
 { "solver": "mock.laplace2d", "geometry": { "type": "domain2d", "...": "..." }, "params": { "resolution": 128 } }
 ```
+
+**Both together is a `422`**, not a precedence rule: a request carrying a design *and* a
+geometry holds two intents, and honouring one silently produces a job whose inputs are not what
+the caller thinks they are. The design form takes no parameter overrides either — to change a
+parameter, patch the design, which is one small JSON Patch and leaves the next solve
+reproducible from the workspace alone.
+
+What the design form buys, beyond the bytes: a job submitted by reference records the exact
+object revisions it resolved, so `provenance` can answer *which design this picture came from*.
+A submission that inlined its geometry never can.
 
 Response: `{ "job_id": "j-8f3a...", "status": "queued" }`
 

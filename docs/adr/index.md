@@ -16,3 +16,4 @@ current answer cannot tell you why the previous one stopped being right.
 | | Record | Status |
 |---|---|---|
 | [0001](0001-explorable-viewer.md) | An explorable viewer without a protocol change | Accepted |
+| [0002](0002-workspace-over-http.md) | The workspace over HTTP | Accepted |

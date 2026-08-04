@@ -1,7 +1,7 @@
 # Changelog
 
 Notable changes to Fenix Spoon. The **wire protocol** has a version of its own
-(`MAJOR.MINOR`, currently 1.9) and its history is in
+(`MAJOR.MINOR`, currently 1.10) and its history is in
 [docs/04-wire-protocol.md](docs/04-wire-protocol.md); this file records what changed for the
 people who build on the toolkit, protocol bump or not.
 
@@ -15,6 +15,50 @@ project is pre-1.0, so the packages are versioned together and nothing here is a
 promise yet.
 
 ## Unreleased
+
+### Added — protocol 1.10: the workspace over HTTP (ADR 0002)
+
+The decision #44 deferred twice, designed in [ADR 0002](docs/adr/0002-workspace-over-http.md)
+*before* any of it was built, and implemented from that record. Both remaining M5 items were
+waiting on it. **Additive**: every route is new and nothing that worked at 1.9 changed.
+
+- **Objects as a resource collection.** `POST /api/v1/objects/{type}`,
+  `GET|PATCH /api/v1/objects/{type}/{id}`, `?revision=` for a pinned read, `/revisions` for the
+  list, `GET /api/v1/objects` to list without bodies. **A reference is not a path segment**:
+  `{type}/{id}` is the pair `geometry:g-12` decomposes into, so no page percent-encodes a colon
+  and the server rebuilds the canonical reference from its own path parameters. The revision is
+  a query parameter because it is a *view* of an object, not a sub-resource with an identity.
+- **`POST /api/v1/jobs` accepts `{"design": "design:d-18"}`**, and this is the payoff rather
+  than the routes. A browser that inlines its geometry resends the whole outline every
+  iteration, can never hit the result cache on an unchanged design, and — the part that shows
+  only when you ask — can never say *which design revision* a picture came from, because
+  provenance can only name revisions the caller submitted. Sending both forms is a `422`, the
+  same refusal `job.submit` has always given over JSON-RPC.
+- **`FENIXSPOON_MAX_OBJECTS`**, a quota that did not exist because creating an object was free
+  and local. Refused at create, with no `Retry-After`: nothing about waiting deletes an object,
+  where an hourly job window genuinely does roll.
+- **Per-principal isolation is proved rather than added.** It was already written and already
+  correct — every workspace method takes an owner, and somebody else's reference has always
+  returned "not found" rather than "forbidden". What it had never been is *falsifiable*, since
+  on a single-principal machine every caller is the same caller. There is now a negative test
+  per verb, including the one that is not obvious: writing a design that references another
+  principal's geometry is allowed (a reference is a string) and *solving* it is a 404.
+- *The design pass paid for itself twice, and both corrections are in the record.* A review
+  round removed its most expensive decision — a deliberate divergence between transports for
+  `optimize.run`, which dissolved once `job.submit`'s existing "waiting is a convenience, not
+  an operation" pattern was noticed. And writing the code corrected it again: a URL whose
+  halves disagree is a `422` from the reference parser, not the `404` the record promised,
+  because `parse_ref` has refused a type/prefix mismatch since #44.
+- **1.10 is the first version where "the version is a string, not a number" stops being
+  enough.** As a float `1.10` sorts below `1.9`; as a *string* it also sorts below `"1.9"`,
+  because `'1' < '9'` at the third character. A draft of the ADR proposed pinning
+  `"1.10" > "1.9"` as a test — false, and written by someone who had read the warning. The
+  wire-protocol document now gives both halves, the corpus carries a `1.10` case, and the SDK
+  suite pins both traps beside the comparison that survives them: split on the dot, compare
+  the halves as integers, which `checkProtocolCompatibility` has always done.
+
+*Not in this release, and named in the roadmap:* the study and optimization run routes
+(decision 3) and the background task that makes a search pollable over HTTP (decision 4).
 
 ### Added — optimization: choosing the next point (#22)
 

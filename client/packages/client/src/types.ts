@@ -42,7 +42,7 @@
  * physics is not a protocol change — which is why `ConditionValues` is `Record<string,
  * number>` rather than a union this file would have to grow.
  */
-export const PROTOCOL_VERSION = '1.9';
+export const PROTOCOL_VERSION = '1.10';
 
 /** What `GET /api/v1/version` returns. The one endpoint that never requires a key. */
 export interface ProtocolVersion {

@@ -22,7 +22,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from . import __version__
 from .auth import Principal, principal_from_request, principal_from_websocket
@@ -34,6 +34,7 @@ from .core.discovery import (
     EnvironmentInfo,
 )
 from .core.results import LEVELS, FieldQuery, FieldQueryResult, LeveledResult
+from .core.workspace import ObjectSummary, ObjectView
 from .frames import frames_of
 from .geometry import Geometry
 from .jobs import JobStatus
@@ -49,11 +50,34 @@ CurrentPrincipal = Annotated[Principal, Depends(principal_from_request)]
 
 
 class JobRequest(BaseModel):
-    """What `POST /api/v1/jobs` accepts."""
+    """What `POST /api/v1/jobs` accepts: a design reference, or an inline solve.
 
-    solver: str = Field(description="A `name` from `GET /solvers`.")
-    geometry: Geometry = Field(
-        description="Geometry to solve on; its `type` must be one the solver accepts."
+    The design form is protocol 1.10 (ADR 0002) and is the reason the object routes exist.
+    A page that submits an inline geometry resends the whole outline on every iteration, can
+    never hit the result cache on an unchanged one, and — the part that does not show until
+    somebody asks — can never say *which design revision* a picture came from, because
+    provenance can only name revisions the caller submitted.
+
+    Sending both is refused rather than resolved by precedence, exactly as `job.submit`
+    refuses it over JSON-RPC: a request carrying a design *and* a geometry holds two
+    different intents, and honouring one of them silently produces a job whose inputs are
+    not what the caller thinks they are.
+    """
+
+    design: str | None = Field(
+        default=None,
+        description=(
+            "A `design` reference, `design:d-18`, optionally pinned. The design names its "
+            "geometry, params and load cases, so the other fields are not used with it — "
+            "and are refused rather than ignored."
+        ),
+    )
+    solver: str | None = Field(
+        default=None, description="A `name` from `GET /solvers`, for the inline form."
+    )
+    geometry: Geometry | None = Field(
+        default=None,
+        description="Geometry to solve on; its `type` must be one the solver accepts.",
     )
     params: dict[str, Any] = Field(
         default={}, description="Solver parameters, validated against that solver's schema."
@@ -68,6 +92,18 @@ class JobRequest(BaseModel):
             "govern, which is what every capability shipped before #85 does."
         ),
     )
+
+    @model_validator(mode="after")
+    def _one_form_only(self) -> "JobRequest":
+        inline = self.solver is not None or self.geometry is not None or bool(self.conditions)
+        if self.design is not None and inline:
+            raise ValueError(
+                "send a design reference or an inline solve, not both: a request carrying "
+                "each cannot say which one it means"
+            )
+        if self.design is None and (self.solver is None or self.geometry is None):
+            raise ValueError("an inline solve needs both `solver` and `geometry`")
+        return self
 
 
 class JobCreated(BaseModel):
@@ -90,6 +126,46 @@ class JobCreated(BaseModel):
             "something new."
         ),
     )
+
+
+class ObjectCreate(BaseModel):
+    """What `POST /api/v1/objects/{type}` accepts (protocol 1.10, ADR 0002).
+
+    The type is in the path rather than in the body, because it is what decides which
+    schema `body` is validated against — putting it in both would create a request that can
+    contradict itself.
+    """
+
+    body: dict[str, Any] = Field(
+        description=(
+            "The object itself. Validated against the schema for this type where one "
+            "exists; `boundary_condition` is stored as given, and says why in the workspace "
+            "documentation rather than pretending to a schema it does not have."
+        )
+    )
+    label: str | None = Field(
+        default=None, description="Optional human label for this revision."
+    )
+
+
+class ObjectPatch(BaseModel):
+    """An RFC 6902 patch and an optional label for the revision it writes."""
+
+    patch: list[dict[str, Any]] = Field(
+        description=(
+            "JSON Patch operations. Merge patch would replace arrays wholesale, which for a "
+            "geometry means resending every control point — the cost the workspace exists to "
+            "remove."
+        )
+    )
+    label: str | None = Field(default=None, description="Optional label for the new revision.")
+
+
+class ObjectRevisions(BaseModel):
+    """Which revisions of one object exist."""
+
+    ref: str = Field(description="The object, unpinned.")
+    revisions: list[int] = Field(description="Every revision number, ascending.")
 
 
 class JobList(BaseModel):
@@ -199,15 +275,122 @@ def capability_schema(
     return _core(request).capability_schema(name)
 
 
+# ------------------------------------------------------------ workspace objects (1.10)
+#
+# ADR 0002. The workspace has been reachable from a local process since #44 and from nothing
+# else, on a deferral whose stated reason — that the transport it exists for might want a
+# different shape — expired once JSON-RPC had carried that shape through five releases and
+# three consumers. These routes are that shape bound to HTTP, and they call the same core
+# methods `object.create` and friends call.
+#
+# A reference is `geometry:g-12`, and it is *not* a path segment: `{type}/{id}` is the pair
+# the identifier decomposes into, so a page never percent-encodes a colon and this file
+# rebuilds the canonical reference from its own path parameters. A caller cannot construct a
+# URL whose halves disagree — `design/g-12` resolves to `design:g-12`, which does not exist,
+# and 404s honestly.
+
+
+def _ref(object_type: str, object_id: str, revision: int | None = None) -> str:
+    """The canonical reference these two path segments name, optionally pinned."""
+    return f"{object_type}:{object_id}" + (f"@{revision}" if revision is not None else "")
+
+
+@router.get("/objects", response_model=list[ObjectSummary])
+def list_objects(
+    request: Request,
+    principal: CurrentPrincipal,
+    type: str | None = Query(default=None, description="Filter to one object type."),
+) -> list[ObjectSummary]:
+    """This principal's objects, newest first, without their bodies.
+
+    Without them because a geometry body is the payload progressive iteration exists to stop
+    moving, and a list of twenty designs would carry twenty outlines nobody asked for.
+    """
+    return _core(request).objects(principal, type)
+
+
+@router.post("/objects/{object_type}", response_model=ObjectView, status_code=201)
+def create_object(
+    object_type: str,
+    req: ObjectCreate,
+    request: Request,
+    principal: CurrentPrincipal,
+) -> ObjectView:
+    """Create an object of this type and return revision 1.
+
+    `201` rather than the `202` jobs get: this *has* happened by the time the response is
+    written, and there is nothing to poll.
+    """
+    return _core(request).create_object(object_type, req.body, principal, req.label)
+
+
+@router.get("/objects/{object_type}/{object_id}", response_model=ObjectView)
+def get_object(
+    object_type: str,
+    object_id: str,
+    request: Request,
+    principal: CurrentPrincipal,
+    revision: int | None = Query(
+        default=None,
+        ge=1,
+        description="A revision to pin to. Omit for the head, which is the usual case.",
+    ),
+) -> ObjectView:
+    """One object: the head, or the exact revision asked for.
+
+    The revision is a query parameter rather than a path segment because it is a *view* of
+    the object at a point in its history, not a sub-resource with an identity of its own —
+    so this route answers both, in one shape, exactly as the local API does.
+    """
+    return _core(request).object(_ref(object_type, object_id, revision), principal)
+
+
+@router.get("/objects/{object_type}/{object_id}/revisions", response_model=ObjectRevisions)
+def object_revisions(
+    object_type: str,
+    object_id: str,
+    request: Request,
+    principal: CurrentPrincipal,
+) -> ObjectRevisions:
+    ref = _ref(object_type, object_id)
+    return ObjectRevisions(ref=ref, revisions=_core(request).object_revisions(ref, principal))
+
+
+@router.patch("/objects/{object_type}/{object_id}", response_model=ObjectView)
+def patch_object(
+    object_type: str,
+    object_id: str,
+    req: ObjectPatch,
+    request: Request,
+    principal: CurrentPrincipal,
+) -> ObjectView:
+    """Apply an RFC 6902 patch and return the new revision.
+
+    Objects are never mutated: this reads the head, applies the patch and writes the next
+    revision, so the one it was computed from stays readable forever. Patching a *pinned*
+    reference is refused rather than branched from — see `CannotPatchRevision`.
+    """
+    return _core(request).patch_object(
+        _ref(object_type, object_id), req.patch, principal, req.label
+    )
+
+
 @router.post("/jobs", response_model=JobCreated, status_code=202)
 async def create_job(
     req: JobRequest,
     request: Request,
     principal: CurrentPrincipal,
 ) -> JobCreated:
-    job = await _core(request).submit(
-        req.solver, req.geometry, req.params, principal, conditions=req.conditions
-    )
+    core = _core(request)
+    if req.design is not None:
+        # One core call, not a resolution step here: `submit_design` freezes the revisions it
+        # resolved into the job's provenance, and doing that in a route would mean this
+        # transport recording provenance a different way from the other four.
+        job = await core.submit_design(req.design, principal)
+    else:
+        job = await core.submit(
+            req.solver, req.geometry, req.params, principal, conditions=req.conditions
+        )
     return JobCreated(job_id=job.id, status=job.status, cached=job.reused > 0)
 
 

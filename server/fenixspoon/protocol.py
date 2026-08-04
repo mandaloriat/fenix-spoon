@@ -41,7 +41,7 @@ from .solvers.base import ProgressEvent  # noqa: F401  (re-export for consumers)
 #: repeating it on each event and result would be per-message overhead for something one
 #: call answers — see `GET /api/v1/version`, and `docs/04-wire-protocol.md` for the
 #: reasoning and the bump procedure.
-PROTOCOL_VERSION = "1.9"
+PROTOCOL_VERSION = "1.10"
 
 
 class ProtocolVersion(BaseModel):

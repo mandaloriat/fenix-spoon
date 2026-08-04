@@ -574,15 +574,33 @@ vocabulary introduced in M2.5, M2.5 provides the abstraction and M5 provides the
       so a polar rendered as six rows of job ids with neither the angles nor the lift; a column
       of flat maps now spreads into columns, which is still generic and is the difference
       between a table and a header.
-- [ ] A sweep from a browser (#21, second half) — the HTTP surface the issue sketched as
-      `POST /api/v1/sweeps`, and the progress and comparison widgets that would consume it.
-      *Held deliberately, not forgotten.* A study is a workspace object and the workspace has
-      **no HTTP binding** by [#44](https://github.com/mandaloriat/fenix-spoon/issues/44)'s
-      decision — binding sweeps alone would mean designing half an object API through a side
-      door, and the half that got designed first would set the shape of the rest. So this is
-      the same question #44 deferred rather than a new one, and it should be answered as that
-      question. The widget half is already cheaper than it looks: a sweep's response comes back
-      as `Series1DData`, so `<fs-plot>` draws it the day something can fetch one.
+- [x] **The workspace over HTTP** — protocol 1.10, designed in
+      [ADR 0002](adr/0002-workspace-over-http.md) and built from it. *The blocker both M5
+      items were waiting on, and the question #44 deferred twice.* Objects as a resource
+      collection under `/objects/{type}/{id}` with the revision as a query parameter, and
+      `POST /jobs` accepting a design reference — which is the actual payoff, because a
+      browser that inlines its geometry can never hit the cache on an unchanged design nor
+      say which revision a picture came from.
+      *The design pass happened first, on its own, and paid for itself twice.* One review
+      round removed the most expensive decision in it — a deliberate divergence between
+      transports, dissolved once `job.submit`'s existing "waiting is a convenience, not an
+      operation" pattern was noticed — and writing the code corrected the record again: a URL
+      whose halves disagree is a 422 from the reference parser, not the 404 the record
+      promised, because `parse_ref` has refused a type/prefix mismatch since #44.
+      *Two findings the design pass made by reading rather than reasoning.* Per-principal
+      isolation on objects was already written and already correct, so the deliverable was
+      not to build it but to make it falsifiable — it had never been under adversarial
+      pressure on a single-principal machine, and now has a negative test per verb. And
+      nothing metered object creation: `FENIXSPOON_MAX_OBJECTS` joins the other three quotas,
+      with no `Retry-After`, because waiting does not delete an object.
+- [ ] A sweep from a browser (#21, second half) — *unblocked, and no longer the shape the
+      issue sketched.* It asked for `POST /api/v1/sweeps` with the grid in the body; ADR 0002
+      refused that — a sweep posted as a body is a computation with no identity, which cannot
+      be pinned, re-read, re-run into the cache or shown to a colleague. A study is an
+      **object that runs**: create it like any other, then `POST /studies/{id}/run` and
+      `GET /studies/{id}`. The objects half landed with 1.10; what remains is the two study
+      routes and the comparison widget, and the widget is cheap because a sweep's response is
+      already `Series1DData`.
 - [x] Optimization loop hooks — the `optimization` object and a bounded scalar search
       (#22, first half). *The far side of the line #48 drew, and the seventh workspace object
       type. A study **enumerates** a variation space; this **searches** one, choosing its next
