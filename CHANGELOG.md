@@ -16,6 +16,59 @@ promise yet.
 
 ## Unreleased
 
+### Added — parameter sweeps and design of experiments (#21)
+
+The second study kind, and the first real test of whether #48 defined *a study* or merely a
+mesh ladder with ambitions. **No wire-protocol change, no new operation, no new transport
+binding and no second job path**: `study.run` and `study.get` answer a sweep over JSON-RPC,
+the CLI, Python and MCP exactly as they answer a convergence ladder, and the ladder itself is
+untouched.
+
+- **`kind: "sweep"`** on the `study` object. Either `axes` — a full factorial, last axis
+  varying fastest, first axis the abscissa — or explicit `points`, which is how a Latin
+  hypercube or any other design of experiments arrives.
+- **The server does not generate randomized designs, and the reason is not squeamishness about
+  a dependency.** A design generated here would break the property that *defines* a study —
+  that its job list is a pure function of its object revision — unless the seed were frozen in
+  the body, at which point the caller is specifying the design anyway. The caller generates,
+  the revision freezes, and a DOE survives contact with the reproducibility rule.
+- **A sweep's answer is a curve, and the protocol has carried curves since 1.5.** Response
+  curves come back as `Series1DData`, the model a `series1d` result uses, so anything that
+  draws a curve draws these — `<fs-plot>` included, when something can fetch one. Every trace
+  brings its own abscissa: a point with no answer has no legal encoding against a shared axis,
+  where it would have to become a zero or shift every later value onto the wrong angle. A
+  partial sweep says exactly what it knows.
+- **Bounded at 64 points, and the bound is on the answer rather than on the queue.** Every
+  point goes through `job.submit` and meets the cell budget and the quota like any other job;
+  what nothing else governs is that a grid *multiplies* — four axes of four values is 256
+  solves from a body that fits on one line. The first axis must carry at least two values,
+  which makes a curve possible and, by arithmetic, makes the trace count unable to exceed the
+  series ceiling: a legal sweep always has an encodable report.
+- **The acceptance case is a lift polar**, not the camber sweep #21 asked for, and both halves
+  of that sentence moved for a reason. Camber is a property of the *geometry*, which the
+  workspace stores as an explicit polygon, so a camber sweep is a sweep over geometry
+  references; `alpha` is a capability parameter that rotates the free stream, which the
+  adapter's own parameter description had already noted is what lets a sweep reuse one domain.
+  And "lift **proxy**" is gone — #68 made `c_l` a real number. The test asserts the physics
+  rather than a golden value: potential-flow lift is linear in alpha, so equal steps in angle
+  must give equal steps in `c_l`, which also catches every point collapsing onto one cached
+  job — the failure a sweep is uniquely exposed to.
+- *Two things found by running it rather than by testing it.* A sweep of two named metrics
+  rendered a twelve-column table of six: `metrics` is documented as the column list, the
+  read-out honoured it and the rows never had. Invisible on a ladder, where the read-out is
+  what a caller reads; obvious the moment the table *is* the answer. **Rows now carry the
+  columns the study asked for** — a caller who wants everything omits the list, as before.
+  And the CLI's generic table dropped every map-valued column, so a lift polar printed as six
+  rows of job ids with neither the angles nor the lift in sight. **A column of flat maps now
+  spreads into `parent.key` columns**, which is still generic — no operation is named in the
+  renderer — and is the difference between a table and a header.
+- **Provenance now records the whole override map** (`variation`) rather than a bare
+  `variation_value`. A grid point is not one value, and a value recorded without its parameter
+  was already half a sentence when only the ladder existed.
+- *Not built, deliberately: the HTTP surface* `POST /api/v1/sweeps`. A study is a workspace
+  object and the workspace has no HTTP binding by #44's decision; binding sweeps alone would
+  design half an object API through a side door. That is the same question #44 deferred.
+
 ### Added — a curve widget (`@fenix-spoon/plot`)
 
 The one extension `docs/04-wire-protocol.md` had listed as unfinished since 1.5: the protocol

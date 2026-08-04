@@ -539,9 +539,49 @@ Goal: adoption. People find, run, and copy examples.
 Advanced and experimental capabilities, each standing alone. Where an item overlaps the study
 vocabulary introduced in M2.5, M2.5 provides the abstraction and M5 provides the depth.
 
-- [ ] Parameter sweeps and design-of-experiments API (N jobs, one submission) (#21) — *builds on
-      the M2.5 study abstraction rather than introducing a second one: DOE designs, fan-out
-      through the execution backend, and the HTTP surface for sweeps.*
+- [x] Parameter sweeps and design of experiments — the `sweep` study kind (#21, first half).
+      *Built on the
+      M2.5 study abstraction rather than beside it, which #48 wrote down as its purpose and
+      which the diff now has to answer for: **no new operation, no new transport binding, no
+      second job path, and the mesh ladder untouched.** `study.run` and `study.get` answer both
+      kinds over JSON-RPC, the CLI, Python and MCP alike, because #48 defined a study rather
+      than a mesh ladder.*
+      *A sweep takes a grid (`axes`, full factorial, last axis fastest) or explicit `points`.
+      Generating a Latin hypercube here was refused for a reason worth keeping: **a randomized
+      design generated server-side breaks the property that defines a study** — that its job
+      list is a pure function of its object revision — unless the seed is frozen in the body,
+      at which point the caller is specifying the design anyway. So the caller generates and
+      the revision freezes.*
+      ***The answer is a curve, and the protocol has carried curves since 1.5.*** Response
+      curves come back as `Series1DData`, the model a `series1d` result uses, so anything that
+      draws a curve draws these — no parallel "response" shape, one of which would have been
+      undrawable. Each trace brings its own abscissa, because a point with no answer has no
+      legal encoding against a shared one: it would become a zero or shift every later value
+      onto the wrong angle.
+      *Acceptance: a **lift polar**, not the camber sweep the issue asked for. Camber is a
+      property of the geometry and the workspace stores geometries as explicit polygons, so a
+      camber sweep is a sweep over geometry references; `alpha` rotates the free stream and is
+      a capability parameter, which the adapter's own description had already pointed out is
+      what lets a sweep reuse one domain. "Lift **proxy**" is gone too — #68 made `c_l` real.
+      The test asserts the physics rather than a golden number: potential-flow lift is linear
+      in alpha, so equal steps in angle give equal steps in `c_l` — which also catches every
+      point collapsing onto one cached job, the failure a sweep is uniquely exposed to.*
+      *Two things found by running it rather than by testing it.* A sweep of two named metrics
+      printed a twelve-column table of six: `metrics` was documented as the column list, the
+      read-out honoured it and the rows never had — invisible on a ladder, obvious the moment
+      the table *is* the answer. And the CLI's generic table dropped every map-valued column,
+      so a polar rendered as six rows of job ids with neither the angles nor the lift; a column
+      of flat maps now spreads into columns, which is still generic and is the difference
+      between a table and a header.
+- [ ] A sweep from a browser (#21, second half) — the HTTP surface the issue sketched as
+      `POST /api/v1/sweeps`, and the progress and comparison widgets that would consume it.
+      *Held deliberately, not forgotten.* A study is a workspace object and the workspace has
+      **no HTTP binding** by [#44](https://github.com/mandaloriat/fenix-spoon/issues/44)'s
+      decision — binding sweeps alone would mean designing half an object API through a side
+      door, and the half that got designed first would set the shape of the rest. So this is
+      the same question #44 deferred rather than a new one, and it should be answered as that
+      question. The widget half is already cheaper than it looks: a sweep's response comes back
+      as `Series1DData`, so `<fs-plot>` draws it the day something can fetch one.
 - [ ] Optimization loop hooks (dolfinx-adjoint / scipy.optimize driving the geometry params) (#22)
       — *stays here: M2.5 explicitly does not ship an optimizer, and where the study service ends
       and an optimization service begins is an open question (see

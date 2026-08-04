@@ -70,6 +70,73 @@ instinct and, here, its most reliable way to get nothing.
 `FENIXSPOON_REDIS_URL` set and workers running, the solve outlives the command by design.
 With the in-process backend it does what it says, and the job dies with the command.
 
+### A worked example: a lift polar in four commands
+
+A [sweep](07-local-agent-interface.md#study-kinds) is a study, so it is three objects and two
+verbs. Nothing here is specific to aerodynamics — the same four commands over `mesh_size` and
+`sigma_vm_max` are a mesh study of a bracket.
+
+```console
+$ fenix-spoon object create geometry < airfoil.json
+ref: geometry:g-1
+…                                                     # the whole object is echoed back
+$ fenix-spoon object create design < design.json      # solver, geometry, base params
+ref: design:d-1
+$ fenix-spoon object create study < polar.json        # the sweep below
+ref: study:s-1
+$ fenix-spoon study run study:s-1
+jobs:
+  - j-3b92ec88fd96
+…
+submitted: 6
+reused: 0
+refused: 0
+```
+
+```json title="polar.json"
+{
+  "kind": "sweep",
+  "design": "design:d-1",
+  "axes": [{ "parameter": "alpha", "values": [-6, -3, 0, 3, 6, 9] }],
+  "metrics": ["c_l", "c_m_c4"]
+}
+```
+
+```console
+$ fenix-spoon study get study:s-1
+study: study:s-1@1
+kind: sweep
+design: design:d-1@1
+parameters:
+  - alpha
+solver: mock.laplace2d
+points:
+  job_id          status  cached  metrics.c_l  metrics.c_m_c4  error  values.alpha
+  --------------  ------  ------  -----------  --------------  -----  ------------
+  j-3b92ec88fd96  done    no      -0.433738    -0.00537753     -      -6
+  j-a898e0fc2318  done    no      -0.0732739   -0.0221928      -      -3
+  j-0b288edbb693  done    no      0.287392     -0.0395583      -      0
+  j-0e5759694d02  done    no      0.647269     -0.0572837      -      3
+  j-1cd1ff80b1d0  done    no      1.00537      -0.0751749      -      6
+  j-3380e696317f  done    no      1.36072      -0.0930359      -      9
+curves:
+  name    description           x
+  ------  --------------------  -
+  c_l     c_l against alpha     -
+  c_m_c4  c_m_c4 against alpha  -
+complete: yes
+```
+
+That is a lift polar, and it is worth checking rather than admiring: `c_l` rises by 1.79 over
+15°, a slope of 6.9 per radian against thin-airfoil theory's 2π, and it crosses zero near
+−2.4°, which is where a section with this much camber should. The `curves` rows print as names
+here because a curve is a list and the table spreads maps, not lists — `--json` is where the
+numbers are, in the `Series1DData` shape `<fs-plot>` takes.
+
+`study run` waits, for the reason below. Run the same sweep again and it reports `submitted:
+0, reused: 6` — every point is a content-addressed cache hit — so widening a polar costs only
+the angles you added.
+
 ### Exit codes
 
 A script branches without parsing prose.

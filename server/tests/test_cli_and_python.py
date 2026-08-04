@@ -460,3 +460,35 @@ def test_waiting_past_the_timeout_raises_rather_than_hanging(session):
     # pending on a loop that is about to stop, which asyncio reports as noise on every
     # subsequent test run.
     job.cancel().wait(timeout=30)
+
+
+def test_a_column_of_flat_maps_becomes_columns():
+    """Otherwise a table is a header: a study's rows carry what varied in `values` and what
+    came back in `metrics`, and dropping both left six rows of job ids under the word
+    `points`. Found by running `study get` on a lift polar and reading the output.
+
+    Qualified names always. `values` and `metrics` can hold the same key, and a column headed
+    `alpha` that might be an input or an answer is worse than a longer heading."""
+    rendered = render(
+        [
+            {"values": {"alpha": 0.0}, "metrics": {"c_l": 0.29}, "status": "done"},
+            {"values": {"alpha": 4.0}, "metrics": {"c_l": 0.65}, "status": "done"},
+        ]
+    )
+    header, _, first, _ = rendered.split("\n")
+    assert header.split() == ["values.alpha", "metrics.c_l", "status"]
+    assert first.split() == ["0", "0.29", "done"]
+
+
+def test_a_column_of_uneven_maps_keeps_only_the_keys_they_share():
+    """The ragged rule, one level down: a key some rows lack would be a column of blanks, and
+    a study whose later points have not finished is exactly that shape."""
+    rendered = render([{"metrics": {"c_l": 0.29, "c_m": 0.01}}, {"metrics": {"c_l": 0.65}}])
+    assert rendered.split("\n")[0].split() == ["metrics.c_l"]
+
+
+def test_a_column_of_lists_is_still_dropped():
+    """A curve does not become columns — the spread is for flat maps, and a list has no keys
+    to name the columns with."""
+    rendered = render([{"name": "c_l", "values": [1.0, 2.0]}, {"name": "c_m", "values": [3.0]}])
+    assert rendered.split("\n")[0].split() == ["name"]

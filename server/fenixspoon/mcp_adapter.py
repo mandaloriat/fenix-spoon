@@ -237,14 +237,16 @@ TOOLS: dict[str, tuple[str, str, dict[str, Any]]] = {
     ),
     "run_study": (
         "study.run",
-        "Run a study — a base design, one parameter, a ladder of values. Submits every rung "
-        "and returns how many started and how many the cache answered for free.",
+        "Run a study over a base design — a `mesh_convergence` ladder of one parameter, or a "
+        "`sweep` over a grid of them. Submits every variation and returns how many started "
+        "and how many the cache answered for free.",
         _schema({"ref": _REF}, ["ref"]),
     ),
     "get_study": (
         "study.get",
-        "A study's table: per rung the value, the job and its metrics; per metric where it "
-        "settled. This is the whole answer — it does not need a follow-up per rung.",
+        "A study's table: per variation the values it set, the job and its metrics. A ladder "
+        "adds where each metric settled; a sweep adds a response curve per metric, drawn "
+        "against its first axis. This is the whole answer — no follow-up per row.",
         _schema({"ref": _REF}, ["ref"]),
     ),
 }
