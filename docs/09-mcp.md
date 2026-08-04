@@ -37,7 +37,7 @@ Here a tool **is** an RPC method plus a schema. So "the same request over MCP an
 JSON-RPC produces the same result" is true by construction, and MCP inherits the parameter
 typing, the error mapping and the compact-answer rules for free.
 
-## Thirteen tools, not twenty-six
+## Fifteen tools, not twenty-eight
 
 The vocabulary is a curated subset. A host's tool list is something a model reads *every
 turn*, which makes this the one surface where exposing everything is actively wrong.
@@ -57,6 +57,8 @@ turn*, which makes this the one surface where exposing everything is actively wr
 | `get_artifact` | resolve an artifact to a path |
 | `run_study` | submit every variation of a study — a ladder or a sweep |
 | `get_study` | the (variation → metric) table, and a sweep's response curves |
+| `run_optimization` | search for the parameter value that hits an objective — runs the solves |
+| `get_optimization` | the trajectory, the best point, and the bracket it narrowed to |
 
 Absent on purpose, each for a reason: `job.list`, `job.for_object`, `object.revisions` and
 `design.resolve` are real operations reachable over JSON-RPC that would spend a model's

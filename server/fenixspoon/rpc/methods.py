@@ -382,6 +382,17 @@ def study_get(core: FenixSpoonCore, principal: Principal, params: dict) -> Any:
     return core.study_report(_required(params, "ref"), principal)
 
 
+async def optimize_run(core: FenixSpoonCore, principal: Principal, params: dict) -> Any:
+    # The one method whose duration is the work. A study hands back job ids and lets the
+    # caller poll; a search cannot name its second point until the first is answered, so this
+    # returns the finished trajectory rather than a receipt for one.
+    return await core.run_optimization(_required(params, "ref"), principal)
+
+
+def optimize_get(core: FenixSpoonCore, principal: Principal, params: dict) -> Any:
+    return core.optimization_report(_required(params, "ref"), principal)
+
+
 def result_get(core: FenixSpoonCore, principal: Principal, params: dict) -> Any:
     return core.result_levels(_required(params, "job_id"), principal, params.get("levels"))
 
@@ -447,14 +458,19 @@ METHODS: dict[str, Any] = {
     "job.for_object": jobs_for_object,
     "study.run": study_run,
     "study.get": study_get,
+    "optimize.run": optimize_run,
+    "optimize.get": optimize_get,
     "result.get": result_get,
     "result.query": result_query,
     "artifact.get": artifact_get,
 }
 
-# The vocabulary is now the design draft's table in full: #48 defined the study object, so
-# `study.run` and `study.get` stopped being names with nothing behind them. One study kind is
-# implemented, which `study.run` says plainly rather than implying a framework.
+# The vocabulary is the design draft's table in full plus one pair the draft did not have:
+# #48 defined the study object, so `study.run` and `study.get` stopped being names with
+# nothing behind them, and #22 added `optimize.run`/`optimize.get` on the far side of the
+# boundary #48 drew. They are separate methods rather than a third study kind for exactly
+# that reason — a study enumerates and an optimizer chooses, and a caller reading this table
+# should be able to tell which it is asking for.
 
 #: Methods whose effect is on the connection rather than on the core, so they have no handler
 #: here — :class:`~fenixspoon.rpc.server.RpcServer` owns them. They are still part of the

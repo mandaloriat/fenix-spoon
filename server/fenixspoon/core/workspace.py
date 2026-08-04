@@ -6,7 +6,7 @@ a LAN to a browser and ruinous for a caller whose context window is the scarce r
 module is the other half of the fix: objects live in the workspace under stable ids, and an
 iteration names them.
 
-Six object types, and they are deliberately not equal:
+Seven object types, and they are deliberately not equal:
 
 | Type | Validated against | Why |
 |---|---|---|
@@ -16,6 +16,7 @@ Six object types, and they are deliberately not equal:
 | `boundary_condition` | *nothing* | see below |
 | `load_case` | :class:`~fenixspoon.core.conditions.LoadCaseBody` | #85 defined it |
 | `study` | `MeshConvergenceBody` or `SweepBody`, on `kind` | #48 defined it, #21 unioned it |
+| `optimization` | :class:`~fenixspoon.core.optimize.OptimizationBody` | #22 defined it |
 
 **`boundary_condition` is stored as opaque JSON on purpose.** Issue #44 asked for that to be
 said out loud rather than papered over with an invented schema, so: no shipped solver has a
@@ -76,6 +77,7 @@ from ..geometry import Geometry
 from ..objects import OBJECT_TYPES, ObjectFileStore, ObjectRecord, parse_ref
 from . import errors
 from .conditions import Conditions, LoadCaseBody, merge_load_cases
+from .optimize import OptimizationBody
 from .studies import STUDY_BODY
 
 #: Built once. The union is fixed at import time, and constructing a `TypeAdapter` per
@@ -132,7 +134,7 @@ class ObjectSummary(BaseModel):
     progressive iteration exists to stop moving."""
 
     ref: str = Field(description="Stable identifier, e.g. `geometry:g-1`.")
-    type: str = Field(description="One of the six workspace object types.")
+    type: str = Field(description="One of the workspace object types.")
     revision: int = Field(description="Head revision number; revisions start at 1.")
     label: str | None = Field(default=None, description="Whatever the caller called it.")
     created_at: str = Field(description="When this revision was written (RFC 3339, UTC).")
@@ -189,6 +191,10 @@ VALIDATED: dict[str, TypeAdapter[Any]] = {
     # `boundary_condition` is still thin, and still for the reason above rather than for
     # want of attention.
     "study": STUDY_BODY,
+    # #22 gave `optimization` a body on the day it was added; unlike `study` and
+    # `load_case` it never spent time on the thin list, because it arrived with the
+    # operation that reads it.
+    "optimization": TypeAdapter(OptimizationBody),
     "load_case": TypeAdapter(LoadCaseBody),
 }
 

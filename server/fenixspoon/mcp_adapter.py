@@ -19,7 +19,7 @@ compact-answer rules from #45 for free, and cannot drift from them.
 
 ## The vocabulary is a curated subset, not the whole table
 
-Twenty-six RPC methods, thirteen tools. A host's tool list is something a model reads *every turn*,
+Twenty-eight RPC methods, fifteen tools. A host's tool list is something a model reads *every turn*,
 so it is the one surface where "expose everything" is actively wrong — `job.for_object`,
 `object.revisions` and `design.resolve` are real operations that a host can reach through the
 JSON-RPC transport and that would spend context here without earning it.
@@ -154,8 +154,8 @@ TOOLS: dict[str, tuple[str, str, dict[str, Any]]] = {
     ),
     "create_object": (
         "object.create",
-        "Create a workspace object — `geometry`, `material`, `load_case`, `design` or "
-        "`study` — and get back a stable reference to name it by later.",
+        "Create a workspace object — `geometry`, `material`, `load_case`, `design`, "
+        "`study` or `optimization` — and get back a stable reference to name it by later.",
         _schema(
             {
                 "type": {"type": "string", "description": "Object type."},
@@ -240,6 +240,21 @@ TOOLS: dict[str, tuple[str, str, dict[str, Any]]] = {
         "Run a study over a base design — a `mesh_convergence` ladder of one parameter, or a "
         "`sweep` over a grid of them. Submits every variation and returns how many started "
         "and how many the cache answered for free.",
+        _schema({"ref": _REF}, ["ref"]),
+    ),
+    "run_optimization": (
+        "optimize.run",
+        "Search for the parameter value that minimises, maximises or hits a target on a "
+        "declared metric. **This call runs the solves and returns when the search is done**, "
+        "unlike `run_study`, which returns as soon as the work is accepted — a search cannot "
+        "name its second point until the first is answered.",
+        _schema({"ref": _REF}, ["ref"]),
+    ),
+    "get_optimization": (
+        "optimize.get",
+        "An optimization's trajectory: every evaluation, the best point, the bracket the "
+        "search narrowed the parameter to, and why it stopped. Free to call before or after "
+        "running one.",
         _schema({"ref": _REF}, ["ref"]),
     ),
     "get_study": (

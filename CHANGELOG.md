@@ -16,6 +16,54 @@ promise yet.
 
 ## Unreleased
 
+### Added — optimization: choosing the next point (#22)
+
+The far side of the boundary #48 drew. A study **enumerates** a variation space — given
+`study:s-1@2` you can say which solves it implies without running any of them — and a search
+cannot promise that, because its third point depends on what the first two answered. So
+`optimize.run` and `optimize.get` are separate operations rather than a third study kind, and
+`optimization` is the seventh workspace object type.
+
+- **`optimization`**: a design, one parameter, a bracket, and an objective — a declared metric
+  to `minimize`, `maximize` or hit as a `target`. All three become one minimisation internally,
+  so the method never learns which the caller meant. An objective the capability does not
+  declare is refused, for the reason a study refuses an unknown column.
+- **There is still no run record, and the distinction that allows it is worth keeping.** An
+  optimizer is not *predictable*; it is **reproducible**, and reproducibility is what storage
+  would have been for. The method is a pure function from the answers so far to the next point,
+  so a second run replays the identical sequence and every evaluation is a content-addressed
+  cache hit — which is also how `optimize.get` recovers a trajectory nobody wrote down, by
+  replaying the method and resolving each point by cache key. Where the objective is not
+  reproducible, the recorded job `inputs` answer instead: what is lost is the free second run,
+  not the record.
+- **Ask–tell rather than a callback, which is also why not `scipy`.** `minimize_scalar` takes a
+  function and calls it, inverting control against a job service that is asynchronous by
+  construction — a thread blocked per search, and the trajectory inside somebody else's stack
+  frame where neither `optimize.get` nor a caller polling mid-run can see it. The method here
+  never touches a solver, a job or a workspace, and is tested against arithmetic with no
+  fixture at all.
+- **`optimize.run` waits**, and it is the only operation that does. `study.run` hands back
+  every job id at once because it knows them all; a search has no moment at which the work is
+  accepted and not yet done, so there is no `--detach` either.
+- **An evaluation with no answer stops the search.** A study tabulates what it has and marks a
+  rung refused; here the next point is a function of the missing value, so there is nowhere to
+  continue from — and a "best" out of the points before it would present a truncated search as
+  a finished one.
+- **The report carries a bracket beside the best point.** The best evaluation is where the
+  lowest value was *seen*; the bracket is where the minimum is *known to be*. A search stopped
+  by its budget has a bracket wider than its tolerance, and reading only the best point would
+  take that for a located answer. The convergence history comes back as `Series1DData` — the
+  shape protocol 1.5 named "a sweep, a convergence history" when it was introduced.
+- **The acceptance case is the zero-lift angle, checked against the sweep rather than against a
+  constant.** #22 asked for camber and a lift proxy, and both moved exactly as they did for
+  #21: camber is a property of the geometry, and `c_l` became real with #68. The search moves
+  `alpha` to hit `c_l = 0` in eleven solves from a 20° range, and the test requires the sweep's
+  polar to change sign *inside the bracket the search reports* — two computations of one answer
+  agreeing where they overlap.
+- *Not built, and named in the roadmap:* multi-parameter search, gradients and dolfinx-adjoint,
+  per-iteration progress on the event channel, and the browser view. The first two implement
+  `next_point` rather than change it; the last wants the HTTP surface #21 is also waiting on.
+
 ### Added — parameter sweeps and design of experiments (#21)
 
 The second study kind, and the first real test of whether #48 defined *a study* or merely a

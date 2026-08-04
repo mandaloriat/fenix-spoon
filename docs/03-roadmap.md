@@ -229,7 +229,7 @@ the seams a second caller needs. The design specification is
       schema, so "the same request over MCP and over JSON-RPC produces the same result" holds
       by construction, and MCP inherits the parameter typing, error mapping and compact-answer
       rules for free.
-      *Thirteen tools, not twenty-six.* A host's tool list is read every turn, so this is the
+      *Fifteen tools, not twenty-eight.* A host's tool list is read every turn, so this is the
       one surface where exposing everything is actively wrong. `job.list`, `job.for_object`,
       `object.revisions` and `design.resolve` stay JSON-RPC-only; `job.cancel` is absent
       because a host has no stable handle on a job from a previous turn; `job.subscribe` has
@@ -583,10 +583,47 @@ vocabulary introduced in M2.5, M2.5 provides the abstraction and M5 provides the
       the same question #44 deferred rather than a new one, and it should be answered as that
       question. The widget half is already cheaper than it looks: a sweep's response comes back
       as `Series1DData`, so `<fs-plot>` draws it the day something can fetch one.
-- [ ] Optimization loop hooks (dolfinx-adjoint / scipy.optimize driving the geometry params) (#22)
-      — *stays here: M2.5 explicitly does not ship an optimizer, and where the study service ends
-      and an optimization service begins is an open question (see
-      [docs/07-local-agent-interface.md](07-local-agent-interface.md)).*
+- [x] Optimization loop hooks — the `optimization` object and a bounded scalar search
+      (#22, first half). *The far side of the line #48 drew, and the seventh workspace object
+      type. A study **enumerates** a variation space; this **searches** one, choosing its next
+      point from what the last one answered — so `optimize.run`/`optimize.get` are separate
+      operations rather than a third study kind, and the vocabulary says which is which.*
+      ***It still has no run record, and the distinction that makes that work is worth
+      keeping.*** An optimizer is not *predictable* — nothing can enumerate its points in
+      advance — but it is **reproducible**, and reproducibility is the property storage would
+      have been for. The method is a pure function from the answers so far to the next point,
+      so a second run replays the identical sequence and every evaluation is a
+      content-addressed cache hit; `optimize.get` recovers the trajectory by replaying it and
+      resolving each point by cache key, which is the study's two-path lookup unchanged. Where
+      the objective is not reproducible the recorded `inputs` answer instead — what is lost is
+      the free second run, not the record.
+      *Ask–tell rather than a callback, which is also the answer to "why not `scipy`".*
+      `minimize_scalar` takes a function and calls it, which inverts control against a job
+      service that is asynchronous by construction: satisfying it means blocking a thread per
+      search, and it puts the trajectory inside somebody else's stack frame where neither
+      `optimize.get` nor a caller polling mid-run can see it. The method here never touches a
+      solver, a job or a workspace — it is tested against arithmetic, with no fixture — and
+      that seam is what a gradient method or the adjoint half would implement rather than
+      replace.
+      *Acceptance: the **zero-lift angle** of a cambered section, checked against the sweep
+      rather than against a constant.* #22 asked for camber and a lift proxy; camber is a
+      property of the geometry, which the workspace stores as an explicit polygon, and the
+      proxy became a real `c_l` with #68 — the same two corrections #21 made. So the search
+      moves `alpha` to hit `c_l = 0`, and the test requires the sweep's polar to change sign
+      **inside the bracket the search reports**: two computations of one answer, one
+      tabulating and one choosing, agreeing where they overlap. Eleven solves from a 20° range.
+      *Three things the shape decides.* An evaluation with no answer **stops** the search
+      rather than leaving a gap, because the next point is a function of the missing value —
+      the sharpest difference from a study, which would tabulate the rest. The report carries
+      a **bracket** beside the best point, because "where the lowest value was seen" and
+      "where the minimum is known to be" are different claims and a budget-stopped search
+      shows the gap. And `optimize.run` is the one operation whose duration *is* the work, so
+      it has no `--detach`: there is no moment at which a search is accepted and not yet done.
+- [ ] Optimization: several parameters, gradients, and watching it (#22, second half) —
+      multi-parameter search, dolfinx-adjoint for gradients where an adapter can supply them,
+      per-iteration progress on the event channel, and the browser view that watches the shape
+      morph. *The last of those wants the HTTP surface #21's second half is waiting on, and the
+      first two want `next_point` implemented again rather than changed.*
 - [ ] Offline/degraded mode: scikit-fem under Pyodide behind the same JS SDK interface (#23)
 - [ ] Sandboxed arbitrary-UFL mode (explicitly opt-in; see security posture in architecture
       doc) (#24)

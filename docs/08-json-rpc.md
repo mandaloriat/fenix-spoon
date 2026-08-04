@@ -110,13 +110,20 @@ vocabulary costs a few hundred bytes rather than every method's schema.
 | `result.get` | a finished job's answer, at the levels asked for |
 | `result.query` | one bounded question about one field |
 | `artifact.get` | resolve an artifact to a path on this machine |
-| `study.run` | submit every rung of a study |
+| `study.run` | submit every variation of a study |
 | `study.get` | the (variation → metric) table, and where each metric settled |
+| `optimize.run` | search for the value that hits an objective — runs the solves |
+| `optimize.get` | the trajectory, the best point, and the bracket it narrowed to |
 
-That is the design draft's operation table in full. `study.run` and `study.get` were absent
-until [#48](https://github.com/mandaloriat/fenix-spoon/issues/48) gave the study object a body
-— binding a method to nothing so the vocabulary looks complete would be a caller asking what
-exists and being told about something that does not.
+That is the design draft's operation table in full, plus one pair the draft did not have.
+`study.run` and `study.get` were absent until
+[#48](https://github.com/mandaloriat/fenix-spoon/issues/48) gave the study object a body —
+binding a method to nothing so the vocabulary looks complete would be a caller asking what
+exists and being told about something that does not. `optimize.*` arrived with
+[#22](https://github.com/mandaloriat/fenix-spoon/issues/22) as **separate methods rather than
+a third study kind**, which is the boundary #48 drew showing up in the vocabulary: a study
+enumerates, an optimizer chooses, and a caller reading this table should be able to tell which
+one it is asking for.
 
 ### Studies
 
@@ -180,6 +187,46 @@ Four things worth knowing before you write one:
   ([#22](https://github.com/mandaloriat/fenix-spoon/issues/22)). The line is drawn at a
   concrete place: a study's job list is a pure function of its object revision, so you can say
   which solves it implies without running any of them. An optimizer cannot promise that.
+
+### Optimization
+
+Where a study **enumerates** a variation space, an optimization **searches** one: it chooses
+its next point from what the last one answered. That is the whole difference, and it is why
+these are separate methods — given `study:s-1@2` you can say which solves it implies without
+running any of them, and no optimization can promise that.
+
+```json
+{"design": "design:d-1", "parameter": "alpha", "bounds": [-10, 10],
+ "objective": {"metric": "c_l", "sense": "target", "target": 0.0},
+ "max_evaluations": 12, "tolerance": 0.02}
+```
+
+`sense` is `minimize`, `maximize` or `target`; all three become one minimisation internally —
+negated, or squared distance from the target — so the method never learns what the caller
+meant. The objective is a **declared metric**, refused if the capability does not declare it,
+for the reason a study refuses an unknown column.
+
+Four things worth knowing before you write one:
+
+- **`optimize.run` waits.** It is the only method whose duration is the work. `study.run`
+  hands back every job id immediately because it knows them all; a search cannot name its
+  second point until the first is answered, so this returns the finished trajectory rather
+  than a receipt for one.
+- **Every evaluation is an ordinary submission.** Cell budget, quota and result cache apply
+  per job exactly as they do for a rung — which is why running the same optimization twice
+  costs nothing. The second pass replays the identical sequence and every point is a cache
+  hit, and that is also how `optimize.get` recovers a trajectory nobody stored.
+- **An evaluation with no answer stops the search.** A study tabulates what it has and marks
+  rung 4 refused; here the next point is a function of the missing value, so there is nowhere
+  to continue from. `stopped` says which of `converged`, `budget`, `stalled` or `not_run`.
+- **`bracket` is not `best`.** The best evaluation is where the lowest value was *seen*; the
+  bracket is where the minimum is *known to be*. A search that stopped on its budget has a
+  bracket wider than its tolerance, and reading only the best point would take that for a
+  located answer.
+
+The method is bounded scalar golden-section search, which assumes the objective is
+**unimodal** on the bracket. Given two minima it converges to one of them and says nothing
+about the other — an assumption the caller checks, not a detail.
 
 ### Progress: poll or subscribe
 
