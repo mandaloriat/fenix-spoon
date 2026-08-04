@@ -62,6 +62,14 @@ untouched.
   rows of job ids with neither the angles nor the lift in sight. **A column of flat maps now
   spreads into `parent.key` columns**, which is still generic — no operation is named in the
   renderer — and is the difference between a table and a header.
+- *Two from review, and the first is the guard defeating itself.* The point cap asked
+  `len(self.variations())` — so **validating** a body naming ten axes of a hundred values would
+  build the 10^20-point product it was about to refuse, turning a guard against an accidental
+  256-solve grid into a far more effective denial of service. Counted with `prod` over the axis
+  lengths now, and the regression test monkeypatches `product` to fail rather than leaving a
+  reintroduction to exhaust the machine. The second: the unknown-parameter refusal reported
+  `loc: ["parameter"]` whatever the kind, sending a caller to a field a sweep does not have.
+  One error per bad name now, each located — the axis that carries it, by index, or `points`.
 - **Provenance now records the whole override map** (`variation`) rather than a bare
   `variation_value`. A grid point is not one value, and a value recorded without its parameter
   was already half a sentence when only the ladder existed.

@@ -403,6 +403,12 @@ class FenixSpoonCore:
         # A study is exactly the operation where that failure is invisible. Over a grid the
         # same typo is worse, not better: one misspelled axis collapses every point that
         # differs only along it, and the table reads as a parameter with no effect.
+        #
+        # One error per bad name, each pointing where that name was written — `parameter` on a
+        # ladder, `axes[2].parameter` on a grid, `points` where every point declares the same
+        # keys. The first version raised one error at `loc: ["parameter"]` whatever the kind,
+        # which sent a caller looking for a field a sweep does not have; the body knows its own
+        # shape, so it is the body that answers where. Raised in review of #21.
         unknown = [
             name for name in body.parameters() if name not in solver_cls.Params.model_fields
         ]
@@ -412,12 +418,13 @@ class FenixSpoonCore:
                 [
                     {
                         "type": "unknown_parameter",
-                        "loc": ["parameter"],
+                        "loc": body.parameter_loc(name),
                         "msg": (
-                            f"{solver_cls.name!r} has no parameter {unknown[0]!r}; "
+                            f"{solver_cls.name!r} has no parameter {name!r}; "
                             f"it accepts {sorted(solver_cls.Params.model_fields)}"
                         ),
                     }
+                    for name in unknown
                 ],
             )
         # Same rule for the metric names, and checked here so it applies to `study.run` as

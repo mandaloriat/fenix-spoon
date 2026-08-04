@@ -60,6 +60,7 @@ study recorded. Neither path stores anything the other could contradict.
 """
 
 from itertools import product
+from math import prod
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, TypeAdapter, model_validator
@@ -164,6 +165,10 @@ class MeshConvergenceBody(_StudySpec):
     def parameters(self) -> list[str]:
         """Which of the capability's parameters this study writes to."""
         return [self.parameter]
+
+    def parameter_loc(self, name: str) -> list[str | int]:
+        """Where in this body a parameter name was written, for an error to point at."""
+        return ["parameter"]
 
 
 class SweepAxis(BaseModel):
@@ -290,7 +295,13 @@ class SweepBody(_StudySpec):
                 raise ValueError(
                     "points must be distinct; a repeated point is the same solve twice"
                 )
-        total = len(self.variations())
+        # Counted, never enumerated. The first version of this asked `len(self.variations())`
+        # and was wrong in the one way this whole guard exists to prevent: a body naming ten
+        # axes of a hundred values is a thousand numbers and 10^20 points, so *validating* it
+        # would build the product it is about to refuse. A cap that has to construct the thing
+        # it forbids is not a cap. `prod` over the axis lengths is exact and costs one
+        # multiplication per axis. Raised in review of #21.
+        total = prod(len(axis.values) for axis in self.axes) if self.axes else len(self.points)
         if total > MAX_SWEEP_POINTS:
             # Spelled out as a product, because the whole failure mode is that a grid's size
             # is not visible in the body that asks for it.
@@ -322,6 +333,22 @@ class SweepBody(_StudySpec):
         if self.axes:
             return [axis.parameter for axis in self.axes]
         return sorted(self.points[0])
+
+    def parameter_loc(self, name: str) -> list[str | int]:
+        """Where in this body a parameter name was written, for an error to point at.
+
+        A sweep has no `parameter` field, so reporting one — which the first version of the
+        unknown-parameter refusal did, having been written for the ladder — sends a caller
+        looking for a key that is not in the document they sent. The index is worth carrying:
+        a four-axis grid with one misspelling should say *which* axis. Raised in review of #21.
+
+        Every point declares the same keys, so a bad key is in all of them and naming one by
+        index would suggest the others are fine.
+        """
+        if not self.axes:
+            return ["points"]
+        index = next(i for i, axis in enumerate(self.axes) if axis.parameter == name)
+        return ["axes", index, "parameter"]
 
 
 #: The `study` object body: a discriminated union on `kind`, so a new kind cannot break a

@@ -572,6 +572,40 @@ def test_a_malformed_point_list_is_refused(core, me, points):
         sweep_of(core, me, swept_design(core, me), axes=[], points=points)
 
 
+def test_the_point_cap_is_counted_and_never_enumerated(core, me, monkeypatch):
+    """The cap must not build the thing it refuses.
+
+    Ten axes of a hundred values is a thousand numbers on the wire and 10^20 points, so a
+    validator that asked `len(self.variations())` would construct the cartesian product it was
+    about to reject — turning the guard against an accidental 256-solve grid into the more
+    effective denial of service it was meant to prevent. Counted with `prod` over the axis
+    lengths instead, which is one multiplication per axis. Raised in review of #21.
+
+    `product` is monkeypatched to explode rather than left to hang: a regression here would
+    otherwise fail by exhausting the machine, which is a true signal and a terrible one.
+    """
+    monkeypatch.setattr(
+        studies,
+        "product",
+        lambda *args: pytest.fail("the point cap enumerated the grid it was refusing"),
+    )
+    with pytest.raises(errors.InvalidObject) as caught:
+        sweep_of(
+            core,
+            me,
+            swept_design(core, me),
+            axes=[
+                {"parameter": f"p{i}", "values": [float(v) for v in range(40)]}
+                for i in range(8)
+            ],
+        )
+    # 40^8, spelled out both ways, because the point of the message is that neither number is
+    # visible in the body that asked for it.
+    assert "6553600000000 points (40 x 40 x 40 x 40 x 40 x 40 x 40 x 40)" in json.dumps(
+        caught.value.errors
+    )
+
+
 def test_an_axis_over_a_parameter_the_capability_does_not_have_is_refused(core, me):
     """The ladder's guard, which matters more over a grid rather than less: one misspelled
     axis collapses every point that differs only along it, and the table then reads as a
@@ -582,6 +616,47 @@ def test_an_axis_over_a_parameter_the_capability_does_not_have_is_refused(core, 
     with pytest.raises(errors.InvalidObject) as caught:
         asyncio.run(core.run_study(study, me))
     assert "alpha" in json.dumps(caught.value.errors), "the message should list the real names"
+
+
+def test_the_refusal_points_at_the_field_the_bad_name_was_written_in(core, me):
+    """A `loc` is an instruction to go and look, so it has to name something the caller sent.
+
+    The first version reported `["parameter"]` whatever the kind, having been written for the
+    ladder — which on a sweep sends a reader to a field the body does not have. One error per
+    bad name now, each located: the axis that carries it, by index, or `points` where every
+    point declares the same keys and singling one out would suggest the rest are fine.
+    Raised in review of #21.
+    """
+    grid = sweep_of(
+        core,
+        me,
+        swept_design(core, me),
+        axes=[
+            {"parameter": "alpha", "values": [0.0, 4.0]},
+            {"parameter": "u_infinity", "values": [1.0, 2.0]},
+        ],
+    )
+    with pytest.raises(errors.InvalidObject) as caught:
+        asyncio.run(core.run_study(grid, me))
+    assert [error["loc"] for error in caught.value.errors] == [["axes", 1, "parameter"]]
+
+    listed = sweep_of(
+        core,
+        me,
+        swept_design(core, me),
+        axes=[],
+        points=[{"alfa": 0.0, "u_infinity": 1.0}, {"alfa": 4.0, "u_infinity": 1.0}],
+    )
+    with pytest.raises(errors.InvalidObject) as caught:
+        asyncio.run(core.run_study(listed, me))
+    # Both names are wrong and both are reported: fixing one and resubmitting to discover the
+    # other is the round trip a list of errors exists to avoid.
+    assert [error["loc"] for error in caught.value.errors] == [["points"], ["points"]]
+
+    ladder = study_of(core, me, design_of(core, me), parameter="resolutoin")
+    with pytest.raises(errors.InvalidObject) as caught:
+        asyncio.run(core.run_study(ladder, me))
+    assert [error["loc"] for error in caught.value.errors] == [["parameter"]]
 
 
 # -------------------------------------------------------------------- orchestration
