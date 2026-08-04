@@ -241,10 +241,34 @@ def test_the_trajectory_comes_back_as_a_drawable_curve(core, me):
 
     history = report.history
     assert history is not None and history.x is None
+    # The objective and the metric it came from — *not* the parameter, which is the `value`
+    # column of every row above. The docstrings said "where it looked" while the code emitted
+    # the metric, and a self-documenting schema that documents the wrong thing is worse than
+    # one that says nothing. Raised in review of #22.
     assert [trace.name for trace in history.traces] == ["objective", "c_l"]
     for trace in history.traces:
         assert trace.x.name == "evaluation"
         assert len(trace.values) == len(trace.x.values) == report.evaluations_spent
+
+    # And both carry the unit the capability declares, transformed where the sense transforms
+    # it: `c_l` is dimensionless, and a squared distance from a dimensionless target is too.
+    assert [trace.unit for trace in history.traces] == ["1", "1"]
+
+
+@pytest.mark.parametrize(
+    ("sense", "target", "unit", "expected"),
+    [
+        ("minimize", None, "Pa", "Pa"),
+        ("maximize", None, "m/s", "m/s"),
+        ("target", 1.0, "degC", "(degC)^2"),
+        ("target", 1.0, "1", "1"),
+    ],
+)
+def test_the_objective_carries_the_unit_its_sense_implies(sense, target, unit, expected):
+    """Negating leaves a unit alone; squaring a distance does not. Both traces went out
+    unitless in the first version, on a capability that declares one."""
+    objective = optimize.Objective(metric="x", sense=sense, target=target)
+    assert objective.unit_of(unit) == expected
 
 
 # ----------------------------------------------------------------------- orchestration
@@ -284,6 +308,27 @@ def test_a_search_nobody_has_run_reports_nothing_rather_than_failing(core, me):
     assert report.stopped == "not_run"
     assert report.evaluations == [] and report.best is None
     assert report.bracket is None and report.history is None
+
+
+def test_a_replay_says_the_trajectory_stops_rather_than_guessing_why(core, me):
+    """The one place the absence of a run record costs something, reported rather than
+    guessed at.
+
+    A submission the server refused leaves **no job**, so a replay cannot tell "stalled
+    there" from "nobody ran it that far" — and the first version called both `budget`, so a
+    search that stalled on a quota came back from `optimize.get` as one that had spent its
+    evaluations. `optimize.run` still says `stalled`, because it was there. Raised in review
+    of #22.
+    """
+    quota = Principal(id="tester", quotas=Quotas(jobs_per_hour=2))
+    optimization = optimization_of(core, quota, design_of(core, quota))
+    ran = asyncio.run(core.run_optimization(optimization, quota))
+    assert ran.stopped == "stalled"
+
+    replayed = core.optimization_report(optimization, quota)
+    assert replayed.stopped == "incomplete", "a replay cannot know why, and must not say"
+    assert replayed.evaluations_spent == 2, "the two solves that did happen are still there"
+    assert replayed.best is not None and replayed.bracket is not None
 
 
 def test_an_evaluation_records_the_optimization_it_came_from(core, me):

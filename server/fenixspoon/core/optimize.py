@@ -121,6 +121,18 @@ class Objective(BaseModel):
             return -metric
         return (metric - float(self.target)) ** 2
 
+    def unit_of(self, metric_unit: str) -> str:
+        """What the minimised value is measured in, given the metric's declared unit.
+
+        Negating leaves it alone; squaring a distance does not. Derived rather than left
+        blank because the capability *declares* the metric's unit, so a curve of the objective
+        can be captioned correctly — and `1` would be a claim of dimensionlessness rather than
+        an absence. Raised in review of #22, where both traces went out unitless.
+        """
+        if self.sense != "target" or metric_unit in ("", "1"):
+            return metric_unit
+        return f"({metric_unit})^2"
+
 
 class OptimizationBody(BaseModel):
     """The `optimization` object: a design, one parameter to move, and what better means.
@@ -331,30 +343,47 @@ class OptimizationReport(BaseModel):
         ),
     )
     evaluations_spent: int = Field(description="How many solves this cost.")
-    stopped: Literal["converged", "budget", "stalled", "not_run"] = Field(
+    stopped: Literal["converged", "budget", "stalled", "incomplete", "not_run"] = Field(
         description=(
             "Why it is not still going. `converged` — the bracket reached the tolerance. "
             "`budget` — `max_evaluations` ran out first, and the bracket says how far it got. "
             "`stalled` — an evaluation has no answer, which ends a *search* where it would "
             "only leave a gap in a study's table: the next point is a function of that answer, "
-            "so there is nowhere to continue from. `not_run` — nothing has been submitted."
+            "so there is nowhere to continue from. `not_run` — nothing has been submitted. "
+            "`incomplete` — **only from `optimize.get`**: the trajectory stops and the jobs do "
+            "not say why, because a submission the server refused leaves no job behind for a "
+            "replay to find. A run was there and says `stalled`; a replay knows only how far "
+            "it got, and saying more than that would be inventing the reason."
         )
     )
     history: Series1DData | None = Field(
         default=None,
         description=(
-            "The convergence history as a curve: the objective and the parameter against the "
-            "evaluation index, drawn by anything that draws a `series1d`."
+            "The convergence history as a curve: the minimised objective and the metric it "
+            "came from, against the evaluation index, drawn by anything that draws a "
+            "`series1d`. Not the parameter — where the search *looked* is the `value` column "
+            "of every row above, in the order it looked, and putting a bracket in degrees on "
+            "the same axis as a lift coefficient would caption neither."
         ),
     )
 
 
-def history_curve(objective: Objective, evaluations: list[Evaluation]) -> Series1DData | None:
+def history_curve(
+    objective: Objective, evaluations: list[Evaluation], metric_unit: str = ""
+) -> Series1DData | None:
     """The trajectory as a drawable curve, or None when nothing has been answered.
 
-    Two traces against the evaluation index: what the method was minimising, and where it
-    looked. Each carries its own abscissa for the reason a sweep's do — an evaluation with no
-    answer has no value to line up, and a shared axis would force it to become a zero.
+    Two traces against the evaluation index: **the minimised objective, and the metric it was
+    computed from**. Not the parameter — where the search looked is the `value` column of
+    every row of the report, in the order it looked, and a bracket in degrees on the same axis
+    as a lift coefficient would caption neither. (The docstring here said "where it looked"
+    while the code emitted the metric, which is the mismatch a self-documenting schema exists
+    to avoid; raised in review of #22.)
+
+    Both traces carry the unit the capability declares, transformed for the objective where
+    the sense transforms it. Each carries its own abscissa for the reason a sweep's do — an
+    evaluation with no answer has no value to line up, and a shared axis would force it to
+    become a zero.
     """
     answered = [e for e in evaluations if e.objective is not None]
     if not answered:
@@ -368,13 +397,13 @@ def history_curve(objective: Objective, evaluations: list[Evaluation]) -> Series
         traces=[
             SeriesTrace(
                 name="objective",
-                unit="",
+                unit=objective.unit_of(metric_unit),
                 values=[float(e.objective) for e in answered],
                 x=index,
             ),
             SeriesTrace(
                 name=objective.metric,
-                unit="",
+                unit=metric_unit,
                 # From `answered` rather than filtered again: an evaluation carries its metric
                 # and its objective together or not at all, and a second filter would be a
                 # second definition of "answered" for the two traces to disagree over.

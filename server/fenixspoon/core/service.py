@@ -728,7 +728,9 @@ class FenixSpoonCore:
                 stopped = "stalled"
                 break
             answered.append(evaluation.objective)
-        return self._optimization_report(record, body, resolved, evaluations, answered, stopped)
+        return self._optimization_report(
+            record, body, resolved, evaluations, answered, stopped, solver_cls
+        )
 
     async def _settled(self, job: Job, principal: Principal) -> Job:
         """Wait for one evaluation, on the loop that submitted it.
@@ -782,10 +784,18 @@ class FenixSpoonCore:
             if job is None:
                 job = by_input.get(len(evaluations))
             if job is None:
-                # Not run this far. Distinguished from a stall by there being nothing to
-                # report against it: a search that has not reached a point has not failed at
-                # it, and calling that `stalled` would invent a failure out of an absence.
-                stopped = "not_run" if not evaluations else "budget"
+                # The trajectory stops here and the jobs do not say why — the one place the
+                # absence of a run record costs something real, so it is reported rather than
+                # guessed at. A submission the server refused leaves *no job*, so a replay
+                # cannot tell "stalled there" from "nobody ran it that far", and the first
+                # version called both `budget`: a search that stalled on a quota would be
+                # reported as one that spent its evaluations, by an operation whose whole job
+                # is to say what happened. Raised in review of #22.
+                #
+                # `optimize.run` never returns `incomplete` — it was there, and says
+                # `stalled`. That asymmetry is the honest one: the run knows why it stopped
+                # and a replay knows only how far it got.
+                stopped = "not_run" if not evaluations else "incomplete"
                 break
             evaluation = self._evaluation(len(evaluations), point, job, body.objective)
             evaluations.append(evaluation)
@@ -793,7 +803,9 @@ class FenixSpoonCore:
                 stopped = "stalled"
                 break
             answered.append(evaluation.objective)
-        return self._optimization_report(record, body, resolved, evaluations, answered, stopped)
+        return self._optimization_report(
+            record, body, resolved, evaluations, answered, stopped, solver_cls
+        )
 
     @staticmethod
     def _evaluation(
@@ -824,9 +836,14 @@ class FenixSpoonCore:
             ),
         )
 
-    @staticmethod
-    def _optimization_report(record, body, resolved, evaluations, answered, stopped):
+    def _optimization_report(
+        self, record, body, resolved, evaluations, answered, stopped, solver_cls
+    ):
         """Assemble the report, including where the search has narrowed the parameter to."""
+        unit = next(
+            (spec.unit for spec in solver_cls.metrics if spec.name == body.objective.metric),
+            "",
+        )
         graded = [e for e in evaluations if e.objective is not None]
         best = min(graded, key=lambda e: e.objective) if graded else None
         return optimize.OptimizationReport(
@@ -840,7 +857,7 @@ class FenixSpoonCore:
             bracket=optimize.bracket_of(body.bounds, answered) if graded else None,
             evaluations_spent=len(evaluations),
             stopped="not_run" if not evaluations else stopped,
-            history=optimize.history_curve(body.objective, evaluations),
+            history=optimize.history_curve(body.objective, evaluations, unit),
         )
 
     # ---------------------------------------------------------------- workspace (#44)

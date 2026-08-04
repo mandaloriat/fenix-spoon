@@ -47,7 +47,7 @@ turn*, which makes this the one surface where exposing everything is actively wr
 | `inspect_environment` | what this installation is — capabilities, limits, quotas, cache |
 | `list_capabilities` | one line per capability, no schemas |
 | `describe_capability` | selected sections of one capability |
-| `create_object` | create a geometry, material, load case, design or study |
+| `create_object` | create a geometry, material, load case, design, study or optimization |
 | `get_object` | one object revision |
 | `patch_object` | apply an RFC 6902 patch, write the next revision |
 | `submit_job` | solve a design, or an inline solver + geometry + load case |
