@@ -284,11 +284,31 @@ def _check_bounds(bounds: tuple[float, float, float, float]) -> None:
         raise ValueError("bounds must satisfy xmin < xmax and ymin < ymax")
 
 
-def _check_inside(polygon: Polygon2D, bounds: tuple[float, float, float, float], what: str) -> None:
+def _check_inside(
+    polygon: Polygon2D,
+    bounds: tuple[float, float, float, float],
+    what: str,
+    *,
+    on_axis: bool = False,
+) -> None:
+    """Every vertex strictly inside `bounds` — except, for an axisymmetric section, the axis.
+
+    ``on_axis`` is the one relaxation, and it exists because of what r = 0 *is*. A body of
+    revolution that is solid on its own axis — the core of a solenoid, the shank of a
+    fastener — has its meridian section bounded by the axis, so its outline lies *on* the
+    left edge rather than inside it. Refusing that would make the commonest axisymmetric
+    shape there is unrepresentable, and the workaround (a sliver of background between the
+    material and the axis) is a lie about the geometry, not a nuisance.
+    """
     xmin, ymin, xmax, ymax = bounds
     for x, y in polygon.points:
+        if on_axis and x == xmin and ymin < y < ymax:
+            continue
         if not (xmin < x < xmax and ymin < y < ymax):
-            raise ValueError(f"{what} points must lie strictly inside the domain bounds")
+            raise ValueError(
+                f"{what} points must lie strictly inside the domain bounds"
+                + (" (only the axis edge r = 0 may be touched)" if on_axis else "")
+            )
 
 
 class Domain2D(BaseModel):
@@ -385,20 +405,138 @@ class Regions2D(BaseModel):
 
     @model_validator(mode="after")
     def _check(self) -> "Regions2D":
-        _check_bounds(self.bounds)
-        names = [r.name for r in self.regions]
-        if len(set(names)) != len(names):
-            raise ValueError("region names must be unique")
-        for region in self.regions:
-            _check_inside(region.shape, self.bounds, f"region {region.name!r}")
-        for i, a in enumerate(self.regions):
-            for b in self.regions[i + 1 :]:
-                if _outlines_cross(a.shape.points, b.shape.points):
-                    raise ValueError(
-                        f"regions {a.name!r} and {b.name!r} overlap partially; regions must be "
-                        "disjoint or fully nested"
-                    )
-        _check_boundaries(self.boundaries, [region.shape for region in self.regions])
+        _check_region_map(self.bounds, self.regions, self.boundaries)
+        return self
+
+
+def _check_region_map(
+    bounds: tuple[float, float, float, float],
+    regions: list[Region2D],
+    boundaries: list[BoundarySpec],
+    *,
+    on_axis: bool = False,
+) -> None:
+    """The rules a *filled region map* obeys, in one place for every kind that is one.
+
+    :class:`Regions2D` and :class:`Axisymmetric2D` are the same map of materials over a
+    rectangle read against different physics, and the rules — unique names, regions inside
+    the bounds, no partially overlapping outlines, boundary names that resolve — are the
+    same rules. Sharing the function rather than the prose is what keeps them so: two copies
+    would let a payload be legal as a plane section and illegal as a meridian one for no
+    reason a caller could see.
+    """
+    _check_bounds(bounds)
+    names = [r.name for r in regions]
+    if len(set(names)) != len(names):
+        raise ValueError("region names must be unique")
+    for region in regions:
+        _check_inside(region.shape, bounds, f"region {region.name!r}", on_axis=on_axis)
+    for i, a in enumerate(regions):
+        for b in regions[i + 1 :]:
+            if _outlines_cross(a.shape.points, b.shape.points):
+                raise ValueError(
+                    f"regions {a.name!r} and {b.name!r} overlap partially; regions must be "
+                    "disjoint or fully nested"
+                )
+    _check_boundaries(boundaries, [region.shape for region in regions])
+
+
+class Axisymmetric2D(BaseModel):
+    """A meridian (r, z) half-section of a body of revolution (protocol 1.13, #100).
+
+    The same *filled region map* as :class:`Regions2D` — every region is material, the mesh
+    covers the whole rectangle, later regions win where they nest — read against different
+    physics: the horizontal coordinate is a **radius**, and a solver integrates with the `r`
+    weight the cylindrical volume element carries, so one section stands for the whole
+    revolved body rather than for a slice per unit depth.
+
+    **What the kind buys is a refusal.** The same shape could always be sent as `regions2d`
+    with bounds starting at x = 0, meaning r — and a plane solver would accept it and quietly
+    solve a slice. The failure mode there is a wrong number, not an error. A discriminator of
+    its own is what lets `geometry_types` say which solvers read it that way, and the `422`
+    for the rest is the protection that was missing.
+
+    Two rules are specific to what these coordinates mean:
+
+    - **`rmin >= 0`**, checked here. A negative radius is not a domain a body of revolution
+      has; it is a payload that was authored as a plane section and mislabelled, and this is
+      the one place that can be caught cheaply.
+    - **A region may touch the axis** when the section reaches it. A solid shaft is bounded
+      by r = 0, and see :func:`_check_inside` for why refusing that would be worse than the
+      strictness it preserves elsewhere.
+
+    **A section that does not reach the axis is legitimate**, which a solver must not assume
+    away: the capacitive sensor that motivated this kind is an annular electrode a long way
+    out from the centreline, and its section starts at r = 20 mm. :attr:`reaches_axis` is how
+    an adapter asks, and the answer changes nothing about the weak form — only whether the
+    r = 0 edge is part of the boundary at all.
+
+    **The axis needs no mechanism of its own.** In an r-weighted weak form the boundary term
+    carries the same `r`, so at r = 0 it vanishes identically: the natural symmetry condition
+    is what an adapter gets by doing nothing there, and the only rule is not to put a
+    Dirichlet condition on it. A caller that wants to *name* the axis — to talk about it in a
+    load case — already can, with the `near` selector protocol 1.8 shipped:
+    `{"type": "near", "axis": "x", "value": 0.0}`.
+
+    Why the axis is *labelled* by the kind rather than by a field on it is
+    [ADR 0003](../../../docs/adr/0003-axisymmetric-axis-label.md).
+    """
+
+    type: Literal["axisymmetric2d"] = "axisymmetric2d"
+    bounds: tuple[float, float, float, float] = Field(
+        default=(0.0, -0.05, 0.05, 0.05),
+        description=(
+            "Meridian window as [rmin, zmin, rmax, zmax], in metres. **The first and third "
+            "entries are radii**, not x — `rmin >= 0` is enforced, and `rmin = 0` is what "
+            "puts the axis of revolution in the domain. A section that starts further out is "
+            "legitimate and common: an annular electrode has no reason to model the "
+            "centreline."
+        ),
+    )
+    regions: Annotated[
+        list[Region2D],
+        Field(
+            min_length=1,
+            description=(
+                "Material regions in painter's order, exactly as in `regions2d`: where two "
+                "nest, the later one wins, and partially overlapping outlines are rejected. "
+                "Points are (r, z), and may sit on r = 0 when the section reaches the axis."
+            ),
+        ),
+    ]
+    background: dict[str, float] = Field(
+        default={}, description="Material outside every region (typically air or vacuum)."
+    )
+    boundaries: list[BoundarySpec] = Field(
+        default=[],
+        description=(
+            "Named pieces of the boundary a load case can refer to (protocol 1.8, #85). "
+            "Empty by default. The axis needs no entry to be treated as one — it is the "
+            "natural condition — but naming it costs nothing new: `near` on axis `x` at 0.0."
+        ),
+    )
+
+    @property
+    def reaches_axis(self) -> bool:
+        """Whether r = 0 is part of this section.
+
+        A plain property rather than a computed field: it is a *reading* of `bounds` that an
+        adapter wants, not a second thing on the wire that could disagree with the first.
+        """
+        return self.bounds[0] == 0.0
+
+    @model_validator(mode="after")
+    def _check(self) -> "Axisymmetric2D":
+        if self.bounds[0] < 0.0:
+            raise ValueError(
+                f"rmin must be >= 0 for an axisymmetric section; got {self.bounds[0]}. The "
+                "first coordinate is a radius — a payload with a negative one is a plane "
+                "section that has been mislabelled, and solving it as a body of revolution "
+                "would return a number rather than an error"
+            )
+        _check_region_map(
+            self.bounds, self.regions, self.boundaries, on_axis=self.reaches_axis
+        )
         return self
 
 
@@ -413,5 +551,9 @@ def _outlines_cross(a: list[Point2D], b: list[Point2D]) -> bool:
     return False
 
 
-# Discriminated union of every geometry kind the protocol knows about.
-Geometry = Annotated[Domain2D | Regions2D, Field(discriminator="type")]
+#: Discriminated union of every geometry kind the protocol knows about.
+#:
+#: The horizontal coordinate means something different in the third member, and nothing but
+#: the discriminator says so — which is exactly why it is a member rather than a convention
+#: layered over `regions2d`. See :class:`Axisymmetric2D`.
+Geometry = Annotated[Domain2D | Regions2D | Axisymmetric2D, Field(discriminator="type")]

@@ -171,6 +171,7 @@ def build() -> str:
     )
     from fenixspoon.geometry import (
         AllOfSelector,
+        Axisymmetric2D,
         BoundarySpec,
         BoxSelector,
         Domain2D,
@@ -213,6 +214,10 @@ def build() -> str:
                 Domain2D,
                 Region2D,
                 Regions2D,
+                # Protocol 1.13, #100. Directly after `Regions2D` because it is the same
+                # filled-region model read against different physics — a reader who has just
+                # met regions needs only the paragraph that says what changes.
+                Axisymmetric2D,
                 # Protocol 1.8, #85. After the shapes, because a boundary is named *on* one:
                 # the spec first, then the five ways it can pick a piece out.
                 BoundarySpec,

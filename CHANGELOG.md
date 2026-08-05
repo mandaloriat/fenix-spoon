@@ -1,7 +1,7 @@
 # Changelog
 
 Notable changes to Fenix Spoon. The **wire protocol** has a version of its own
-(`MAJOR.MINOR`, currently 1.12) and its history is in
+(`MAJOR.MINOR`, currently 1.13) and its history is in
 [docs/04-wire-protocol.md](docs/04-wire-protocol.md); this file records what changed for the
 people who build on the toolkit, protocol bump or not.
 
@@ -15,6 +15,52 @@ project is pre-1.0, so the packages are versioned together and nothing here is a
 promise yet.
 
 ## Unreleased
+
+### Added — protocol 1.13: `axisymmetric2d`, and the slice it stops you solving by accident (#100)
+
+A third geometry kind: a meridian *(r, z)* half-section of a body of revolution, with two
+adapters that read it. Additive — a new member of a discriminated union — and the first new
+geometry kind since `regions2d`.
+
+- **The kind is a refusal, not a new shape.** A meridian section could always be sent: a
+  `regions2d` with bounds starting at zero and *meant* as r. Nothing validated it, nothing told
+  a viewer the horizontal axis was a radius, and nothing stopped it reaching a plane solver —
+  which accepted it and quietly solved a slice through an infinite prism. The failure mode was a
+  wrong number, not an error. `geometry_types` and the `422` behind it could always have
+  prevented that; what was missing was a kind to name.
+- **It is `regions2d`'s filled-region model, sharing the rules rather than restating them.**
+  Painter's-order nesting, refusal of properly crossing outlines, the open scalar `material`
+  dict — one function in `geometry.py` enforces them for both kinds, so a payload cannot be
+  legal as a plane section and illegal as a meridian one.
+- **Two rules are its own, and both come from what the coordinates mean.** `rmin >= 0`, because
+  a negative radius is a plane section that has been mislabelled. And a region may lie *on*
+  r = 0 when the section reaches the axis: a solid shaft is bounded by the axis, and the
+  strictly-inside rule would otherwise make the commonest axisymmetric shape unrepresentable.
+  The relaxation is the axis alone — a section starting at r = 19 mm has a truncation there.
+- **A section that does not reach the axis is legitimate**, and it is the motivating case: the
+  capacitive sensor's annular electrode sits 20 mm out. Solvers must not assume the axis is in
+  the domain, and the conformance corpus carries a section that proves the point.
+- **The axis needed no mechanism.** In an r-weighted weak form the boundary term carries the
+  same `r` and vanishes at r = 0, so the natural symmetry condition is what an adapter gets by
+  doing nothing there. Naming the axis costs nothing new either: protocol 1.8's `near` selector
+  already reaches it, and every selector family resolves against the new kind unchanged.
+- **`mock.electrostatics_axi2d` and `dolfinx.electrostatics_axi2d`**, following the rule this
+  repository states for the domain contract — the capability first, the protocol change second.
+  Axisymmetric electrostatics with the `r` weight in the integrand and in the volume element, so
+  the capacitance comes back in **farads for the whole revolved body** rather than per unit
+  depth. Electrodes are regions carrying a `voltage` material key, or named boundaries carrying
+  a `voltage` condition. Checked against a closed form from outside this repository — a coaxial
+  section's `2πεL/ln(b/a)`, which is a form the `r` weight cannot be dropped from — and against
+  the motivating sensor, where the answer sits above its parallel-plate estimate by the fringe
+  and the chamfer.
+- **The axis label is the kind's, not a field's** —
+  [ADR 0003](docs/adr/0003-axisymmetric-axis-label.md). A viewer cannot infer that a coordinate
+  is a radius, and drawing a meridian section on axes marked x and y teaches the wrong picture;
+  but a settable `axis_labels` would be a claim nothing can check, and a *derived* one would be
+  absent from exactly the payload a viewer usually reads, since the workspace stores a geometry
+  body as it was sent. So the discriminator carries the claim — it is the one statement the
+  server refuses payloads over — and `axisLabels()` in the SDK is the single place the mapping
+  lives.
 
 ### Changed — protocol 1.12: optimizations over HTTP, and `optimize.run` stops blocking (#22)
 

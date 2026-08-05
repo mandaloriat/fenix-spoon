@@ -17,3 +17,4 @@ current answer cannot tell you why the previous one stopped being right.
 |---|---|---|
 | [0001](0001-explorable-viewer.md) | An explorable viewer without a protocol change | Accepted |
 | [0002](0002-workspace-over-http.md) | The workspace over HTTP | Accepted |
+| [0003](0003-axisymmetric-axis-label.md) | The axis label belongs to the kind, not to a field | Accepted |

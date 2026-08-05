@@ -152,6 +152,16 @@ you are looking at, and the protocol has no way to address one
 ([#82](https://github.com/mandaloriat/fenix-spoon/issues/82)). The adapters exist so that design
 has a real consumer instead of a hypothetical one.
 
+**Axisymmetric electrostatics** has adapters and no page, and the missing piece is a widget
+rather than a protocol gap. `mock.electrostatics_axi2d` and `dolfinx.electrostatics_axi2d`
+solve a meridian (r, z) section of a body of revolution — potential, field magnitude, and the
+capacitance in farads for the whole revolved body — checked against a coaxial section's
+`2πεL/ln(b/a)` and driven by an adaptive-optics position sensor whose calibration curve is the
+answer it exists to produce. What a page would need is an editor that draws the section on axes
+marked *r* and *z*: `<fs-geometry-2d>` edits points on unlabelled ones, and labelling them is
+the widget change [ADR 0003](adr/0003-axisymmetric-axis-label.md) leaves open — the SDK's
+`axisLabels()` is where the labels come from when someone makes it.
+
 **Incompressible Navier–Stokes** was the obvious fourth example when the vector half of the
 protocol did not exist. It does now — protocol 1.1 added vector fields to both result kinds and
 `<fs-viewer>` draws glyphs — so what remains is the solve rather than the wire: a nonlinear

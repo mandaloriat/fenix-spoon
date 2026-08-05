@@ -10,12 +10,14 @@
  */
 
 import type {
+  Axisymmetric2D,
   Bounds2D,
   Geometry,
   JobEvent,
   JobRequest,
   JobResult,
   Polygon2D,
+  Region2D,
   Regions2D,
   Series1DData,
   SeriesAxis,
@@ -129,13 +131,69 @@ export function validatePolygon2D(value: unknown, what = 'polygon'): Polygon2D {
   return { type: 'polygon2d', points: parsed };
 }
 
-function requireInsideBounds(polygon: Polygon2D, bounds: Bounds2D, what: string): void {
+/**
+ * Every vertex strictly inside the bounds — except, for a meridian section, the axis.
+ *
+ * `onAxis` mirrors the server's one relaxation (protocol 1.13): a body of revolution that is
+ * solid on its own axis has its outline *on* the left edge, so refusing that would make the
+ * commonest axisymmetric shape unrepresentable. It applies only where that edge is r = 0.
+ */
+function requireInsideBounds(
+  polygon: Polygon2D,
+  bounds: Bounds2D,
+  what: string,
+  { onAxis = false }: { onAxis?: boolean } = {},
+): void {
   const [xmin, ymin, xmax, ymax] = bounds;
   for (const [x, y] of polygon.points) {
+    if (onAxis && x === xmin && y > ymin && y < ymax) continue;
     if (!(x > xmin && x < xmax && y > ymin && y < ymax)) {
       fail(`${what} points must lie strictly inside the domain bounds`);
     }
   }
+}
+
+/**
+ * The rules a *filled region map* obeys, shared by `regions2d` and `axisymmetric2d`.
+ *
+ * One function for both kinds, as on the server and for the same reason: two copies of
+ * "regions must be disjoint or fully nested" would drift, and the drift would be a payload
+ * legal as a plane section and illegal as a meridian one for no reason a caller could see.
+ */
+function validateRegions(
+  value: Record<string, unknown>,
+  bounds: Bounds2D,
+  kind: string,
+  { onAxis = false }: { onAxis?: boolean } = {},
+): Region2D[] {
+  const regions = value.regions;
+  if (!Array.isArray(regions) || regions.length < 1) fail(`${kind} needs at least one region`);
+  const parsed = regions.map((region, i) => {
+    if (!isRecord(region)) fail(`region ${i} must be an object`);
+    if (typeof region.name !== 'string' || region.name.length === 0) {
+      fail(`region ${i} needs a non-empty name`);
+    }
+    const shape = validatePolygon2D(region.shape, `region ${region.name}`);
+    requireInsideBounds(shape, bounds, `region ${region.name}`, { onAxis });
+    return {
+      name: region.name,
+      shape,
+      material: requireScalarMap(region.material, `region ${region.name} material`),
+    };
+  });
+  const names = new Set(parsed.map((r) => r.name));
+  if (names.size !== parsed.length) fail('region names must be unique');
+  for (let i = 0; i < parsed.length; i += 1) {
+    for (let j = i + 1; j < parsed.length; j += 1) {
+      if (outlinesCross(parsed[i]!.shape.points, parsed[j]!.shape.points)) {
+        fail(
+          `regions ${parsed[i]!.name} and ${parsed[j]!.name} overlap partially; ` +
+            'regions must be disjoint or fully nested',
+        );
+      }
+    }
+  }
+  return parsed;
 }
 
 export function validateGeometry(value: unknown): Geometry {
@@ -148,37 +206,29 @@ export function validateGeometry(value: unknown): Geometry {
   }
   if (value.type === 'regions2d') {
     const bounds = requireBounds(value.bounds);
-    const regions = value.regions;
-    if (!Array.isArray(regions) || regions.length < 1) fail('regions2d needs at least one region');
-    const parsed = regions.map((region, i) => {
-      if (!isRecord(region)) fail(`region ${i} must be an object`);
-      if (typeof region.name !== 'string' || region.name.length === 0) {
-        fail(`region ${i} needs a non-empty name`);
-      }
-      const shape = validatePolygon2D(region.shape, `region ${region.name}`);
-      requireInsideBounds(shape, bounds, `region ${region.name}`);
-      return {
-        name: region.name,
-        shape,
-        material: requireScalarMap(region.material, `region ${region.name} material`),
-      };
-    });
-    const names = new Set(parsed.map((r) => r.name));
-    if (names.size !== parsed.length) fail('region names must be unique');
-    for (let i = 0; i < parsed.length; i += 1) {
-      for (let j = i + 1; j < parsed.length; j += 1) {
-        if (outlinesCross(parsed[i]!.shape.points, parsed[j]!.shape.points)) {
-          fail(
-            `regions ${parsed[i]!.name} and ${parsed[j]!.name} overlap partially; ` +
-              'regions must be disjoint or fully nested',
-          );
-        }
-      }
-    }
     const geometry: Regions2D = {
       type: 'regions2d',
       bounds,
-      regions: parsed,
+      regions: validateRegions(value, bounds, 'regions2d'),
+      background: requireScalarMap(value.background, 'background'),
+    };
+    return geometry;
+  }
+  if (value.type === 'axisymmetric2d') {
+    const bounds = requireBounds(value.bounds);
+    // The rule the kind exists for. A negative radius is not a domain a body of revolution
+    // has — it is a plane section that has been mislabelled, and a solver would answer it
+    // rather than refuse it.
+    if (bounds[0] < 0) {
+      fail(
+        `rmin must be >= 0 for an axisymmetric section, got ${bounds[0]}: the first ` +
+          'coordinate is a radius',
+      );
+    }
+    const geometry: Axisymmetric2D = {
+      type: 'axisymmetric2d',
+      bounds,
+      regions: validateRegions(value, bounds, 'axisymmetric2d', { onAxis: bounds[0] === 0 }),
       background: requireScalarMap(value.background, 'background'),
     };
     return geometry;

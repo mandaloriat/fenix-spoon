@@ -23,7 +23,7 @@ from dolfinx.fem.petsc import LinearProblem
 from mpi4py import MPI
 from pydantic import BaseModel, Field
 
-from ..geometry import Regions2D
+from ..geometry import Axisymmetric2D, Regions2D
 from ._gmsh import gmsh_session
 from .base import CapabilityExample, ProgressEvent, Solver, SolverContext, SolverResult
 from .declarations import MAGNETOSTATICS_ASSUMPTIONS, MAGNETOSTATICS_METRICS, VTK_ARTIFACT
@@ -37,8 +37,14 @@ from .mock_magnetostatics import MU0
 from .registry import register
 
 
-def _build_tagged_mesh(geometry: Regions2D, mesh_size: float):
+def _build_tagged_mesh(geometry: Regions2D | Axisymmetric2D, mesh_size: float):
     """Mesh the domain with one physical group per region (background = tag 0).
+
+    Shared with the axisymmetric electrostatics adapter (#100), and it needed no change to
+    be: a meridian section is the same rectangle-and-regions topology read against different
+    physics, so the *meshing* is identical and only the weak form differs. The one thing to
+    know when the section reaches the axis is that a region may have an edge on r = 0 —
+    ``occ.fragment`` handles a coincident edge, which is why nothing here special-cases it.
 
     Regions are fragmented against the background rectangle so nested regions produce
     disjoint surfaces. Fragments are attributed to regions using the map ``occ.fragment``
@@ -239,11 +245,25 @@ class DolfinxMagnetostatics2D(Solver):
         )
 
 
-def _nodal_material(points, triangles, msh, cell_tags, geometry: Regions2D) -> np.ndarray:
-    """Per-node mu_r for display: the max over incident cells, so interfaces stay visible."""
-    mu_by_tag = {0: float(geometry.background.get("mu_r", 1.0))}
+def _nodal_material(
+    points,
+    triangles,
+    msh,
+    cell_tags,
+    geometry: Regions2D | Axisymmetric2D,
+    key: str = "mu_r",
+    default: float = 1.0,
+) -> np.ndarray:
+    """Per-node material value for display: the max over incident cells, so interfaces
+    stay visible.
+
+    ``key`` because the electrostatics adapter (#100) wants exactly this for ``eps_r`` and a
+    second copy would be a second chance to get the tag bookkeeping wrong. The default keeps
+    this module's own call reading as it did.
+    """
+    mu_by_tag = {0: float(geometry.background.get(key, default))}
     for index, region in enumerate(geometry.regions, start=1):
-        mu_by_tag[index] = float(region.material.get("mu_r", 1.0))
+        mu_by_tag[index] = float(region.material.get(key, default))
 
     num_cells = msh.topology.index_map(msh.topology.dim).size_local
     tags = np.zeros(num_cells, dtype=np.int32)
@@ -252,7 +272,7 @@ def _nodal_material(points, triangles, msh, cell_tags, geometry: Regions2D) -> n
             continue
         found = cell_tags.find(tag)
         tags[found[found < num_cells]] = tag
-    cell_mu = np.array([mu_by_tag.get(int(t), 1.0) for t in tags], dtype=float)
+    cell_mu = np.array([mu_by_tag.get(int(t), default) for t in tags], dtype=float)
 
     out = np.zeros(len(points))
     np.maximum.at(out, triangles, cell_mu[: len(triangles)][:, None].repeat(3, axis=1))
