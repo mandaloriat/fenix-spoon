@@ -24,7 +24,7 @@ from fenixspoon.core import FenixSpoonCore
 from fenixspoon.core.discovery import EnvironmentInfo
 from fenixspoon.core.identity import Principal, Quotas
 from fenixspoon.jobs import JobManager
-from fenixspoon.solvers import get_solver, load_plugins, registry
+from fenixspoon.solvers import get_solver, load_plugins, plugin_loads, plugins, registry
 from fenixspoon.solvers.plugins import DISABLE_ENV, MODULES_ENV
 
 SAMPLES = "plugin_samples"
@@ -48,11 +48,18 @@ def isolated():
     for name in set(sys.modules) - loaded:
         if name.startswith(SAMPLES):
             del sys.modules[name]
-    load_plugins(env={})
+    load_plugins(env={}, entry_points=[])
 
 
 def load(modules: str = "", **env: str):
-    return load_plugins(env={MODULES_ENV: modules, **env})
+    """Load through the environment variable, with the entry-point source explicitly empty.
+
+    `entry_points=None` would read the *real* installed metadata, which is hermetic only by
+    luck: any package on the runner declaring `fenixspoon.solvers` would add reports and
+    capabilities these assertions do not expect. Raised in review of #105 — passing `[]` is
+    what says "no entry points" rather than "whatever this machine has".
+    """
+    return load_plugins(env={MODULES_ENV: modules, **env}, entry_points=[])
 
 
 # --------------------------------------------------------------------- the happy path
@@ -64,7 +71,7 @@ def test_an_entry_point_puts_a_stranger_in_the_registry(isolated):
 
     assert report.status == "loaded"
     assert report.origin == "entry-point"
-    assert report.capabilities == ["sample.plugin2d"]
+    assert report.capabilities == ("sample.plugin2d",)
     assert get_solver("sample.plugin2d") is not None
 
 
@@ -108,7 +115,7 @@ def test_a_broken_import_is_reported_rather_than_raised(isolated):
 
     assert report.status == "failed"
     assert report.detail == "ImportError: No module named 'slepc4py'"
-    assert report.capabilities == []
+    assert report.capabilities == ()
     assert len(registry.registered_solvers()) == before
 
 
@@ -137,7 +144,7 @@ def test_a_half_loaded_module_says_what_it_managed(isolated):
     (report,) = load(f"{SAMPLES}.partial")
 
     assert report.status == "failed"
-    assert report.capabilities == ["sample.partial2d"]
+    assert report.capabilities == ("sample.partial2d",)
     assert get_solver("sample.partial2d") is not None
 
 
@@ -154,7 +161,39 @@ def test_disabled_is_not_the_same_answer_as_nothing_installed(isolated):
 
     assert report.status == "disabled"
     assert get_solver("sample.plugin2d") is None
-    assert load_plugins(env={}) == []
+    assert load_plugins(env={}, entry_points=[]) == []
+
+
+def test_unreadable_entry_point_metadata_is_a_report_rather_than_a_silence(isolated, monkeypatch):
+    """A corrupt `site-packages` must not look like an installation that declares no plugins.
+
+    Raised in review of #105, and the right catch: the first version returned an empty list, so
+    the one condition an operator could do nothing about was the one the report would not
+    mention — in the module whose whole argument is that a silence is the bug.
+    """
+
+    def unreadable(**_):
+        raise ValueError("invalid distribution metadata in site-packages")
+
+    monkeypatch.setattr(plugins.metadata, "entry_points", unreadable)
+    (report,) = load_plugins(env={})
+
+    assert report.status == "failed"
+    assert report.source == plugins.PLUGIN_GROUP
+    assert "invalid distribution metadata" in report.detail
+
+
+def test_a_recorded_load_cannot_be_edited_by_a_caller(isolated):
+    """`plugin_loads()` hands out the stored records, so they are frozen all the way down.
+
+    Raised in review of #105: a mutable `capabilities` list on a frozen dataclass is a record
+    with an editable field, and appending to one would edit what `environment.inspect` reports.
+    """
+    (report,) = load(f"{SAMPLES}.good")
+
+    with pytest.raises(AttributeError):
+        report.status = "failed"
+    assert isinstance(plugin_loads()[0].capabilities, tuple)
 
 
 @pytest.mark.parametrize("value", ["1", "true", "YES", "on"])
@@ -182,7 +221,7 @@ def test_the_environment_payload_carries_the_report(isolated, tmp_path):
 
 
 def test_an_installation_with_no_plugins_sends_an_empty_list(isolated, tmp_path):
-    load_plugins(env={})
+    load_plugins(env={}, entry_points=[])
     core = FenixSpoonCore(JobManager(data_dir=tmp_path / "jobs"))
     assert core.environment(principal=ANYONE).plugins == []
 

@@ -173,11 +173,20 @@ class PluginInfo(BaseModel):
 
     source: str = Field(
         description=(
-            "The entry-point name, or the module path as `FENIXSPOON_SOLVER_MODULES` spelled "
-            "it. Identifies the source to the operator who configured it."
+            "What the operator configured, named back to them: the entry-point name, or the "
+            "module path as `FENIXSPOON_SOLVER_MODULES` spelled it. Two entries report a "
+            "condition rather than an import and name the thing responsible instead — "
+            "`FENIXSPOON_DISABLE_PLUGINS` when loading is switched off, and "
+            "`fenixspoon.solvers` when the installed entry-point metadata could not be read "
+            "at all."
         )
     )
-    module: str = Field(description="The module the server imported. Empty when disabled.")
+    module: str = Field(
+        description=(
+            "The module the server imported. Empty on the two entries that report a "
+            "condition rather than an import."
+        )
+    )
     origin: Literal["entry-point", "environment"] = Field(
         description="Which mechanism declared it: an installed distribution, or the env var."
     )

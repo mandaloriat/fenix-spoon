@@ -538,8 +538,8 @@ One third-party adapter source, and what it did when the server imported it.
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `source` | `str` | yes |  | The entry-point name, or the module path as `FENIXSPOON_SOLVER_MODULES` spelled it. Identifies the source to the operator who configured it. |
-| `module` | `str` | yes |  | The module the server imported. Empty when disabled. |
+| `source` | `str` | yes |  | What the operator configured, named back to them: the entry-point name, or the module path as `FENIXSPOON_SOLVER_MODULES` spelled it. Two entries report a condition rather than an import and name the thing responsible instead — `FENIXSPOON_DISABLE_PLUGINS` when loading is switched off, and `fenixspoon.solvers` when the installed entry-point metadata could not be read at all. |
+| `module` | `str` | yes |  | The module the server imported. Empty on the two entries that report a condition rather than an import. |
 | `origin` | `'entry-point' \| 'environment'` | yes |  | Which mechanism declared it: an installed distribution, or the env var. |
 | `status` | `'loaded' \| 'failed' \| 'disabled'` | yes |  | `loaded` — imported cleanly. `failed` — raised; see `detail`, and note `capabilities` may still be non-empty if it registered before it raised. `disabled` — plugin loading is switched off, which is deliberately distinct from an empty list. |
 | `detail` | `str \| null` | no | `None` | Why it failed, as `TypeName: message`. The exception's text rather than a traceback: the sentence an operator needs, without a wall that also discloses more of the filesystem than the question warrants. |

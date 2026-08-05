@@ -239,7 +239,11 @@ required, so a caller can still tell "no cache here" from "this server is too ol
 
 The list is empty on an installation that declares none, and a server with plugin loading switched
 off reports one entry with `status: "disabled"` instead — *off* and *none installed* are different
-answers to the same missing capability.
+answers to the same missing capability. Two entries report a condition rather than an import and
+name what is responsible in `source` instead of a module: `FENIXSPOON_DISABLE_PLUGINS` for that
+one, and `fenixspoon.solvers` when the installed entry-point metadata could not be read at all —
+which is the one condition an operator can do nothing about, and so the last that should be
+silent.
 
 **Why this is on the wire at all** is the whole argument for the bump. A caller that does not find
 `acoustics.helmholtz2d` cannot otherwise tell "the operator did not install it" from "it is

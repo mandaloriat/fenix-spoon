@@ -37,7 +37,7 @@ from __future__ import annotations
 import importlib
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from importlib import metadata
 from typing import Literal
 
@@ -73,10 +73,17 @@ class PluginLoad:
     """What one third-party source did when it was imported."""
 
     source: str
-    """The entry-point name, or the module path as the environment spelled it."""
+    """What the operator configured, named back to them.
+
+    The entry-point name, or the module path as `FENIXSPOON_SOLVER_MODULES` spelled it — and on
+    the two entries that are not a module at all, the environment variable responsible:
+    `FENIXSPOON_DISABLE_PLUGINS` when loading is switched off, `PLUGIN_GROUP` when the installed
+    metadata could not be read.
+    """
 
     module: str
-    """The module that was imported. Same as `source` for the environment variable."""
+    """The module that was imported. Same as `source` for the environment variable, and empty
+    on an entry that reports a condition rather than an import."""
 
     origin: PluginOrigin
     status: PluginStatus
@@ -89,8 +96,13 @@ class PluginLoad:
     discloses more of the filesystem than the question warrants.
     """
 
-    capabilities: list[str] = field(default_factory=list)
-    """The solver names this source added to the registry — possibly non-empty on a failure."""
+    capabilities: tuple[str, ...] = ()
+    """The solver names this source added to the registry — possibly non-empty on a failure.
+
+    A tuple because the dataclass is frozen and `plugin_loads()` hands these objects out: a
+    mutable list here would be a frozen record with an editable field, and a caller that
+    appended to it would be editing what `environment.inspect` reports.
+    """
 
 
 _LOADS: list[PluginLoad] = []
@@ -105,18 +117,27 @@ def _disabled(env: Mapping[str, str]) -> bool:
     return env.get(DISABLE_ENV, "").strip().lower() in _TRUTHY
 
 
-def _entry_point_sources() -> list[tuple[str, str]]:
-    """`(name, module)` for every declared entry point, or nothing if the metadata is unreadable.
+def _entry_point_sources() -> tuple[list[tuple[str, str]], PluginLoad | None]:
+    """`(name, module)` for every declared entry point, plus a report if none could be read.
 
     A broken distribution in `site-packages` can make `entry_points()` itself raise, and this
-    function exists to *find* plugins — failing here would deny the operator the very report
-    that would explain the failure.
+    function exists to *find* plugins — so failing here would deny the operator the very report
+    that would explain the failure. But returning an empty list and nothing else would be worse
+    than either: unreadable metadata would look exactly like an installation that declares no
+    plugins, which is the silence this whole module argues against. So the failure comes back as
+    a load of its own.
     """
     try:
         points = metadata.entry_points(group=PLUGIN_GROUP)
-    except Exception:  # pragma: no cover - depends on a corrupt installation
-        return []
-    return [(point.name, point.value) for point in points]
+    except Exception as exc:
+        return [], PluginLoad(
+            source=PLUGIN_GROUP,
+            module="",
+            origin="entry-point",
+            status="failed",
+            detail=f"{type(exc).__name__}: {exc}",
+        )
+    return [(point.name, point.value) for point in points], None
 
 
 def _environment_sources(env: Mapping[str, str]) -> list[tuple[str, str]]:
@@ -132,8 +153,10 @@ def load_plugins(
     """Import every third-party source and record what each one did.
 
     Replaces the recorded report rather than appending to it, so a test may run this more than
-    once. `env` and `entry_points` are injectable for exactly that reason — the alternative is
-    monkeypatching `importlib.metadata`, which tests the patch.
+    once. `env` and `entry_points` are injectable for exactly that reason, and passing
+    `entry_points=[]` is also how a caller says *no entry points* rather than *whatever this
+    machine happens to have installed* — `None` reads the real metadata, which is hermetic only
+    by luck.
     """
     env = os.environ if env is None else env
     _LOADS.clear()
@@ -153,39 +176,37 @@ def load_plugins(
         )
         return plugin_loads()
 
+    if entry_points is None:
+        declared, unreadable = _entry_point_sources()
+        if unreadable is not None:
+            _LOADS.append(unreadable)
+    else:
+        declared, unreadable = list(entry_points), None
+
     sources: list[tuple[str, str, PluginOrigin]] = [
-        (name, module, "entry-point")
-        for name, module in (
-            _entry_point_sources() if entry_points is None else list(entry_points)
-        )
+        (name, module, "entry-point") for name, module in declared
     ]
     sources += [(name, module, "environment") for name, module in _environment_sources(env)]
 
     for source, module, origin in sources:
         before = {cls.name for cls in registered_solvers()}
+        status: PluginStatus = "loaded"
+        detail: str | None = None
         try:
             importlib.import_module(module)
         except Exception as exc:  # noqa: BLE001 - a stranger's import may raise anything
-            added = {cls.name for cls in registered_solvers()} - before
-            _LOADS.append(
-                PluginLoad(
-                    source=source,
-                    module=module,
-                    origin=origin,
-                    status="failed",
-                    detail=f"{type(exc).__name__}: {exc}",
-                    capabilities=sorted(added),
-                )
-            )
-            continue
+            # The registry is read *after* this either way: a module that registered one
+            # adapter and then raised really did add it, and the report says so.
+            status, detail = "failed", f"{type(exc).__name__}: {exc}"
         added = {cls.name for cls in registered_solvers()} - before
         _LOADS.append(
             PluginLoad(
                 source=source,
                 module=module,
                 origin=origin,
-                status="loaded",
-                capabilities=sorted(added),
+                status=status,
+                detail=detail,
+                capabilities=tuple(sorted(added)),
             )
         )
 
