@@ -64,6 +64,25 @@ from .registry import register
 SHIFT_FRACTION = 1e-4
 
 
+def _assemble_with_diagonal(form, bcs, value: float):
+    """Assemble a matrix, putting `value` on the rows a Dirichlet condition holds.
+
+    Two spellings because dolfinx has had two: the keyword was `diagonal` up to 0.7 and is
+    `diag` from 0.8, and the second is what 0.11 — the version this repository pins — accepts.
+    Handled the way this package already handles `LinearProblem`'s options prefix, by trying
+    and falling back, so an adapter works across the versions a user might have installed
+    rather than only the one CI runs.
+
+    The value matters here in a way it does not for a linear solve: a **zero** mass diagonal
+    is what sends a held degree of freedom to an infinite eigenvalue instead of putting a
+    spurious finite mode in the middle of the spectrum.
+    """
+    try:
+        return fem_petsc.assemble_matrix(form, bcs=bcs, diag=value)
+    except TypeError:  # dolfinx <= 0.7 spelled it `diagonal`
+        return fem_petsc.assemble_matrix(form, bcs=bcs, diagonal=value)
+
+
 def characteristic_frequency(geometry, youngs_modulus: float, density: float) -> float:
     """A frequency the structure's own material and size imply, in hertz.
 
@@ -275,7 +294,7 @@ class DolfinxModal2D(Solver):
         # of freedom to an infinite eigenvalue, out of the way of the wanted end.
         stiffness = fem_petsc.assemble_matrix(stiffness_form, bcs=bcs)
         stiffness.assemble()
-        mass = fem_petsc.assemble_matrix(mass_form, bcs=bcs, diagonal=0.0)
+        mass = _assemble_with_diagonal(mass_form, bcs, 0.0)
         mass.assemble()
 
         ctx.check_cancelled()
