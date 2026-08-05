@@ -37,6 +37,8 @@ Registers only when ``dolfinx``, ``gmsh``, ``mpi4py`` and ``slepc4py`` import cl
 live in ``tests/test_dolfinx_modal.py`` (``pytest -m fenics``).
 """
 
+from typing import Literal
+
 import numpy as np
 import ufl
 from dolfinx import default_scalar_type, fem
@@ -188,10 +190,17 @@ class DolfinxModal2D(Solver):
         density: float = Field(
             default=7850.0, gt=0.0, description="rho in kg/m^3; overridden per region."
         )
-        plane: str = Field(
+        # Both of these are closed sets and are typed as such, which is where the refusal
+        # belongs: an unknown `plane` would otherwise reach `lame()` and fall through to the
+        # plane-strain branch — the wrong physics, silently — and an unknown `fixed_edge`
+        # would reach `edge_locator` and raise a `KeyError` from inside the solve. Typed
+        # here, both are a 422 at submit with the choices listed, and `capability.describe`
+        # reports them as an enum so a form generator offers a picker rather than a text box.
+        # Raised in review of #101; the mock half has always been typed this way.
+        plane: Literal["stress", "strain"] = Field(
             default="stress", description="`stress` for a thin plate, `strain` for a long body."
         )
-        fixed_edge: str = Field(
+        fixed_edge: Literal["none", "xmin", "xmax", "ymin", "ymax"] = Field(
             default="none",
             description=(
                 "Edge of the bounding rectangle clamped in both directions, or `none`. "

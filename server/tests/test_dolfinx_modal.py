@@ -138,6 +138,26 @@ def test_a_load_case_restrains_the_structure(tmp_path):
     assert result.metrics["f_1"] == pytest.approx(beam_frequency(1.875104), rel=0.05)
 
 
+def test_the_closed_sets_are_typed_as_closed_sets():
+    """`plane` and `fixed_edge` are enums, so a wrong value is a 422 rather than a solve.
+
+    Raised in review of #101, and worth the test rather than only the fix: as bare strings,
+    an unknown `plane` reached `lame()` and fell through to the plane-strain branch — the
+    wrong physics with no symptom — while an unknown `fixed_edge` raised a `KeyError` from
+    inside `edge_locator`. Typed, both are refused at submit with the choices listed, and
+    `capability.describe` reports them as enums so a form offers a picker.
+    """
+    from pydantic import ValidationError
+
+    for bad in ({"plane": "planar"}, {"fixed_edge": "left"}):
+        with pytest.raises(ValidationError):
+            DolfinxModal2D.Params(**bad)
+    # And the schema says so, which is what a form generator and `capability.describe` read.
+    properties = DolfinxModal2D.Params.model_json_schema()["properties"]
+    assert properties["plane"]["enum"] == ["stress", "strain"]
+    assert "none" in properties["fixed_edge"]["enum"]
+
+
 def test_cancellation(tmp_path):
     cancel = threading.Event()
     cancel.set()
