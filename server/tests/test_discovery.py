@@ -134,6 +134,10 @@ def test_capability_list_stays_small(core):
     number alone was the wrong shape and why it never saw the installation it described.
     """
     summaries = core.capability_list()
+    # A rate needs a denominator, and an empty registry is a failure of its own rather than a
+    # vacuous pass: without this the division raises `ZeroDivisionError` and the report says
+    # nothing about what actually went wrong, which for a guard is the wrong way to fail.
+    assert summaries, "the registry is empty, so there is no installation to measure"
     payload = json.dumps([item.model_dump() for item in summaries])
     per_capability = len(payload) / len(summaries)
     assert per_capability < MAX_SUMMARY_BYTES, (
@@ -158,6 +162,7 @@ def test_the_compact_list_would_still_fit_a_full_fenicsx_install(core):
     environment cannot produce.
     """
     summaries = [item.model_dump() for item in core.capability_list()]
+    assert summaries, "the registry is empty, so the projection measures nothing"
     projected = json.dumps(summaries + summaries)
     assert len(projected) < MAX_LIST_BYTES, (
         f"a full install would send {len(projected)} bytes, over the {MAX_LIST_BYTES} ceiling"
