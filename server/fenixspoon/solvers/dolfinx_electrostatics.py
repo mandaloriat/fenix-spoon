@@ -162,16 +162,17 @@ class DolfinxElectrostaticsAxi2D(Solver):
         ctx.check_cancelled()
         ctx.progress(ProgressEvent(iteration=1, total=4, message="assembling"))
 
-        # Piecewise-constant permittivity, one value per cell via its region tag.
+        # Piecewise-*relative* permittivity, one value per cell via its region tag. Relative
+        # rather than absolute for the reason the form below is dimensionless — see there.
         Q = fem.functionspace(msh, ("DG", 0))
-        eps = fem.Function(Q)
-        eps.x.array[:] = EPS0 * float(geometry.background.get("eps_r", 1.0))
+        eps_r = fem.Function(Q)
+        eps_r.x.array[:] = float(geometry.background.get("eps_r", 1.0))
         for index, region in enumerate(geometry.regions, start=1):
             cells = cell_tags.find(index)
             if len(cells) == 0:
                 continue
             dofs = fem.locate_dofs_topological(Q, msh.topology.dim, cells)
-            eps.x.array[dofs] = EPS0 * float(region.material.get("eps_r", 1.0))
+            eps_r.x.array[dofs] = float(region.material.get("eps_r", 1.0))
 
         V = fem.functionspace(msh, ("Lagrange", 1))
         u, v = ufl.TrialFunction(V), ufl.TestFunction(V)
@@ -179,8 +180,22 @@ class DolfinxElectrostaticsAxi2D(Solver):
         # an element, and quadrature of `r` times a P1 gradient product is exact where a
         # cell-averaged radius would not be.
         r = ufl.SpatialCoordinate(msh)[0]
-        a = eps * ufl.inner(ufl.grad(u), ufl.grad(v)) * r * ufl.dx
-        rhs = fem.Constant(msh, dolfinx.default_scalar_type(0.0)) * v * r * ufl.dx
+
+        # **The assembled operator is dimensionless, and that is not tidiness.** The physical
+        # form carries `eps_0 * r`, which for a section a millimetre across puts every matrix
+        # entry near 1e-14 — below PETSc's *absolute* zero-pivot tolerance (1e-12). The
+        # factorization then fails a pivot check, and with `ksp_error_if_not_converged` off it
+        # does not raise: it returns a vector of infinities, from which this adapter computed a
+        # nan capacitance and reported it as an answer. Multiplying a homogeneous problem by a
+        # constant cannot change its solution, so both constants come out of the operator and
+        # go back into the energy below, where they belong and where nothing is factorized.
+        #
+        # `radius_scale` is that constant for the geometric half. Taking it from the bounds
+        # rather than hard-coding a metre keeps the conditioning the same for a MEMS gap and a
+        # metre-wide vessel, which is the property a fixed scale would quietly lose.
+        radius_scale = float(geometry.bounds[2])
+        a = eps_r * ufl.inner(ufl.grad(u), ufl.grad(v)) * (r / radius_scale) * ufl.dx
+        rhs = fem.Constant(msh, dolfinx.default_scalar_type(0.0)) * v * ufl.dx
 
         held = _electrode_dofs(geometry, ctx.conditions, V, msh, cell_tags)
         if not held:
@@ -209,15 +224,27 @@ class DolfinxElectrostaticsAxi2D(Solver):
         solved = problem.solve()
         potential = solved[0] if isinstance(solved, tuple) else solved
 
+        # A failed factorization is not an exception here — PETSc returns infinities and the
+        # run carries on to report a nan capacitance, which is the one outcome worse than a
+        # crash. Checked rather than trusted, because it is cheap and because this adapter has
+        # already produced it once.
+        if not np.all(np.isfinite(potential.x.array)):
+            raise ValueError(
+                "the linear solve returned a non-finite potential, so the factorization "
+                "failed rather than converged; this is a solver fault, not a bad geometry"
+            )
+
         ctx.check_cancelled()
         ctx.progress(ProgressEvent(iteration=3, total=4, message="post-processing"))
-        # The energy of the *revolved* body: the 2*pi is what turns a meridian integral into
-        # a volume one, and it is why the capacitance below is in farads rather than F/m.
+        # The energy of the *revolved* body, in real units: `eps_0` and the true `r` are back,
+        # since this is a sum rather than a factorization and nothing here cares about the
+        # magnitude. The 2*pi is what turns a meridian integral into a volume one, and it is
+        # why the capacitance below is in farads rather than farads per metre.
         energy = float(
             fem.assemble_scalar(
                 fem.form(
                     0.5
-                    * eps
+                    * (EPS0 * eps_r)
                     * ufl.inner(ufl.grad(potential), ufl.grad(potential))
                     * (2.0 * math.pi)
                     * r
