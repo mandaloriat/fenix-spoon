@@ -189,6 +189,7 @@ def build() -> str:
         FrameRef,
         Grid2DData,
         Mesh2DData,
+        ModeRef,
         ProgressEvent,
         ResultEnvelope,
         Series1DData,
@@ -251,6 +252,10 @@ def build() -> str:
                 # Protocol 1.7, #86. After `ArtifactRef` because it is an index *over* those:
                 # reading it before knowing what an artifact is would be reading it backwards.
                 FrameRef,
+                # Protocol 1.14, #101. Beside `FrameRef` because it is the same index over a
+                # different ordering — and reading the two together is what makes the
+                # distinction between them (ADR 0004) legible rather than surprising.
+                ModeRef,
             ],
         ),
         (

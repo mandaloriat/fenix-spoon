@@ -10,13 +10,16 @@
  */
 
 import type {
+  ArtifactRef,
   Axisymmetric2D,
   BoundarySpec,
   Bounds2D,
+  FrameRef,
   Geometry,
   JobEvent,
   JobRequest,
   JobResult,
+  ModeRef,
   Polygon2D,
   Region2D,
   Regions2D,
@@ -572,6 +575,7 @@ export function validateJobResult(value: unknown): JobResult {
       data: validateSeries1D(value.data, 'series1d data'),
       stats,
       artifacts,
+      ...indexArtifacts(artifacts),
     };
   }
 
@@ -603,6 +607,7 @@ export function validateJobResult(value: unknown): JobResult {
       stats,
       series,
       artifacts,
+      ...indexArtifacts(artifacts),
     };
   }
 
@@ -657,6 +662,7 @@ export function validateJobResult(value: unknown): JobResult {
       stats,
       series,
       artifacts,
+      ...indexArtifacts(artifacts),
     };
   }
 
@@ -674,7 +680,7 @@ function validateStats(value: unknown): Record<string, number> {
   return stats;
 }
 
-function validateArtifacts(value: unknown) {
+function validateArtifacts(value: unknown): ArtifactRef[] {
   if (value === undefined) return [];
   if (!Array.isArray(value)) fail('artifacts must be an array');
   return value.map((artifact, i) => {
@@ -682,11 +688,49 @@ function validateArtifacts(value: unknown) {
     for (const key of ['name', 'content_type', 'url'] as const) {
       if (typeof artifact[key] !== 'string') fail(`artifact ${i} needs a string ${key}`);
     }
+    // A file holds an instant or a mode, never both — the two indices below would otherwise
+    // order it two ways, and a consumer reading either would be told what the other denies.
+    // Refused rather than resolved, exactly as the server refuses it (ADR 0004).
+    if (artifact.t !== undefined && artifact.mode !== undefined) {
+      fail(`artifact ${i} carries both an instant and a mode; a file holds one or the other`);
+    }
     return {
       name: artifact.name as string,
       content_type: artifact.content_type as string,
       size: requireInteger(artifact.size, `artifact ${i} size`, { min: 0 }),
       url: artifact.url as string,
+      // Kept rather than dropped: these are what the two indices below are derived from, so
+      // a validator that discarded them would hand back a result whose history — or whose
+      // modal basis — had quietly become unreachable.
+      ...(artifact.t === undefined
+        ? {}
+        : { t: requireNumber(artifact.t, `artifact ${i} t`) }),
+      ...(artifact.mode === undefined
+        ? {}
+        : { mode: requireInteger(artifact.mode, `artifact ${i} mode`, { min: 1 }) }),
     };
   });
+}
+
+/**
+ * The two ordered indices a result carries, derived here rather than read off the payload.
+ *
+ * The server derives them from the artifacts for a reason — an index naming a file the result
+ * does not serve is then unrepresentable rather than merely wrong — and re-deriving them from
+ * the artifacts *this validator kept* extends that guarantee across the round trip. Reading
+ * the server's copy instead would let a validated result claim an instant it cannot fetch.
+ */
+function indexArtifacts(artifacts: ArtifactRef[]): {
+  frames?: FrameRef[];
+  modes?: ModeRef[];
+} {
+  const frames = artifacts
+    .filter((item): item is ArtifactRef & { t: number } => item.t !== undefined)
+    .sort((a, b) => a.t - b.t)
+    .map((item) => ({ t: item.t, artifact: item.name }));
+  const modes = artifacts
+    .filter((item): item is ArtifactRef & { mode: number } => item.mode !== undefined)
+    .sort((a, b) => a.mode - b.mode)
+    .map((item) => ({ mode: item.mode, artifact: item.name }));
+  return { ...(frames.length ? { frames } : {}), ...(modes.length ? { modes } : {}) };
 }

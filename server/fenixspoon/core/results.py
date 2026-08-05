@@ -51,6 +51,7 @@ from pydantic import BaseModel, Field, computed_field, model_validator
 
 from .. import fields as fieldlib
 from ..frames import FrameRef, check_frame_count, frames_of
+from ..modes import ModeRef, check_mode_count, modes_of
 from ..series import Series1DData
 from ..store import ResultSummary
 from . import errors
@@ -181,6 +182,13 @@ class ArtifactView(BaseModel):
             "artifacts carrying one are the result's frames (#86)."
         ),
     )
+    mode: int | None = Field(
+        default=None,
+        description=(
+            "The mode number this file holds, for an eigensolve; null otherwise. The "
+            "artifacts carrying one are the result's modes (#101)."
+        ),
+    )
     name: str = Field(description="Bare filename, e.g. `solution.vtk`.")
     content_type: str = Field(description="MIME type.")
     size: int = Field(description="Size on disk in bytes.")
@@ -243,6 +251,18 @@ class LeveledResult(Selective):
             return None
         return frames_of(self.artifacts) or None
 
+    @computed_field
+    @property
+    def modes(self) -> list[ModeRef] | None:
+        """The `artifacts` level's mode index: the files carrying a mode, in mode order.
+
+        Absent rather than empty on the same terms as `frames`, and for the same reason: a
+        caller can tell "this solve has no modal axis" from "you did not ask for the level".
+        """
+        if self.artifacts is None:
+            return None
+        return modes_of(self.artifacts) or None
+
     @model_validator(mode="after")
     def _check_frames(self) -> "LeveledResult":
         """The same cap as the envelope, on the level that is actually served compactly.
@@ -253,6 +273,7 @@ class LeveledResult(Selective):
         put the cap only on `ResultEnvelope`, which this route never builds.
         """
         check_frame_count(self.artifacts or [])
+        check_mode_count(self.artifacts or [])
         return self
 
 

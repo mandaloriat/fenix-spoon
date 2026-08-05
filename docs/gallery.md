@@ -152,6 +152,14 @@ you are looking at, and the protocol has no way to address one
 ([#82](https://github.com/mandaloriat/fenix-spoon/issues/82)). The adapters exist so that design
 has a real consumer instead of a hypothetical one.
 
+**Modal analysis** has adapters and no page, and what it is missing is a *widget* for the
+answer rather than the answer itself. `mock.modal2d` and `dolfinx.modal2d` return the
+spectrum as a curve `<fs-plot>` already draws and each mode shape as an artifact — but a
+modal page wants the two *linked*: click a peak, see that shape. The viewer draws one field
+at a time and the shapes cross as legacy VTK, so the page would need a fetch-and-parse step
+the browser packages do not have. The same addressable-instant problem the transient pair has,
+one ordering along.
+
 **Axisymmetric electrostatics** has adapters and no page, and the missing piece is a widget
 rather than a protocol gap. `mock.electrostatics_axi2d` and `dolfinx.electrostatics_axi2d`
 solve a meridian (r, z) section of a body of revolution — potential, field magnitude, and the

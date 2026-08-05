@@ -447,6 +447,30 @@ capability first and the protocol change second.
       and the answer is that the kind carries the claim while a settable field would be one a
       caller could get wrong.
 
+- [x] **A third kind of question, and the ordering it needed a name for** (#101, protocol
+      1.14) — `mock.modal2d` and `dolfinx.modal2d`, the natural frequencies and mode shapes of
+      a plane structure. Every adapter before these is a **forward** solve: given a load, what
+      does the structure do. An eigensolve is given nothing and asks what it does by itself, so
+      there is no right-hand side, no load case that pushes, and an answer that is a *spectrum*
+      rather than a field. ***The protocol had already built most of it and nobody had noticed
+      until something tried to use it***: the frequencies are a `series1d` — literally the
+      fourth row of that model's own table of purposes, *"where does it resonate?"*, which had
+      had no producer since 1.5 — and the mode shapes are an index over artifacts, which #86
+      built for time. *The one thing missing was a name.* A mode number fits in `t` and the
+      first draft put it there, and nothing failed: the index built, the ordering was right,
+      no test complained. It is refused anyway, in [ADR 0004](adr/0004-a-mode-is-not-an-instant.md)
+      — `t` is an instant with a unit, a mode number is an ordinal with no metric on it, and
+      one slot for both would have a viewer's time slider read "mode 3" as three seconds while
+      `frames` silently listed modes. **Unrestrained structures are the case this had to get
+      right**, not an edge case: a floating structure's stiffness matrix is singular, its three
+      rigid-body modes are counted rather than filtered, and that count is the check that says
+      the model is the one its author described. Checked against tabulated beam roots — 1.875
+      clamped, 4.730 free-free — rather than against itself, and the pair brackets the answer
+      because a lumped mass matrix under-predicts where a consistent one over-predicts. *What
+      it does not do is the plate element the deformable mirror also needs*: that is physics,
+      it is excluded by name in `plane_idealisation`, and #101 deliberately kept it out so that
+      one straightforward ask did not arrive looking like two hard ones.
+
 **Where this thread leaves the open questions.** #44 said `boundary_condition` and `load_case`
 would stay thin "until a capability needs them", and elasticity is the capability that did —
 so `load_case` acquired a body the same way `study` did at #48, by having something concrete to
