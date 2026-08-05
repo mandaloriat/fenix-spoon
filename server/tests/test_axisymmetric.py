@@ -15,6 +15,7 @@ Three things are being checked here, and they are different in kind:
 """
 
 import asyncio
+import json
 
 import numpy as np
 import pytest
@@ -217,6 +218,32 @@ def test_a_plane_solver_refuses_a_meridian_section(tmp_path):
     # readings of the same rectangle can never be swapped by accident in either direction.
     with pytest.raises(errors.GeometryKindMismatch):
         asyncio.run(core.submit("mock.electrostatics_axi2d", SOLENOID, {}, me))
+
+
+def test_the_refusal_reaches_a_caller_as_a_422(tmp_path, monkeypatch):
+    """The same refusal over HTTP, because that is where a caller meets it.
+
+    The core raising is the mechanism; `422` with both kinds named is the *answer*, and it is
+    what makes the mistake self-correcting — a caller reading "accepts regions2d, got
+    axisymmetric2d" knows which of the two it meant.
+    """
+    from fastapi.testclient import TestClient
+
+    from fenixspoon.main import create_app
+
+    monkeypatch.setenv("FENIXSPOON_DATA_DIR", str(tmp_path / "jobs"))
+    with TestClient(create_app()) as client:
+        response = client.post(
+            "/api/v1/jobs",
+            json={
+                "solver": "mock.magnetostatics2d",
+                "geometry": CAPACITIVE_SENSOR.model_dump(mode="json"),
+                "params": {"resolution": 32, "iterations": 10},
+            },
+        )
+    assert response.status_code == 422
+    detail = json.dumps(response.json())
+    assert "axisymmetric2d" in detail and "regions2d" in detail
 
 
 def test_the_capability_declares_the_kind_it_reads():
