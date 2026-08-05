@@ -81,6 +81,74 @@
           }
         ]
       }
+    },
+    {
+      "name": "coaxial meridian section (axisymmetric2d)",
+      "$comment": "The horizontal coordinate is a radius, and the boundaries name the two conductor surfaces with the `near` selector 1.8 already shipped — naming a piece of an axisymmetric section costs no new mechanism.",
+      "payload": {
+        "type": "axisymmetric2d",
+        "bounds": [0.001, 0.0, 0.003, 0.002],
+        "background": { "eps_r": 1.0 },
+        "regions": [
+          {
+            "name": "dielectric",
+            "shape": {
+              "type": "polygon2d",
+              "points": [[0.0015, 0.0005], [0.0025, 0.0005], [0.0025, 0.0015], [0.0015, 0.0015]]
+            },
+            "material": { "eps_r": 1.0 }
+          }
+        ],
+        "boundaries": [
+          { "name": "inner", "select": { "type": "near", "axis": "x", "value": 0.001 } },
+          { "name": "outer", "select": { "type": "near", "axis": "x", "value": 0.003 } }
+        ]
+      }
+    },
+    {
+      "name": "axisymmetric section that does not reach the axis",
+      "$comment": "An annular electrode 20 mm out from the centreline. rmin > 0 is legitimate and common, and a solver that assumed the axis was always in the domain would be wrong about the case the kind was added for.",
+      "payload": {
+        "type": "axisymmetric2d",
+        "bounds": [0.019, -0.0006, 0.0231, 0.0006],
+        "background": { "eps_r": 1.0 },
+        "regions": [
+          {
+            "name": "electrode",
+            "shape": {
+              "type": "polygon2d",
+              "points": [[0.02, 0.000095], [0.02005, 0.000045], [0.02205, 0.000045], [0.0221, 0.000095], [0.0221, 0.000245], [0.02, 0.000245]]
+            },
+            "material": { "voltage": 1.0 }
+          },
+          {
+            "name": "mirror",
+            "shape": {
+              "type": "polygon2d",
+              "points": [[0.0195, -0.000245], [0.0226, -0.000245], [0.0226, -0.000045], [0.0195, -0.000045]]
+            },
+            "material": { "voltage": 0.0 }
+          }
+        ]
+      }
+    },
+    {
+      "name": "axisymmetric region sitting on the axis",
+      "$comment": "A solid shaft is bounded by r = 0, so its outline lies *on* the left edge. The strictly-inside rule the other kinds apply is relaxed for the axis alone, and only when the section reaches it.",
+      "payload": {
+        "type": "axisymmetric2d",
+        "bounds": [0.0, -0.01, 0.02, 0.01],
+        "regions": [
+          {
+            "name": "rod",
+            "shape": {
+              "type": "polygon2d",
+              "points": [[0.0, -0.005], [0.005, -0.005], [0.005, 0.005], [0.0, 0.005]]
+            },
+            "material": { "voltage": 1.0 }
+          }
+        ]
+      }
     }
   ],
   "invalid": [
@@ -198,6 +266,40 @@
       "name": "unknown geometry type",
       "reason": "type must be a registered geometry kind",
       "payload": { "type": "sphere3d", "radius": 1.0 }
+    },
+    {
+      "name": "axisymmetric section with a negative rmin",
+      "reason": "the first coordinate is a radius; a negative one is a plane section that has been mislabelled, and it would otherwise solve and return a number nobody could tell was wrong",
+      "payload": {
+        "type": "axisymmetric2d",
+        "bounds": [-0.01, -0.01, 0.02, 0.01],
+        "regions": [
+          {
+            "name": "rod",
+            "shape": {
+              "type": "polygon2d",
+              "points": [[0.001, -0.005], [0.005, -0.005], [0.005, 0.005], [0.001, 0.005]]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "axisymmetric region touching a truncation edge",
+      "reason": "the relaxation of the strictly-inside rule is the *axis*, not the left edge: a section starting at r = 1 mm has a truncation there, and a region touching it is the ordinary error it always was",
+      "payload": {
+        "type": "axisymmetric2d",
+        "bounds": [0.001, -0.01, 0.02, 0.01],
+        "regions": [
+          {
+            "name": "rod",
+            "shape": {
+              "type": "polygon2d",
+              "points": [[0.001, -0.005], [0.005, -0.005], [0.005, 0.005], [0.001, 0.005]]
+            }
+          }
+        ]
+      }
     }
   ]
 }

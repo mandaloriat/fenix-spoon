@@ -41,7 +41,11 @@ Goal: the demo runs on an unstructured FEniCSx solve inside Docker, same UX.
       material regions in the geometry schema (#5) — added the `regions2d` geometry kind,
       `mock.magnetostatics2d` and `dolfinx.magnetostatics2d`, and `examples/solenoid-2d/`.
       *Axisymmetric (A-φ) formulation deferred: the planar cut is what the demo needs, and
-      axisymmetry belongs with a dedicated `axisymmetric2d` geometry kind.*
+      axisymmetry belongs with a dedicated `axisymmetric2d` geometry kind.* **That kind landed
+      two milestones later as protocol 1.13** (#100, in
+      [more physics](#more-physics-and-what-each-one-asked-of-the-protocol) below), brought by
+      an electrostatics case rather than by this one — the A-φ formulation is still deferred,
+      and is now a solver waiting on nothing but itself.
 - [x] Mesh-size/quality parameters exposed through solver params, with server-side caps (#6)
       — wall-clock timeout, cancellation, and a submit-time cell budget (`FENIXSPOON_MAX_CELLS`)
       refusing over-sized jobs with an actionable 422 before they start. Every solve reports
@@ -415,6 +419,33 @@ capability first and the protocol change second.
       and writing it found a real bug in the 1.8 resolver, which did two-row arithmetic on the
       `(3, N)` coordinates dolfinx passes. Verified in the FEniCSx CI job: the load case
       reproduces the edge shorthand to 1e-9, and a plate hangs from its own hole.
+
+- [x] **A geometry kind whose coordinates mean something else** (#100, protocol 1.13) —
+      `axisymmetric2d`, a meridian (r, z) half-section of a body of revolution, with
+      `mock.electrostatics_axi2d` and `dolfinx.electrostatics_axi2d` reading it. The first new
+      geometry kind since `regions2d`, and the first whose argument is not "the protocol cannot
+      express this shape": it always could. A caller sent `regions2d` with bounds starting at
+      zero and *meant* r, and the payload was legal, unremarkable, and accepted by a plane
+      solver — which answered a different problem and returned a number rather than an error.
+      ***What the kind adds is a refusal***: `geometry_types` and the `422` have been able to
+      stop that since 1.0 and had nothing to name. The rest is deliberately not new. It is a
+      **filled region map** like `regions2d` and shares that kind's rules by sharing the
+      function that enforces them; the axis needs no mechanism, because in an r-weighted weak
+      form the boundary term carries the same `r` and vanishes at r = 0, so the natural
+      symmetry condition is what an adapter gets by doing nothing there; and naming the axis
+      costs nothing either, since 1.8's `near` selector already reaches it. *Two rules are its
+      own and both come from the coordinates*: `rmin >= 0`, and a region may lie **on** r = 0
+      when the section reaches the axis — a solid shaft is bounded by the axis, and the
+      strictly-inside rule would otherwise exclude the commonest axisymmetric shape there is.
+      *A section that does not reach the axis is legitimate*, which the motivating case
+      demonstrates rather than merely permits: the capacitive sensor's section starts at
+      r = 20 mm. The physics is checked against an answer from outside this repository — a
+      coaxial section has a closed-form capacitance, and it is a form the `r` weight cannot be
+      dropped from. **The one question that needed deciding rather than building** was where
+      the axis *label* lives, since a viewer cannot infer it and drawing a meridian section on
+      x and y teaches the wrong picture; it is [ADR 0003](adr/0003-axisymmetric-axis-label.md),
+      and the answer is that the kind carries the claim while a settable field would be one a
+      caller could get wrong.
 
 **Where this thread leaves the open questions.** #44 said `boundary_condition` and `load_case`
 would stay thin "until a capability needs them", and elasticity is the capability that did —

@@ -36,9 +36,9 @@ Protocol host as fifteen tools, as an optional extra, and the same operations ar
 renderings of an operation agree, and the vertical slice runs as a test against both the mock
 and the FEniCSx solver.
 
-> **Status: M1, M2 and M2.5 done, M3 mostly.** Five physics run end to end on real FEniCSx
+> **Status: M1, M2 and M2.5 done, M3 mostly.** Six physics run end to end on real FEniCSx
 > solves (potential flow, magnetostatics, steady and transient heat conduction, linear
-> elasticity) and three of them have demo pages, the four browser packages — SDK, geometry editor,
+> elasticity, and axisymmetric electrostatics) and three of them have demo pages, the four browser packages — SDK, geometry editor,
 > field viewer and curve plot — are published from `client/`, and the airfoil demo is built from
 > them.
 > Pure-NumPy mock solvers mirror every FEniCSx one, so the full loop (edit geometry → submit →
@@ -48,16 +48,19 @@ and the FEniCSx solver.
 > 50 concurrent clients. What remains for M3 is deployment packaging — see the
 > [roadmap](docs/03-roadmap.md).
 >
-> **The wire protocol is at 1.12.** Four of the last five minors came from adding physics
+> **The wire protocol is at 1.13.** Five of the last seven minors came from adding physics
 > rather than from planning: a transient needed a metric to say what it is taken over (1.6)
-> and a way to index its instants (1.7), and elasticity needed a geometry that can *name*
-> pieces of its own boundary (1.8) and a load case to say what happens there (1.9). 1.10 and
+> and a way to index its instants (1.7), elasticity needed a geometry that can *name*
+> pieces of its own boundary (1.8) and a load case to say what happens there (1.9), and
+> axisymmetric electrostatics needed a geometry kind whose horizontal coordinate is a
+> **radius** (1.13) — not because the shape could not be sent before, but because a plane
+> solver accepted it and quietly solved a slice. 1.10 and
 > 1.11 are the exceptions and were designed first, in
 > [ADR 0002](docs/adr/0002-workspace-over-http.md): the workspace on HTTP, so a browser can
 > keep its designs under stable ids and solve by reference instead of resending a geometry it
 > already sent, then studies, so it can run one and read the curve back, and then optimizations
 > (1.12), which finishes that record. Every one is additive on the wire — a 1.0 client still
-> works — though 1.12 also changes one shipped behaviour: `optimize.run` returns a receipt
+> works — though 1.12 also changed one shipped behaviour: `optimize.run` returns a receipt
 > instead of blocking for the search, on every transport, and the waiting moved to the callers
 > that can afford it. *Read the version by splitting on the dot and comparing the halves as
 > integers: 1.10 is below 1.9 both as a float and as a string.*
@@ -75,9 +78,9 @@ see the [state-of-the-art survey](docs/01-state-of-the-art.md). Fenix Spoon is t
 |---|---|---|
 | **Simulation server** — FastAPI app: job submission, WebSocket progress streaming, cancellation, wall-clock timeouts, cell budgets, result + artifact retrieval | [`server/`](server/) | ✅ working |
 | **Solver adapter protocol** — plug any solver (FEniCSx, mock, anything Python) behind the same API via `SolverContext` (progress / cancel / artifacts) | [`server/fenixspoon/solvers/`](server/fenixspoon/solvers/) | ✅ working |
-| **Mock solvers** — potential flow, magnetostatics, steady and transient heat conduction, and linear elasticity in pure NumPy; let you develop the front-end without FEniCSx | [`mock_laplace.py`](server/fenixspoon/solvers/mock_laplace.py), [`mock_magnetostatics.py`](server/fenixspoon/solvers/mock_magnetostatics.py), [`mock_heat.py`](server/fenixspoon/solvers/mock_heat.py), [`mock_elasticity.py`](server/fenixspoon/solvers/mock_elasticity.py), [`mock_transient_heat.py`](server/fenixspoon/solvers/mock_transient_heat.py) | ✅ working |
-| **FEniCSx adapters** — the same five problems on unstructured Gmsh meshes, cross-validated against the mock solvers and against closed forms — Joukowski circulation, Kirsch stress concentration, `PL³/3EI` | [`dolfinx_poisson.py`](server/fenixspoon/solvers/dolfinx_poisson.py), [`dolfinx_magnetostatics.py`](server/fenixspoon/solvers/dolfinx_magnetostatics.py), [`dolfinx_heat.py`](server/fenixspoon/solvers/dolfinx_heat.py), [`dolfinx_elasticity.py`](server/fenixspoon/solvers/dolfinx_elasticity.py), [`dolfinx_transient_heat.py`](server/fenixspoon/solvers/dolfinx_transient_heat.py) | ✅ validated on dolfinx 0.11 (`pytest -m fenics`, CI job in the dolfinx image) |
-| **Wire protocol** — JSON schemas for geometry (`domain2d`, `regions2d`), jobs, events, `grid2d`/`mesh2d`/`series1d` results, artifacts — with a conformance fixture corpus | [`docs/04-wire-protocol.md`](docs/04-wire-protocol.md), [`protocol/fixtures/`](protocol/fixtures/) | ✅ v0 implemented |
+| **Mock solvers** — potential flow, magnetostatics, steady and transient heat conduction, linear elasticity, and axisymmetric electrostatics in pure NumPy; let you develop the front-end without FEniCSx | [`mock_laplace.py`](server/fenixspoon/solvers/mock_laplace.py), [`mock_magnetostatics.py`](server/fenixspoon/solvers/mock_magnetostatics.py), [`mock_heat.py`](server/fenixspoon/solvers/mock_heat.py), [`mock_elasticity.py`](server/fenixspoon/solvers/mock_elasticity.py), [`mock_transient_heat.py`](server/fenixspoon/solvers/mock_transient_heat.py), [`mock_electrostatics.py`](server/fenixspoon/solvers/mock_electrostatics.py) | ✅ working |
+| **FEniCSx adapters** — the same six problems on unstructured Gmsh meshes, cross-validated against the mock solvers and against closed forms — Joukowski circulation, Kirsch stress concentration, `PL³/3EI`, the coaxial `2πεL/ln(b/a)` | [`dolfinx_poisson.py`](server/fenixspoon/solvers/dolfinx_poisson.py), [`dolfinx_magnetostatics.py`](server/fenixspoon/solvers/dolfinx_magnetostatics.py), [`dolfinx_heat.py`](server/fenixspoon/solvers/dolfinx_heat.py), [`dolfinx_elasticity.py`](server/fenixspoon/solvers/dolfinx_elasticity.py), [`dolfinx_transient_heat.py`](server/fenixspoon/solvers/dolfinx_transient_heat.py), [`dolfinx_electrostatics.py`](server/fenixspoon/solvers/dolfinx_electrostatics.py) | ✅ validated on dolfinx 0.11 (`pytest -m fenics`, CI job in the dolfinx image) |
+| **Wire protocol** — JSON schemas for geometry (`domain2d`, `regions2d`, `axisymmetric2d`), jobs, events, `grid2d`/`mesh2d`/`series1d` results, artifacts — with a conformance fixture corpus | [`docs/04-wire-protocol.md`](docs/04-wire-protocol.md), [`protocol/fixtures/`](protocol/fixtures/) | ✅ v0 implemented |
 | **Progressive discovery** — ask what an installation *is*, list capabilities in a line each, describe one in the sections you need; solver adapters declare their metrics, artifacts and cost | [`core/discovery.py`](server/fenixspoon/core/discovery.py) | ✅ protocol 1.2 |
 | **Workspace** — versioned `geometry` / `material` / `design` / `study` / `optimization` objects as diffable JSON files under stable ids, edited with RFC 6902 patches, solved by reference. Reachable from every transport, HTTP included since 1.10 | [`objects.py`](server/fenixspoon/objects.py), [`core/workspace.py`](server/fenixspoon/core/workspace.py), [ADR 0002](docs/adr/0002-workspace-over-http.md) | ✅ protocol 1.10 |
 | **Compact results** — five response levels, declared engineering metrics, diagnostics, and nine bounded field queries (peak + location, integral, section, hotspots) that never move the array | [`core/results.py`](server/fenixspoon/core/results.py), [`fields.py`](server/fenixspoon/fields.py) | ✅ protocol 1.3 |
@@ -86,6 +89,7 @@ see the [state-of-the-art survey](docs/01-state-of-the-art.md). Fenix Spoon is t
 | **Time** — a metric declares whether it is taken over the payload or over the whole run, and a transient's instants are indexed by the artifacts that carry them: `frames` is derived from the files, so it cannot name one the result does not serve | [`frames.py`](server/fenixspoon/frames.py), [`solvers/base.py`](server/fenixspoon/solvers/base.py) | ✅ protocol 1.6–1.7 |
 | **Named boundaries** — a geometry can name pieces of its own outline, by topology (`outer`, `obstacle`), by stable point id, or by position (`near`, `box`); each resolves to the `f(x) -> bool` predicate `locate_entities_boundary` takes, so a mock and a FEniCSx adapter cannot disagree about which edge was meant | [`boundaries.py`](server/fenixspoon/boundaries.py), [`geometry.py`](server/fenixspoon/geometry.py) | ✅ protocol 1.8 |
 | **Load cases** — what happens on those boundaries, as a reusable object rather than a block in the design: one set of restraints and loads solves a family of shapes. A key no capability declares is a 422 at submit, never a no-op — an unread material key leaves a default, an unread condition leaves a clamp out of the assembly | [`core/conditions.py`](server/fenixspoon/core/conditions.py) | ✅ protocol 1.9 |
+| **Axisymmetric sections** — a meridian (r, z) half-section of a body of revolution as a geometry kind of its own, so a plane solver refuses it with a `422` instead of quietly solving a slice. `rmin >= 0` is validated, a region may sit *on* the axis, and a section that never reaches the axis is legitimate — the sensor that asked for the kind starts at r = 20 mm | [`geometry.py`](server/fenixspoon/geometry.py), [`mock_electrostatics.py`](server/fenixspoon/solvers/mock_electrostatics.py), [ADR 0003](docs/adr/0003-axisymmetric-axis-label.md) | ✅ protocol 1.13 |
 | **Optimization** — the other half of a study: an `optimization` object searches a bracket for the parameter value that minimises, maximises or hits a target on a declared metric. No run record, because the method is a pure function of the answers so far — a second run replays the same path at cache cost, and the report is recovered rather than stored. Reachable from every transport, HTTP included since 1.12, where the search runs on as a task the server owns and a page polls the trajectory | [`core/optimize.py`](server/fenixspoon/core/optimize.py) | ✅ protocol 1.12 |
 | **JSON-RPC 2.0 over stdio** — `fenix-spoon rpc --stdio`: 28 methods, no port opened and no web framework imported, NDJSON out and both framings in | [`rpc/`](server/fenixspoon/rpc/), [`docs/08-json-rpc.md`](docs/08-json-rpc.md) | ✅ working |
 | **MCP adapter** — the same operations as 15 tools for a Model Context Protocol host, bound to the RPC method table rather than to the core, so it cannot drift from the other transports | [`mcp_adapter.py`](server/fenixspoon/mcp_adapter.py), [`docs/09-mcp.md`](docs/09-mcp.md) | ✅ optional extra (`pip install "fenix-spoon[mcp]"`) |

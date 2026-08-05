@@ -24,7 +24,7 @@ from typing import Literal
 import numpy as np
 from pydantic import BaseModel, Field
 
-from ..geometry import Regions2D
+from ..geometry import Axisymmetric2D, Regions2D
 from .base import CapabilityExample, ProgressEvent, Solver, SolverContext, SolverResult
 from .declarations import MAGNETOSTATICS_ASSUMPTIONS, MAGNETOSTATICS_METRICS, VTK_ARTIFACT
 from .mock_laplace import (
@@ -39,9 +39,18 @@ MU0 = 4.0e-7 * np.pi
 
 
 def rasterize_regions(
-    geometry: Regions2D, xx: np.ndarray, yy: np.ndarray, key: str, default: float
+    geometry: Regions2D | Axisymmetric2D,
+    xx: np.ndarray,
+    yy: np.ndarray,
+    key: str,
+    default: float,
 ) -> np.ndarray:
-    """Sample one material property onto the grid, later regions winning over earlier ones."""
+    """Sample one material property onto the grid, later regions winning over earlier ones.
+
+    Takes either filled-region kind: the painter's-order rule is a property of the region
+    *list*, and reading a meridian section's materials is the same operation as reading a
+    plane one's — only what the coordinates mean differs, and that belongs to the solver.
+    """
     out = np.full(xx.shape, float(geometry.background.get(key, default)))
     for region in geometry.regions:
         mask = polygon_mask(np.asarray(region.shape.points, dtype=float), xx, yy)

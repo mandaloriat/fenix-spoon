@@ -13,13 +13,13 @@ protocol version below is shared: `rpc.describe` reports it too.
 
 ## Versioning
 
-The protocol is versioned `MAJOR.MINOR`, currently **1.12**, and a server reports what it
+The protocol is versioned `MAJOR.MINOR`, currently **1.13**, and a server reports what it
 speaks:
 
 ### `GET /api/v1/version`
 
 ```json
-{ "protocol": "1.12", "implementation": "0.1.0", "api_path": "/api/v1" }
+{ "protocol": "1.13", "implementation": "0.1.0", "api_path": "/api/v1" }
 ```
 
 **The one route that never requires an API key.** A client needs to know whether it can talk
@@ -142,6 +142,15 @@ started reporting `circulation`, `c_l`, `c_m_c4` and `x_cp`
 ([#68](https://github.com/mandaloriat/fenix-spoon/issues/68)), which is *not* a protocol change:
 `metrics` keys have always been whatever a capability declares, and `GET /capabilities/{name}`
 is where a caller learns them.
+
+**Protocol 1.13** adds one thing, to the part of the contract that had not grown since 1.0: a
+third [geometry kind](#geometry), `axisymmetric2d`
+([#100](https://github.com/mandaloriat/fenix-spoon/issues/100)). Additive, because a new member
+of a discriminated union is — a client that never sends one cannot tell. What it changes is what
+the server can *refuse*: a meridian half-section of a body of revolution used to travel as
+`regions2d` with bounds starting at zero, meaning r, and a plane solver would accept it and
+quietly solve a slice. `geometry_types` and the `422` behind it have always been able to prevent
+that; what was missing was a kind to name.
 
 ## Authentication
 
@@ -476,7 +485,7 @@ the same object `/solvers` embeds, fetched deliberately. Or pass `?inline_schema
 
 ## Geometry
 
-Geometry payloads are a discriminated union on `type`. Two kinds exist.
+Geometry payloads are a discriminated union on `type`. Three kinds exist.
 
 ### `domain2d` — a domain with a hole
 
@@ -517,6 +526,7 @@ Every region is *filled*; the mesh covers the whole rectangle.
   |---|---|---|
   | `mock.magnetostatics2d`, `dolfinx.magnetostatics2d` | `mu_r`, `current_density` | `1.0`, `0.0` |
   | `mock.heat2d`, `dolfinx.heat2d` | `k` (W/m·K), `q` (W/m³) | `1.0`, `0.0` |
+  | `mock.electrostatics_axi2d`, `dolfinx.electrostatics_axi2d` | `eps_r`, `voltage` (V) | `1.0`, — |
 
 - `background` applies wherever no region covers — but **what that means is the solver's
   choice, not the protocol's**. `mock.magnetostatics2d` solves the background as another
@@ -527,16 +537,78 @@ Every region is *filled*; the mesh covers the whole rectangle.
   list win**, like painter's order. Regions whose outlines properly *cross* are rejected —
   that describes an ambiguous material assignment rather than nesting.
 
+### `axisymmetric2d` — a meridian (r, z) section
+
+*Added in protocol 1.13 ([#100](https://github.com/mandaloriat/fenix-spoon/issues/100)).*
+
+A half-section of a **body of revolution**: the horizontal coordinate is a radius, and a solver
+integrates with the `r` weight the cylindrical volume element carries, so one section stands for
+the whole revolved body rather than for a slice per unit depth. Capacitance comes back in
+farads, not farads per metre.
+
+```json
+{
+  "type": "axisymmetric2d",
+  "bounds": [0.019, -0.0006, 0.0231, 0.0006],
+  "background": { "eps_r": 1.0 },
+  "regions": [
+    { "name": "electrode", "shape": { "type": "polygon2d", "points": [["..."]] },
+      "material": { "voltage": 1.0 } },
+    { "name": "mirror", "shape": { "type": "polygon2d", "points": [["..."]] },
+      "material": { "voltage": 0.0 } }
+  ]
+}
+```
+
+It is a **filled region map**, exactly like `regions2d`: painter's-order nesting, no partially
+overlapping outlines, the same open scalar `material` dict. Those are not restated rules but the
+same ones — one function in `geometry.py` enforces both kinds, so a payload cannot be legal as a
+plane section and illegal as a meridian one.
+
+**What the kind buys is a refusal.** The same rectangle could always be sent as `regions2d` with
+bounds starting at zero and *meant* as r; nothing validated it, nothing told a viewer the
+horizontal axis was a radius, and nothing stopped it reaching a plane solver — which would accept
+it and answer a different problem. The failure mode was a wrong number rather than an error.
+
+Two rules are its own, and both follow from what the coordinates mean:
+
+- **`rmin >= 0`**, enforced at validation. A negative radius is not a domain a body of revolution
+  has; it is a plane section that has been mislabelled, and this is where that is cheap to catch.
+- **A region may lie *on* r = 0** when the section reaches the axis. A solid shaft is bounded by
+  the axis, so its outline sits on the left edge; the strictly-inside rule below would otherwise
+  make the commonest axisymmetric shape unrepresentable. The relaxation is the axis alone — a
+  section starting at r = 19 mm has a *truncation* there, and a region touching it is refused.
+
+**A section that does not reach the axis is legitimate**, and a solver must not assume otherwise:
+an annular electrode 20 mm out has no reason to model the centreline. Nothing has to be said in
+the payload either way — `rmin` says it.
+
+**The axis needs no mechanism.** In an r-weighted weak form the boundary term carries the same
+`r`, so at r = 0 it vanishes identically: the natural symmetry condition is what an adapter gets
+by doing nothing there, and the only rule is not to impose a potential on it. A caller that wants
+to *name* the axis — to refer to it in a load case — uses the selector 1.8 already shipped:
+
+```json
+{ "name": "axis", "select": { "type": "near", "axis": "x", "value": 0.0 } }
+```
+
+The selector's `axis` names the **coordinate slot**, not the physical axis of revolution: `x` is
+the first coordinate, which for this kind is r. Why the kind carries the claim that the first
+coordinate is a radius, rather than a field on the payload saying so, is
+[ADR 0003](adr/0003-axisymmetric-axis-label.md).
+
 ### Common rules
 
-- `bounds`: `[xmin, ymin, xmax, ymax]`, with `xmin < xmax` and `ymin < ymax`.
-- `polygon2d.points`: ≥ 3 vertices, implicitly closed, strictly inside the bounds. Polygons
-  must be **simple** — self-intersections are rejected at validation time because downstream
-  meshers can hang on them.
+- `bounds`: `[xmin, ymin, xmax, ymax]`, with `xmin < xmax` and `ymin < ymax`. For
+  `axisymmetric2d` they are `[rmin, zmin, rmax, zmax]` and `rmin >= 0`.
+- `polygon2d.points`: ≥ 3 vertices, implicitly closed, strictly inside the bounds — except on the
+  axis of an `axisymmetric2d` section, as above. Polygons must be **simple** —
+  self-intersections are rejected at validation time because downstream meshers can hang on them.
 - A job is rejected with `422` if the geometry kind is not in the chosen solver's
-  `geometry_types` (see `GET /solvers`).
+  `geometry_types` (see `GET /solvers`). This is the whole protection an axisymmetric section
+  gets, and it is why the kind exists.
 
-Planned kinds: `spline2d` profiles, `axisymmetric2d`, `step3d` (uploaded CAD).
+Planned kinds: `spline2d` profiles, `step3d` (uploaded CAD).
 
 ## Workspace objects
 

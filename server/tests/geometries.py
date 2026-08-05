@@ -2,7 +2,15 @@
 
 import numpy as np
 
-from fenixspoon.geometry import Domain2D, Polygon2D, Region2D, Regions2D
+from fenixspoon.geometry import (
+    Axisymmetric2D,
+    BoundarySpec,
+    Domain2D,
+    NearSelector,
+    Polygon2D,
+    Region2D,
+    Regions2D,
+)
 
 
 def rect(x0: float, y0: float, x1: float, y1: float) -> Polygon2D:
@@ -118,3 +126,108 @@ UNIFORM_BEAM = Regions2D(
 #: times the far field. The hole is a tenth of the plate half-width, which is "wide" enough
 #: for the infinite-plate solution to be the right comparison.
 PLATE_WITH_HOLE = Domain2D(bounds=(-1.0, -1.0, 1.0, 1.0), obstacle=circle(0.1))
+
+
+# ------------------------------------------------------- axisymmetric sections (#100)
+
+#: A coaxial section, and the reason it is here: **it has a closed-form capacitance**.
+#:
+#: Between two concentric cylinders the field is purely radial, so `C = 2*pi*eps*L/ln(b/a)`
+#: exactly — and the truncation at the two z ends costs nothing, because the exact solution
+#: does not vary with z and a zero-flux plane is therefore not an approximation but a
+#: symmetry. That makes it the one axisymmetric case where a solver can be checked against an
+#: answer from outside this repository rather than against itself, and it is a check the `r`
+#: weight cannot survive being dropped from: solved as a plane slice the same payload gives a
+#: number in the wrong units, let alone the wrong size.
+#:
+#: The region carries the background's own permittivity and exists because the schema demands
+#: at least one — the same reason `UNIFORM_BEAM` has one.
+COAX = Axisymmetric2D(
+    bounds=(0.001, 0.0, 0.003, 0.002),
+    regions=[
+        Region2D(
+            name="dielectric",
+            shape=rect(0.0015, 0.0005, 0.0025, 0.0015),
+            material={"eps_r": 1.0},
+        )
+    ],
+    background={"eps_r": 1.0},
+    boundaries=[
+        BoundarySpec(
+            name="inner",
+            select=NearSelector(axis="x", value=0.001),
+            description="The inner conductor's surface, at r = a.",
+        ),
+        BoundarySpec(
+            name="outer",
+            select=NearSelector(axis="x", value=0.003),
+            description="The outer conductor's inner surface, at r = b.",
+        ),
+    ],
+)
+
+#: The section that asked for the geometry kind: an adaptive-optics position sensor (#100).
+#:
+#: An annular electrode on the reference body, the gold-coated back of the mirror shell
+#: 90 µm away as the other plate, and a chamfer on the electrode's gap-facing corners. It is
+#: **a section of the same shape as physics-lab's Exercise 5, not a copy of its dimensions**:
+#: the exercise's radii, chamfer and guard are specified there and that repository is not
+#: edited from here. What is matched deliberately is the one number that makes the comparison
+#: mean anything — the annulus area over the gap gives a parallel-plate capacitance of
+#: 0.0273 nF against the exercise's quoted 0.02758 nF, within 1%.
+#:
+#: The published fit for the real sensor is 0.031904 nF, about 15.7% above its parallel-plate
+#: value, and that excess is fringe and chamfer. A solver on *this* section should land above
+#: the parallel-plate value for the same reason, by an amount this section's own proportions
+#: decide — which is why the tests assert the sign and a band rather than the published
+#: number. Reproducing 0.031904 nF would need the exercise's section, and that is the
+#: exercise's business.
+#:
+#: **It does not reach the axis**, and that is the point of having it here: r starts at 19 mm.
+#: A solver that assumed the axis was always in the domain would be wrong about the case the
+#: kind was added for.
+CAPACITIVE_SENSOR = Axisymmetric2D(
+    bounds=(0.019, -0.0006, 0.0231, 0.0006),
+    regions=[
+        Region2D(
+            name="electrode",
+            shape=Polygon2D(
+                points=[
+                    (0.0200, 0.000095),
+                    (0.02005, 0.000045),
+                    (0.02205, 0.000045),
+                    (0.0221, 0.000095),
+                    (0.0221, 0.000245),
+                    (0.0200, 0.000245),
+                ]
+            ),
+            material={"voltage": 1.0},
+        ),
+        Region2D(
+            name="mirror",
+            shape=rect(0.0195, -0.000245, 0.0226, -0.000045),
+            material={"voltage": 0.0},
+        ),
+    ],
+    background={"eps_r": 1.0},
+)
+
+#: The electrode's inner and outer radii and the gap, so a test can compute the
+#: parallel-plate value from the same numbers the section is built from rather than from a
+#: constant that would go stale the moment the fixture moved.
+SENSOR_R1, SENSOR_R2, SENSOR_GAP = 0.0200, 0.0221, 90e-6
+
+#: A section whose material sits *on* the axis: the shank of a fastener, the core of a
+#: solenoid — the commonest axisymmetric shape there is, and the one the strictly-inside rule
+#: would make unrepresentable if it applied to r = 0. Held at a potential so it is also a
+#: runnable case rather than only a validation one.
+ROD_ON_AXIS = Axisymmetric2D(
+    bounds=(0.0, -0.01, 0.02, 0.01),
+    regions=[
+        Region2D(name="rod", shape=rect(0.0, -0.005, 0.005, 0.005), material={"voltage": 1.0}),
+        Region2D(
+            name="shield", shape=rect(0.014, -0.008, 0.016, 0.008), material={"voltage": 0.0}
+        ),
+    ],
+    background={"eps_r": 1.0},
+)

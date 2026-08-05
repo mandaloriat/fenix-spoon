@@ -60,6 +60,18 @@ A rectangular domain filled with material regions over a background material.
 | `background` | `dict[str, float]` | no | `{}` | Material outside every region (typically air) |
 | `boundaries` | `list[BoundarySpec]` | no | `[]` | Named pieces of the boundary a load case can refer to (protocol 1.8, #85). Empty by default. |
 
+## `Axisymmetric2D`
+
+A meridian (r, z) half-section of a body of revolution (protocol 1.13, #100).
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `type` | `'axisymmetric2d'` | yes |  |  |
+| `bounds` | `tuple[float, float, float, float]` | no | `(0.0, -0.05, 0.05, 0.05)` | Meridian window as [rmin, zmin, rmax, zmax], in metres. **The first and third entries are radii**, not x — `rmin >= 0` is enforced, and `rmin = 0` is what puts the axis of revolution in the domain. A section that starts further out is legitimate and common: an annular electrode has no reason to model the centreline. |
+| `regions` | `list[Region2D]` | yes |  | Material regions in painter's order, exactly as in `regions2d`: where two nest, the later one wins, and partially overlapping outlines are rejected. Points are (r, z), and may sit on r = 0 when the section reaches the axis. |
+| `background` | `dict[str, float]` | no | `{}` | Material outside every region (typically air or vacuum). |
+| `boundaries` | `list[BoundarySpec]` | no | `[]` | Named pieces of the boundary a load case can refer to (protocol 1.8, #85). Empty by default. The axis needs no entry to be treated as one — it is the natural condition — but naming it costs nothing new: `near` on axis `x` at 0.0. |
+
 ## `BoundarySpec`
 
 A named piece of a geometry's boundary (protocol 1.8, #85).

@@ -15,7 +15,7 @@ import json
 
 import pytest
 from fastapi.testclient import TestClient
-from geometries import SOLENOID, UNIFORM_BEAM
+from geometries import ROD_ON_AXIS, SOLENOID, UNIFORM_BEAM
 from pydantic import ValidationError
 
 from fenixspoon.core import FenixSpoonCore, discovery, errors
@@ -40,6 +40,10 @@ SMOKE = {
     "mock.magnetostatics2d": (SOLENOID, {"resolution": 40, "iterations": 60}),
     "mock.heat2d": (SOLENOID, {"resolution": 40, "iterations": 60}),
     "mock.elasticity2d": (UNIFORM_BEAM, {"resolution": 32, "iterations": 200}),
+    # The axisymmetric one takes its own geometry kind, which is the point of it: a plane
+    # section here would be a `422` rather than a smoke case (#100). Its electrodes are
+    # regions rather than a load case, so the smoke call needs no conditions.
+    "mock.electrostatics_axi2d": (ROD_ON_AXIS, {"resolution": 40, "iterations": 60}),
     # Four steps, not a converged run: these tests ask which keys come back, and a
     # transient's cost is cells times steps.
     "mock.transient_heat2d": (SOLENOID, {"resolution": 32, "steps": 4, "duration": 10.0}),
@@ -61,6 +65,7 @@ FENICS_SMOKE = {
     "dolfinx.heat2d": (SOLENOID, {"mesh_size": 0.004}),
     "dolfinx.elasticity2d": (UNIFORM_BEAM, {"mesh_size": 0.03, "degree": 1}),
     "dolfinx.transient_heat2d": (SOLENOID, {"mesh_size": 0.004, "steps": 3, "duration": 10.0}),
+    "dolfinx.electrostatics_axi2d": (ROD_ON_AXIS, {"mesh_size": 5.0e-4}),
 }
 
 

@@ -191,8 +191,9 @@ Restarting introduces a state the in-process manager never had: a job the store 
 stream that can never terminate is worse than a job that admits it was lost.
 
 ### Geometry: parametric JSON, meshed server-side
-Clients send parametric descriptions (v0: `polygon2d` obstacle in a rectangular domain; later:
-spline profiles, axisymmetric sections, CSG of primitives). The server meshes with Gmsh
+Clients send parametric descriptions (v0: `polygon2d` obstacle in a rectangular domain; since
+1.13 also `axisymmetric2d`, a meridian (r, z) section of a body of revolution; later: spline
+profiles, CSG of primitives). The server meshes with Gmsh
 (OpenCascade kernel) and imports via `dolfinx.io.gmshio`. In-browser CAD kernels (OpenCascade.js)
 are deliberately out of the core: heavy, and the mesh must be produced server-side anyway.
 

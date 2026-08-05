@@ -41,8 +41,14 @@
  * values are an open map of scalars per capability — deliberately not an enum, so a new
  * physics is not a protocol change — which is why `ConditionValues` is `Record<string,
  * number>` rather than a union this file would have to grow.
+ *
+ * 1.13 added the `axisymmetric2d` geometry kind — a meridian (r, z) half-section of a body of
+ * revolution — and it is typed here because the geometry union is a shape this file already
+ * carries and the validator already enforces its rules. What it does *not* add is a field
+ * saying the horizontal coordinate is a radius: the discriminator says that, and
+ * `axisLabels()` below is the one place the mapping lives. See ADR 0003.
  */
-export const PROTOCOL_VERSION = '1.12';
+export const PROTOCOL_VERSION = '1.13';
 
 /** What `GET /api/v1/version` returns. The one endpoint that never requires a key. */
 export interface ProtocolVersion {
@@ -219,8 +225,43 @@ export interface Regions2D {
   boundaries?: BoundarySpec[];
 }
 
-export type Geometry = Domain2D | Regions2D;
+/**
+ * A meridian (r, z) half-section of a body of revolution (protocol 1.13).
+ *
+ * The same filled region map as `Regions2D`, read against different physics: `bounds` is
+ * `[rmin, zmin, rmax, zmax]` with `rmin >= 0`, and a solver integrates with the cylindrical
+ * `r` weight — so a result is for the whole revolved body, not per unit depth.
+ *
+ * A region may lie *on* r = 0 when the section reaches the axis (a solid shaft is bounded by
+ * it); a section that does not reach the axis is equally legitimate.
+ */
+export interface Axisymmetric2D {
+  type: 'axisymmetric2d';
+  /** `[rmin, zmin, rmax, zmax]`, in metres, with `rmin >= 0`. */
+  bounds: Bounds2D;
+  regions: Region2D[];
+  background?: Record<string, number>;
+  /** Named pieces of the boundary a load case can refer to; empty unless used. */
+  boundaries?: BoundarySpec[];
+}
+
+export type Geometry = Domain2D | Regions2D | Axisymmetric2D;
 export type GeometryKind = Geometry['type'];
+
+/**
+ * What the two coordinates of a geometry *are*, for a page that draws or labels one.
+ *
+ * A meridian section drawn on axes marked x and y teaches the wrong picture, and a viewer
+ * cannot infer the difference — so it is read off the discriminator, which is the one claim
+ * the server refuses payloads over (`rmin >= 0`, the `r` weight in the integrand). Here
+ * rather than in each page for the reason [ADR 0003](../../../docs/adr/0003-axisymmetric-axis-label.md)
+ * gives: two implementations of one mapping is how they come to disagree, silently.
+ *
+ * Labels, not units or display names — those stay the page's, per ADR 0001.
+ */
+export function axisLabels(geometry: Pick<Geometry, 'type'>): readonly ['r', 'z'] | readonly ['x', 'y'] {
+  return geometry.type === 'axisymmetric2d' ? (['r', 'z'] as const) : (['x', 'y'] as const);
+}
 
 // ----------------------------------------------------------------- solvers
 

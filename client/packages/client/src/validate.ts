@@ -10,12 +10,15 @@
  */
 
 import type {
+  Axisymmetric2D,
+  BoundarySpec,
   Bounds2D,
   Geometry,
   JobEvent,
   JobRequest,
   JobResult,
   Polygon2D,
+  Region2D,
   Regions2D,
   Series1DData,
   SeriesAxis,
@@ -129,59 +132,146 @@ export function validatePolygon2D(value: unknown, what = 'polygon'): Polygon2D {
   return { type: 'polygon2d', points: parsed };
 }
 
-function requireInsideBounds(polygon: Polygon2D, bounds: Bounds2D, what: string): void {
+/**
+ * Every vertex strictly inside the bounds — except, for a meridian section, the axis.
+ *
+ * `onAxis` mirrors the server's one relaxation (protocol 1.13): a body of revolution that is
+ * solid on its own axis has its outline *on* the left edge, so refusing that would make the
+ * commonest axisymmetric shape unrepresentable. It applies only where that edge is r = 0.
+ */
+function requireInsideBounds(
+  polygon: Polygon2D,
+  bounds: Bounds2D,
+  what: string,
+  { onAxis = false }: { onAxis?: boolean } = {},
+): void {
   const [xmin, ymin, xmax, ymax] = bounds;
   for (const [x, y] of polygon.points) {
+    if (onAxis && x === xmin && y > ymin && y < ymax) continue;
     if (!(x > xmin && x < xmax && y > ymin && y < ymax)) {
       fail(`${what} points must lie strictly inside the domain bounds`);
     }
   }
 }
 
+/**
+ * The rules a *filled region map* obeys, shared by `regions2d` and `axisymmetric2d`.
+ *
+ * One function for both kinds, as on the server and for the same reason: two copies of
+ * "regions must be disjoint or fully nested" would drift, and the drift would be a payload
+ * legal as a plane section and illegal as a meridian one for no reason a caller could see.
+ */
+function validateRegions(
+  value: Record<string, unknown>,
+  bounds: Bounds2D,
+  kind: string,
+  { onAxis = false }: { onAxis?: boolean } = {},
+): Region2D[] {
+  const regions = value.regions;
+  if (!Array.isArray(regions) || regions.length < 1) fail(`${kind} needs at least one region`);
+  const parsed = regions.map((region, i) => {
+    if (!isRecord(region)) fail(`region ${i} must be an object`);
+    if (typeof region.name !== 'string' || region.name.length === 0) {
+      fail(`region ${i} needs a non-empty name`);
+    }
+    const shape = validatePolygon2D(region.shape, `region ${region.name}`);
+    requireInsideBounds(shape, bounds, `region ${region.name}`, { onAxis });
+    return {
+      name: region.name,
+      shape,
+      material: requireScalarMap(region.material, `region ${region.name} material`),
+    };
+  });
+  const names = new Set(parsed.map((r) => r.name));
+  if (names.size !== parsed.length) fail('region names must be unique');
+  for (let i = 0; i < parsed.length; i += 1) {
+    for (let j = i + 1; j < parsed.length; j += 1) {
+      if (outlinesCross(parsed[i]!.shape.points, parsed[j]!.shape.points)) {
+        fail(
+          `regions ${parsed[i]!.name} and ${parsed[j]!.name} overlap partially; ` +
+            'regions must be disjoint or fully nested',
+        );
+      }
+    }
+  }
+  return parsed;
+}
+
+/**
+ * The named boundaries a geometry carries (protocol 1.8), kept rather than dropped.
+ *
+ * Every validator here rebuilds its value field by field, which is what makes a field nobody
+ * wired up vanish silently — and this one had. Since `validateJobRequest` runs a geometry
+ * through here on its way to the server, a caller who checked its request before sending it
+ * got back a geometry with its boundary *names* removed, and then a 422 for a load case
+ * naming a boundary that no longer existed. The 1.13 coax section is the case that made this
+ * load-bearing: its electrodes are named boundaries, so validating it destroyed it.
+ *
+ * The check is deliberately shallow — a name, a selector object, and names unique within one
+ * geometry, which is what the server enforces at this level. Re-implementing the five
+ * selector families here would be a second place for them to drift, and the failure that
+ * matters is losing the field, not accepting a malformed selector the server will refuse.
+ */
+function validateBoundaries(value: unknown): BoundarySpec[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) fail('boundaries must be an array');
+  const parsed = value.map((entry, i) => {
+    if (!isRecord(entry)) fail(`boundary ${i} must be an object`);
+    if (typeof entry.name !== 'string' || entry.name.length === 0) {
+      fail(`boundary ${i} needs a non-empty name`);
+    }
+    if (!isRecord(entry.select) || typeof entry.select.type !== 'string') {
+      fail(`boundary ${entry.name} needs a select with a type`);
+    }
+    return entry as unknown as BoundarySpec;
+  });
+  const names = new Set(parsed.map((entry) => entry.name));
+  if (names.size !== parsed.length) fail('boundary names must be unique within one geometry');
+  return parsed;
+}
+
+/** `{...spread}` of an optional field, so an absent one stays absent rather than becoming null. */
+function withBoundaries<T>(geometry: T, boundaries: BoundarySpec[] | undefined): T {
+  return boundaries === undefined ? geometry : { ...geometry, boundaries };
+}
+
 export function validateGeometry(value: unknown): Geometry {
   if (!isRecord(value)) fail('geometry must be an object');
+  const boundaries = validateBoundaries(value.boundaries);
   if (value.type === 'domain2d') {
     const bounds = requireBounds(value.bounds);
     const obstacle = validatePolygon2D(value.obstacle, 'obstacle');
     requireInsideBounds(obstacle, bounds, 'obstacle');
-    return { type: 'domain2d', bounds, obstacle };
+    return withBoundaries({ type: 'domain2d' as const, bounds, obstacle }, boundaries);
   }
   if (value.type === 'regions2d') {
     const bounds = requireBounds(value.bounds);
-    const regions = value.regions;
-    if (!Array.isArray(regions) || regions.length < 1) fail('regions2d needs at least one region');
-    const parsed = regions.map((region, i) => {
-      if (!isRecord(region)) fail(`region ${i} must be an object`);
-      if (typeof region.name !== 'string' || region.name.length === 0) {
-        fail(`region ${i} needs a non-empty name`);
-      }
-      const shape = validatePolygon2D(region.shape, `region ${region.name}`);
-      requireInsideBounds(shape, bounds, `region ${region.name}`);
-      return {
-        name: region.name,
-        shape,
-        material: requireScalarMap(region.material, `region ${region.name} material`),
-      };
-    });
-    const names = new Set(parsed.map((r) => r.name));
-    if (names.size !== parsed.length) fail('region names must be unique');
-    for (let i = 0; i < parsed.length; i += 1) {
-      for (let j = i + 1; j < parsed.length; j += 1) {
-        if (outlinesCross(parsed[i]!.shape.points, parsed[j]!.shape.points)) {
-          fail(
-            `regions ${parsed[i]!.name} and ${parsed[j]!.name} overlap partially; ` +
-              'regions must be disjoint or fully nested',
-          );
-        }
-      }
-    }
     const geometry: Regions2D = {
       type: 'regions2d',
       bounds,
-      regions: parsed,
+      regions: validateRegions(value, bounds, 'regions2d'),
       background: requireScalarMap(value.background, 'background'),
     };
-    return geometry;
+    return withBoundaries(geometry, boundaries);
+  }
+  if (value.type === 'axisymmetric2d') {
+    const bounds = requireBounds(value.bounds);
+    // The rule the kind exists for. A negative radius is not a domain a body of revolution
+    // has — it is a plane section that has been mislabelled, and a solver would answer it
+    // rather than refuse it.
+    if (bounds[0] < 0) {
+      fail(
+        `rmin must be >= 0 for an axisymmetric section, got ${bounds[0]}: the first ` +
+          'coordinate is a radius',
+      );
+    }
+    const geometry: Axisymmetric2D = {
+      type: 'axisymmetric2d',
+      bounds,
+      regions: validateRegions(value, bounds, 'axisymmetric2d', { onAxis: bounds[0] === 0 }),
+      background: requireScalarMap(value.background, 'background'),
+    };
+    return withBoundaries(geometry, boundaries);
   }
   fail(`unknown geometry type ${JSON.stringify(value.type)}`);
 }
@@ -231,10 +321,27 @@ export function validateJobRequest(value: unknown): JobRequest {
   }
   const geometry = validateGeometry(value.geometry);
   if (value.params !== undefined && !isRecord(value.params)) fail('params must be an object');
+  // `conditions` was dropped here for the same reason `boundaries` was, and the two failures
+  // compose into one: a caller validating an inline load case got back a request with the
+  // boundary names removed *and* the conditions that referred to them removed, so the
+  // round trip silently became a different solve. Kept and checked as the open map of scalars
+  // the protocol says it is — the keys belong to the capability, so nothing here judges them.
+  const conditions =
+    value.conditions === undefined
+      ? undefined
+      : Object.fromEntries(
+          Object.entries(
+            isRecord(value.conditions) ? value.conditions : fail('conditions must be an object'),
+          ).map(([boundary, applied]) => [
+            boundary,
+            requireScalarMap(applied, `conditions.${boundary}`),
+          ]),
+        );
   return {
     solver: value.solver,
     geometry,
     params: (value.params as Record<string, unknown>) ?? {},
+    ...(conditions === undefined ? {} : { conditions }),
   };
 }
 

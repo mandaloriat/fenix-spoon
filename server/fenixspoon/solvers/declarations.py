@@ -31,6 +31,25 @@ TWO_DIMENSIONAL = Assumption(
     excludes=["end_effects", "span_efficiency", "three_dimensional_flow"],
 )
 
+#: The other way to be two-dimensional, and it arrived with `axisymmetric2d` (#100).
+#:
+#: Deliberately spelled `two_dimensional` like its sibling above, because it answers the same
+#: question — *what is the third dimension doing?* — and a caller filtering on the name should
+#: find an answer whichever reduction a capability made. What it says is the opposite of the
+#: prism, and the difference is not cosmetic: results are for the **whole revolved body**
+#: rather than per unit depth, so a capacitance comes back in farads and not farads per metre.
+AXISYMMETRIC = Assumption(
+    name="two_dimensional",
+    statement=(
+        "A meridian (r, z) half-section of a body of revolution. Nothing varies with the "
+        "azimuthal angle, and every reported quantity is for the whole revolved body rather "
+        "than per unit depth. A feature that breaks the symmetry — a slot, a lead-out, a "
+        "tilt between the two bodies — is not modelled and cannot be approximated by "
+        "refining this one."
+    ),
+    excludes=["azimuthal_variation", "tilt", "non_axisymmetric_features"],
+)
+
 #: The legacy-VTK dump every adapter can attach. One spec because it is one file with one
 #: meaning, and all four adapters gate it behind a param called `write_vtk`.
 VTK_ARTIFACT = ArtifactSpec(
@@ -234,6 +253,145 @@ MAGNETOSTATICS_ASSUMPTIONS = [
         excludes=["eddy_current", "core_loss", "hysteresis", "inductance_at_frequency"],
     ),
     TWO_DIMENSIONAL,
+]
+
+#: Axisymmetric electrostatics: the capacitance, and the two numbers it is built from (#100).
+#:
+#: `capacitance` is the one a sensor is designed against, and it is the adapter's own rather
+#: than a declared reduction for a reason worth stating: it is `2W/V²`, and the `V` is a
+#: property of the *geometry* — the potential difference between the electrodes — which is
+#: nowhere in the result payload. Neither is the energy, which is an integral over the mesh
+#: rather than a reduction of a nodal array. `e_max` is a genuine reduction and is declared
+#: as one, which is also what makes the breakdown assumption below checkable.
+ELECTROSTATICS_METRICS = [
+    MetricSpec(
+        name="capacitance",
+        unit="F",
+        description=(
+            "Capacitance between the two electrodes, from the field energy: C = 2W/V². In "
+            "farads for the whole body of revolution — not per unit depth, which is what the "
+            "axisymmetric reduction buys. Absent when the model holds fewer than two distinct "
+            "potentials, since there is then no pair for a capacitance to be between."
+        ),
+    ),
+    MetricSpec(
+        name="energy",
+        unit="J",
+        description=(
+            "Electrostatic field energy, W = ½∫ε|∇V|² dV over the revolved volume. The "
+            "quantity the capacitance is read off, reported beside it so a caller can see "
+            "what it was divided by."
+        ),
+    ),
+    MetricSpec(
+        name="e_max",
+        unit="V/m",
+        description=(
+            "Peak field magnitude anywhere in the model, which is where a dielectric breaks "
+            "down first. Read it at an electrode edge with suspicion: a sharp corner has an "
+            "unbounded field in the continuum, so this number keeps rising as the mesh is "
+            "refined and describes the corner's sharpness as much as the design's."
+        ),
+        field="E",
+        reduction="max",
+    ),
+]
+
+#: Axisymmetric electrostatics: what the model assumes, and the one number that says when it
+#: stops being true.
+#:
+#: `no_breakdown` follows `linear_material`'s pattern from the magnetostatics set: a limit
+#: against a metric the run already reports, so "is this design in trouble?" is checkable
+#: rather than merely readable. The limit is dry air at atmospheric pressure — the wrong
+#: number for a vacuum gap or for a solid dielectric, which is why the statement names it.
+ELECTROSTATICS_ASSUMPTIONS = [
+    Assumption(
+        name="electrostatic",
+        statement=(
+            "No time derivative anywhere: charges are at rest and the field is the gradient "
+            "of a potential. Nothing here describes a displacement current, a dielectric "
+            "relaxation time, or the loss tangent that makes a real capacitor dissipate at "
+            "frequency — a device driven fast enough for those to matter needs a different "
+            "model, not a finer mesh of this one."
+        ),
+        excludes=["loss_tangent", "displacement_current", "resonant_frequency"],
+    ),
+    Assumption(
+        name="no_space_charge",
+        statement=(
+            "The dielectric carries no free charge: the equation solved is div(ε grad V) = 0. "
+            "Trapped charge in an insulator, an ionised gap and a semiconductor depletion "
+            "region all violate this, and each would shift the potential distribution rather "
+            "than merely scale it."
+        ),
+        excludes=["space_charge", "charge_injection"],
+    ),
+    Assumption(
+        name="linear_dielectric",
+        statement=(
+            "Permittivity is constant per region: D = ε_r ε_0 E, with no field dependence, no "
+            "anisotropy and no hysteresis. Good for air, glass and most polymers; poor for a "
+            "ferroelectric, whose ε_r varies by a factor over the range a device sees."
+        ),
+        excludes=["ferroelectric_hysteresis", "anisotropic_permittivity"],
+    ),
+    Assumption(
+        name="ideal_conductors",
+        statement=(
+            "An electrode is a perfect equipotential with no resistance and no surface "
+            "structure. The capacitance is therefore geometric, and nothing here describes "
+            "electrode resistance, contact potential, or the roughness of a coating."
+        ),
+        excludes=["electrode_resistance", "contact_potential", "surface_roughness"],
+    ),
+    Assumption(
+        name="no_breakdown",
+        statement=(
+            "The dielectric is assumed to hold. The solve is linear and will happily report a "
+            "field above the strength of the material actually between the electrodes — "
+            "compare `e_max` against it. The declared limit is dry air at atmospheric "
+            "pressure, roughly 3 MV/m; a vacuum gap or a solid dielectric holds far more, and "
+            "a sub-millimetre air gap holds more too (Paschen), so treat it as the "
+            "conservative case rather than the answer."
+        ),
+        quantity="e_max",
+        limit=3.0e6,
+        comparator="<",
+        excludes=["breakdown_voltage", "partial_discharge", "corona"],
+    ),
+    Assumption(
+        name="truncated_domain",
+        statement=(
+            "The modelled window is closed by a zero-flux condition wherever no potential is "
+            "imposed, so no field crosses the truncation. That is exact on the axis of "
+            "revolution and on a symmetry plane, and an approximation everywhere else: "
+            "capacitance to anything outside the window — a case, a nearby ground, the rest "
+            "of the instrument — is not in the answer. Move the boundary out and watch the "
+            "number settle, which is the only check this model offers on it."
+        ),
+        excludes=["stray_capacitance", "capacitance_to_ground"],
+    ),
+    AXISYMMETRIC,
+]
+
+#: What an electrostatics load case may say on a named boundary (#100).
+#:
+#: One key, because one is what the physics needs: an electrode surface at a potential. The
+#: other half of the pair — a *region* held at a potential by its `voltage` material key — is
+#: not a condition, and the difference is real rather than a spelling: a region is a metal
+#: body in the section, a boundary is a face of the modelled window, and the sensor's two
+#: electrodes are the first while its symmetry planes are the second.
+ELECTROSTATICS_CONDITIONS = [
+    ConditionSpec(
+        name="voltage",
+        unit="V",
+        description=(
+            "Potential held on this boundary, in volts. With no potential imposed anywhere "
+            "the problem is singular — a field is defined by differences, so something must "
+            "pin one — and the solve says so rather than returning an arbitrary constant."
+        ),
+        kind="dirichlet",
+    ),
 ]
 
 #: Heat conduction: the assumption that makes `t_max` an equilibrium rather than an answer.
