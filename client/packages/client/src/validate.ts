@@ -11,6 +11,7 @@
 
 import type {
   Axisymmetric2D,
+  BoundarySpec,
   Bounds2D,
   Geometry,
   JobEvent,
@@ -196,13 +197,52 @@ function validateRegions(
   return parsed;
 }
 
+/**
+ * The named boundaries a geometry carries (protocol 1.8), kept rather than dropped.
+ *
+ * Every validator here rebuilds its value field by field, which is what makes a field nobody
+ * wired up vanish silently — and this one had. Since `validateJobRequest` runs a geometry
+ * through here on its way to the server, a caller who checked its request before sending it
+ * got back a geometry with its boundary *names* removed, and then a 422 for a load case
+ * naming a boundary that no longer existed. The 1.13 coax section is the case that made this
+ * load-bearing: its electrodes are named boundaries, so validating it destroyed it.
+ *
+ * The check is deliberately shallow — a name, a selector object, and names unique within one
+ * geometry, which is what the server enforces at this level. Re-implementing the five
+ * selector families here would be a second place for them to drift, and the failure that
+ * matters is losing the field, not accepting a malformed selector the server will refuse.
+ */
+function validateBoundaries(value: unknown): BoundarySpec[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) fail('boundaries must be an array');
+  const parsed = value.map((entry, i) => {
+    if (!isRecord(entry)) fail(`boundary ${i} must be an object`);
+    if (typeof entry.name !== 'string' || entry.name.length === 0) {
+      fail(`boundary ${i} needs a non-empty name`);
+    }
+    if (!isRecord(entry.select) || typeof entry.select.type !== 'string') {
+      fail(`boundary ${entry.name} needs a select with a type`);
+    }
+    return entry as unknown as BoundarySpec;
+  });
+  const names = new Set(parsed.map((entry) => entry.name));
+  if (names.size !== parsed.length) fail('boundary names must be unique within one geometry');
+  return parsed;
+}
+
+/** `{...spread}` of an optional field, so an absent one stays absent rather than becoming null. */
+function withBoundaries<T>(geometry: T, boundaries: BoundarySpec[] | undefined): T {
+  return boundaries === undefined ? geometry : { ...geometry, boundaries };
+}
+
 export function validateGeometry(value: unknown): Geometry {
   if (!isRecord(value)) fail('geometry must be an object');
+  const boundaries = validateBoundaries(value.boundaries);
   if (value.type === 'domain2d') {
     const bounds = requireBounds(value.bounds);
     const obstacle = validatePolygon2D(value.obstacle, 'obstacle');
     requireInsideBounds(obstacle, bounds, 'obstacle');
-    return { type: 'domain2d', bounds, obstacle };
+    return withBoundaries({ type: 'domain2d' as const, bounds, obstacle }, boundaries);
   }
   if (value.type === 'regions2d') {
     const bounds = requireBounds(value.bounds);
@@ -212,7 +252,7 @@ export function validateGeometry(value: unknown): Geometry {
       regions: validateRegions(value, bounds, 'regions2d'),
       background: requireScalarMap(value.background, 'background'),
     };
-    return geometry;
+    return withBoundaries(geometry, boundaries);
   }
   if (value.type === 'axisymmetric2d') {
     const bounds = requireBounds(value.bounds);
@@ -231,7 +271,7 @@ export function validateGeometry(value: unknown): Geometry {
       regions: validateRegions(value, bounds, 'axisymmetric2d', { onAxis: bounds[0] === 0 }),
       background: requireScalarMap(value.background, 'background'),
     };
-    return geometry;
+    return withBoundaries(geometry, boundaries);
   }
   fail(`unknown geometry type ${JSON.stringify(value.type)}`);
 }
@@ -281,10 +321,27 @@ export function validateJobRequest(value: unknown): JobRequest {
   }
   const geometry = validateGeometry(value.geometry);
   if (value.params !== undefined && !isRecord(value.params)) fail('params must be an object');
+  // `conditions` was dropped here for the same reason `boundaries` was, and the two failures
+  // compose into one: a caller validating an inline load case got back a request with the
+  // boundary names removed *and* the conditions that referred to them removed, so the
+  // round trip silently became a different solve. Kept and checked as the open map of scalars
+  // the protocol says it is — the keys belong to the capability, so nothing here judges them.
+  const conditions =
+    value.conditions === undefined
+      ? undefined
+      : Object.fromEntries(
+          Object.entries(
+            isRecord(value.conditions) ? value.conditions : fail('conditions must be an object'),
+          ).map(([boundary, applied]) => [
+            boundary,
+            requireScalarMap(applied, `conditions.${boundary}`),
+          ]),
+        );
   return {
     solver: value.solver,
     geometry,
     params: (value.params as Record<string, unknown>) ?? {},
+    ...(conditions === undefined ? {} : { conditions }),
   };
 }
 
