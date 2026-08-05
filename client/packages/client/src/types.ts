@@ -47,8 +47,15 @@
  * carries and the validator already enforces its rules. What it does *not* add is a field
  * saying the horizontal coordinate is a radius: the discriminator says that, and
  * `axisLabels()` below is the one place the mapping lives. See ADR 0003.
+ *
+ * 1.14 gave an artifact an optional `mode` and the result a derived `modes` index — 1.7's
+ * time index applied to an ordering that is not time. Typed here for the same reason `t` and
+ * `FrameRef` are: the result envelope is a shape this file already carries, and a version
+ * constant advertising an index the types denied would be exactly the drift the shared
+ * fixture corpus exists to catch. Why it is a second field rather than a reuse of `t` is
+ * ADR 0004 — a mode number is an ordinal, and `t` is a time.
  */
-export const PROTOCOL_VERSION = '1.13';
+export const PROTOCOL_VERSION = '1.14';
 
 /** What `GET /api/v1/version` returns. The one endpoint that never requires a key. */
 export interface ProtocolVersion {
@@ -499,6 +506,14 @@ export interface ArtifactRef {
    * The artifacts carrying one are the result's `frames` (protocol 1.7).
    */
   t?: number;
+  /**
+   * The mode number this file holds, for an eigensolve; absent for everything else. The
+   * artifacts carrying one are the result's `modes` (protocol 1.14).
+   *
+   * Never set together with `t`: a file holds an instant or a mode, and one claiming both
+   * would be ordered two ways. The server refuses the combination and so does the validator.
+   */
+  mode?: number;
 }
 
 /**
@@ -512,6 +527,20 @@ export interface ArtifactRef {
 export interface FrameRef {
   /** In the solver's time unit. */
   t: number;
+  /** Name of the artifact holding it; always one this result also lists. */
+  artifact: string;
+}
+
+/**
+ * One stored mode shape of an eigensolve (protocol 1.14).
+ *
+ * `FrameRef`'s twin over an ordering that is not time. The **frequency is not here**: it is a
+ * point of the result's spectrum, a `Series1DData` whose abscissa is the mode number — so a
+ * caller joins a shape to its frequency by that number rather than by position in two lists.
+ */
+export interface ModeRef {
+  /** 1-based, ascending in frequency, and counting rigid-body modes. */
+  mode: number;
   /** Name of the artifact holding it; always one this result also lists. */
   artifact: string;
 }
@@ -556,6 +585,8 @@ export interface Grid2DResult {
   artifacts: ArtifactRef[];
   /** Stored instants, in time order — derived from the artifacts carrying a `t`. */
   frames?: FrameRef[];
+  /** Stored mode shapes, in mode order — derived from the artifacts carrying a `mode`. */
+  modes?: ModeRef[];
 }
 
 export interface Mesh2DResult {
@@ -570,6 +601,8 @@ export interface Mesh2DResult {
   artifacts: ArtifactRef[];
   /** Stored instants, in time order — derived from the artifacts carrying a `t`. */
   frames?: FrameRef[];
+  /** Stored mode shapes, in mode order — derived from the artifacts carrying a `mode`. */
+  modes?: ModeRef[];
 }
 
 /**
@@ -592,6 +625,8 @@ export interface Series1DResult {
   artifacts: ArtifactRef[];
   /** Stored instants, in time order — derived from the artifacts carrying a `t`. */
   frames?: FrameRef[];
+  /** Stored mode shapes, in mode order — derived from the artifacts carrying a `mode`. */
+  modes?: ModeRef[];
 }
 
 export type JobResult = Grid2DResult | Mesh2DResult | Series1DResult;

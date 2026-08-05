@@ -17,6 +17,12 @@ from .frames import (  # noqa: F401  (re-export for consumers)
     frames_of,
 )
 from .geometry import Domain2D, Geometry, Polygon2D  # noqa: F401  (re-export for consumers)
+from .modes import (  # noqa: F401  (re-export for consumers)
+    MAX_MODES,
+    ModeRef,
+    check_mode_count,
+    modes_of,
+)
 from .series import (  # noqa: F401  (re-export for consumers)
     MAX_SERIES_POINTS,
     Series1DData,
@@ -41,7 +47,7 @@ from .solvers.base import ProgressEvent  # noqa: F401  (re-export for consumers)
 #: repeating it on each event and result would be per-message overhead for something one
 #: call answers — see `GET /api/v1/version`, and `docs/04-wire-protocol.md` for the
 #: reasoning and the bump procedure.
-PROTOCOL_VERSION = "1.13"
+PROTOCOL_VERSION = "1.14"
 
 
 class ProtocolVersion(BaseModel):
@@ -168,6 +174,28 @@ class ArtifactRef(BaseModel):
             "the files unable to disagree."
         ),
     )
+    mode: int | None = Field(
+        default=None,
+        description=(
+            "The mode number this file holds, for an eigensolve; null for everything else. "
+            "Added in protocol 1.14 (#101), and the artifacts carrying one are the result's "
+            "`modes` — the same derivation `t` gets, because an eigensolve indexes its "
+            "shapes exactly as a transient indexes its instants. A separate field rather "
+            "than a reuse of `t`: a mode number is an ordinal, not a time, and a slot whose "
+            "meaning has to be guessed from context is the failure this protocol keeps "
+            "refusing. The two are mutually exclusive on one file."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _check_index(self) -> "ArtifactRef":
+        if self.t is not None and self.mode is not None:
+            raise ValueError(
+                f"artifact {self.name!r} carries both an instant and a mode number; a file "
+                "holds one or the other, and a result that indexed it twice would order it "
+                "two ways"
+            )
+        return self
 
 
 class ResultEnvelope(BaseModel):
@@ -240,9 +268,25 @@ class ResultEnvelope(BaseModel):
         """
         return frames_of(self.artifacts)
 
+    @computed_field
+    @property
+    def modes(self) -> list[ModeRef]:
+        """Stored mode shapes of an eigensolve, in mode order (protocol 1.14, #101).
+
+        `frames`' twin, and derived the same way — from the artifacts carrying a `mode`, so
+        it cannot name a file this result does not serve. Empty for everything that is not an
+        eigensolve, and empty for one that was not asked to write its shapes.
+
+        The frequency of each is in the spectrum this result carries as a series, whose
+        abscissa is the mode number: the two are joined by that number rather than by
+        position in two lists.
+        """
+        return modes_of(self.artifacts)
+
     @model_validator(mode="after")
     def _check_frames(self) -> "ResultEnvelope":
         check_frame_count(self.artifacts)
+        check_mode_count(self.artifacts)
         return self
 
     @model_validator(mode="after")

@@ -189,6 +189,70 @@ describe('named boundaries survive validation', () => {
   });
 });
 
+describe('the mode index (protocol 1.14)', () => {
+  const SPECTRUM = {
+    job_id: 'j-modal',
+    kind: 'series1d',
+    data: {
+      name: 'spectrum',
+      x: { name: 'mode', unit: '1', values: [1, 2] },
+      traces: [{ name: 'frequency', unit: 'Hz', values: [0, 537.2] }],
+    },
+    artifacts: [
+      { name: 'mode_2.vtk', content_type: 'model/vnd.vtk', size: 9, url: '/2', mode: 2 },
+      { name: 'mode_1.vtk', content_type: 'model/vnd.vtk', size: 9, url: '/1', mode: 1 },
+    ],
+  };
+
+  it('keeps the mode on the artifact and derives the index in mode order', () => {
+    const result = validateJobResult(SPECTRUM);
+    expect(result.artifacts.map((a) => a.mode)).toEqual([2, 1]);
+    // Derived from the artifacts this validator kept, not copied from the payload — so the
+    // index cannot name a file the validated result does not carry.
+    expect(result.modes).toEqual([
+      { mode: 1, artifact: 'mode_1.vtk' },
+      { mode: 2, artifact: 'mode_2.vtk' },
+    ]);
+    expect(result.frames).toBeUndefined();
+  });
+
+  it('keeps the two indices apart', () => {
+    const transient = {
+      ...SPECTRUM,
+      artifacts: [
+        { name: 'frame_1.vtk', content_type: 'model/vnd.vtk', size: 9, url: '/f', t: 2.5 },
+      ],
+    };
+    const result = validateJobResult(transient);
+    expect(result.frames).toEqual([{ t: 2.5, artifact: 'frame_1.vtk' }]);
+    expect(result.modes).toBeUndefined();
+  });
+
+  it('refuses a file that claims to be both an instant and a mode (ADR 0004)', () => {
+    expect(() =>
+      validateJobResult({
+        ...SPECTRUM,
+        artifacts: [
+          { name: 'x.vtk', content_type: 'model/vnd.vtk', size: 9, url: '/x', t: 1, mode: 1 },
+        ],
+      }),
+    ).toThrow(/both an instant and a mode/);
+  });
+
+  it('refuses a mode number that is not a 1-based ordinal', () => {
+    for (const mode of [0, 1.5]) {
+      expect(() =>
+        validateJobResult({
+          ...SPECTRUM,
+          artifacts: [
+            { name: 'x.vtk', content_type: 'model/vnd.vtk', size: 9, url: '/x', mode },
+          ],
+        }),
+      ).toThrow(/mode/);
+    }
+  });
+});
+
 describe('axisLabels', () => {
   it('reads the coordinates off the kind, which is the one claim the server checks', () => {
     expect(axisLabels({ type: 'axisymmetric2d' })).toEqual(['r', 'z']);

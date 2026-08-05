@@ -539,6 +539,74 @@
         },
         "series": []
       }
+    },
+    {
+      "name": "series1d spectrum with mode-indexed shapes",
+      "$comment": "Protocol 1.14 (#101). The artifacts carry a mode number rather than an instant, so the result's derived `modes` index orders them and its `frames` stays empty. The abscissa of the spectrum is the same mode number, which is what a caller joins a frequency to a shape by.",
+      "payload": {
+        "job_id": "j-modal01",
+        "kind": "series1d",
+        "data": {
+          "name": "spectrum",
+          "description": "Natural frequencies by mode number; `rigid_body` marks the zero modes.",
+          "x": {
+            "name": "mode",
+            "unit": "1",
+            "values": [
+              1.0,
+              2.0,
+              3.0
+            ]
+          },
+          "traces": [
+            {
+              "name": "frequency",
+              "unit": "Hz",
+              "values": [
+                0.0,
+                0.0,
+                537.2
+              ]
+            },
+            {
+              "name": "rigid_body",
+              "unit": "1",
+              "values": [
+                1.0,
+                1.0,
+                0.0
+              ]
+            }
+          ]
+        },
+        "metrics": {
+          "f_1": 537.2,
+          "rigid_body_modes": 3.0
+        },
+        "artifacts": [
+          {
+            "name": "mode_1.vtk",
+            "content_type": "model/vnd.vtk",
+            "size": 2048,
+            "url": "/api/v1/jobs/j-modal01/artifacts/mode_1.vtk",
+            "mode": 1
+          },
+          {
+            "name": "mode_2.vtk",
+            "content_type": "model/vnd.vtk",
+            "size": 2048,
+            "url": "/api/v1/jobs/j-modal01/artifacts/mode_2.vtk",
+            "mode": 2
+          },
+          {
+            "name": "mode_3.vtk",
+            "content_type": "model/vnd.vtk",
+            "size": 2048,
+            "url": "/api/v1/jobs/j-modal01/artifacts/mode_3.vtk",
+            "mode": 3
+          }
+        ]
+      }
     }
   ],
   "invalid": [
@@ -1557,6 +1625,57 @@
             }
           ]
         }
+      }
+    },
+    {
+      "name": "artifact carrying both an instant and a mode",
+      "reason": "a file holds one instant or one mode, never both: a result that indexed it twice would order it two ways, and a consumer reading either index would be told something the other denies",
+      "payload": {
+        "job_id": "j-modal02",
+        "kind": "series1d",
+        "data": {
+          "name": "spectrum",
+          "description": "Natural frequencies by mode number; `rigid_body` marks the zero modes.",
+          "x": {
+            "name": "mode",
+            "unit": "1",
+            "values": [
+              1.0,
+              2.0,
+              3.0
+            ]
+          },
+          "traces": [
+            {
+              "name": "frequency",
+              "unit": "Hz",
+              "values": [
+                0.0,
+                0.0,
+                537.2
+              ]
+            },
+            {
+              "name": "rigid_body",
+              "unit": "1",
+              "values": [
+                1.0,
+                1.0,
+                0.0
+              ]
+            }
+          ]
+        },
+        "artifacts": [
+          {
+            "name": "confused.vtk",
+            "content_type": "model/vnd.vtk",
+            "size": 2048,
+            "url": "/api/v1/jobs/j-modal01/artifacts/confused.vtk",
+            "mode": 1,
+            "t": 0.5
+          }
+        ]
       }
     }
   ],

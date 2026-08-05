@@ -70,8 +70,10 @@ jobs:
       - name: Install
         run: pip install -e "./server[dev]"
       - name: Guard against silently skipped tests
-        # The adapter tests importorskip these; fail loudly if the image lacks them.
-        run: python3 -c "import dolfinx, gmsh"
+        # The adapter tests importorskip these; fail loudly if the image lacks them. slepc4py
+        # joined the list with the eigensolver (#101): it gates a whole adapter, and an
+        # adapter that fails to import is one the smoke matrix stops covering *silently*.
+        run: python3 -c "import dolfinx, gmsh, slepc4py"
       - name: Test (FEniCSx adapter)
         run: pytest server/tests -m fenics -v
 

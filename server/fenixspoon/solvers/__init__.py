@@ -6,6 +6,7 @@ from . import mock_electrostatics as _mock_electrostatics  # noqa: F401
 from . import mock_heat as _mock_heat  # noqa: F401
 from . import mock_laplace as _mock_laplace  # noqa: F401
 from . import mock_magnetostatics as _mock_magnetostatics  # noqa: F401
+from . import mock_modal as _mock_modal  # noqa: F401
 from . import mock_transient_heat as _mock_transient_heat  # noqa: F401
 from .base import (
     ArtifactSpec,
@@ -28,6 +29,7 @@ try:
     from . import dolfinx_electrostatics as _dolfinx_electrostatics  # noqa: F401
     from . import dolfinx_heat as _dolfinx_heat  # noqa: F401
     from . import dolfinx_magnetostatics as _dolfinx_magnetostatics  # noqa: F401
+    from . import dolfinx_modal as _dolfinx_modal  # noqa: F401
     from . import dolfinx_poisson as _dolfinx_poisson  # noqa: F401
     from . import dolfinx_transient_heat as _dolfinx_transient_heat  # noqa: F401
 except ImportError:  # pragma: no cover - exercised only without dolfinx

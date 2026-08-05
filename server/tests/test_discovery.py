@@ -44,6 +44,9 @@ SMOKE = {
     # section here would be a `422` rather than a smoke case (#100). Its electrodes are
     # regions rather than a load case, so the smoke call needs no conditions.
     "mock.electrostatics_axi2d": (ROD_ON_AXIS, {"resolution": 40, "iterations": 60}),
+    # A dense eigendecomposition, so the grid is the smallest one the adapter accepts and
+    # the mode count is the smallest that reaches an elastic mode of a free structure (#101).
+    "mock.modal2d": (UNIFORM_BEAM, {"resolution": 16, "n_modes": 4, "mode": 4}),
     # Four steps, not a converged run: these tests ask which keys come back, and a
     # transient's cost is cells times steps.
     "mock.transient_heat2d": (SOLENOID, {"resolution": 32, "steps": 4, "duration": 10.0}),
@@ -66,6 +69,7 @@ FENICS_SMOKE = {
     "dolfinx.elasticity2d": (UNIFORM_BEAM, {"mesh_size": 0.03, "degree": 1}),
     "dolfinx.transient_heat2d": (SOLENOID, {"mesh_size": 0.004, "steps": 3, "duration": 10.0}),
     "dolfinx.electrostatics_axi2d": (ROD_ON_AXIS, {"mesh_size": 5.0e-4}),
+    "dolfinx.modal2d": (UNIFORM_BEAM, {"mesh_size": 0.05, "n_modes": 4, "mode": 4}),
 }
 
 

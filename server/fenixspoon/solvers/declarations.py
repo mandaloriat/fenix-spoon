@@ -658,6 +658,128 @@ ELASTICITY_CONDITIONS = [
 ]
 
 
+#: One stored mode shape, written once per computed mode (#101). The modal twin of
+#: :data:`FRAME_ARTIFACT`, declared with `{index}` for the same reason: the count is a
+#: parameter, not a property of the capability.
+MODE_ARTIFACT = ArtifactSpec(
+    name="mode_{index}.vtk",
+    content_type="model/vnd.vtk",
+    description=(
+        "One mode shape, as legacy VTK. These are the result's `modes`: the index lists them "
+        "with the mode number each holds, and a caller fetches the one it wants to look at "
+        "rather than receiving the whole modal basis. Amplitudes are mass-normalised, so a "
+        "shape is comparable between modes and means nothing on its own."
+    ),
+    when="write_vtk",
+)
+
+#: Modal analysis: where it resonates, and the count that says whether to believe it (#101).
+#:
+#: `f_1` is the number a design is judged on — *the first elastic frequency*, which for a
+#: free-free structure is not the first frequency. That distinction is the reason
+#: `rigid_body_modes` is a declared metric rather than a diagnostic: it is how a caller reads
+#: the spectrum correctly, and it doubles as the check that the solve is sound. A free-free
+#: plane structure has exactly three (two translations and a rotation); four means the
+#: eigensolver found a spurious null mode, two means a restraint the caller did not intend.
+#:
+#: Both are `over="run"`: neither is a reduction of the payload, which carries one mode shape.
+#: The spectrum itself is a *series*, not a metric — that is what #69 built curves for, and
+#: "where does it resonate" is the row of its table that had no producer until this pair.
+MODAL_METRICS = [
+    MetricSpec(
+        name="f_1",
+        unit="Hz",
+        over="run",
+        description=(
+            "Lowest **elastic** natural frequency, in hertz: the first mode that deforms the "
+            "structure, with rigid-body modes excluded. The number a design is checked "
+            "against, because a structure driven near it responds far beyond the static "
+            "deflection an equilibrium solve reports."
+        ),
+    ),
+    MetricSpec(
+        name="rigid_body_modes",
+        unit="1",
+        over="run",
+        description=(
+            "How many modes came back at essentially zero frequency — motions that cost no "
+            "strain energy. **Three is correct for an unrestrained plane structure** (two "
+            "translations and a rotation) and zero for a fully restrained one; anything else "
+            "means the model is not the one intended, and it is reported rather than "
+            "filtered so that a caller can see it."
+        ),
+    ),
+]
+
+#: Modal analysis: what an eigensolve assumes, and the two that most often surprise.
+#:
+#: `undamped` is the one to read. It is not a small approximation of a damped structure — it
+#: is a different question: the frequencies are right to order zeta^2 for anything lightly
+#: damped, and the *amplitude at resonance*, which is what a caller usually wants next, is
+#: not in this answer at all and cannot be recovered from it.
+#:
+#: `discretised_mass` is here because the pair converges from **opposite sides**, and a caller
+#: comparing them should know why before concluding one is wrong.
+MODAL_ASSUMPTIONS = [
+    Assumption(
+        name="undamped",
+        statement=(
+            "No damping of any kind. What comes back are the undamped natural frequencies, "
+            "which for a lightly damped structure differ from the damped ones by a factor of "
+            "sqrt(1 - zeta^2) — negligible below a few percent of critical. What is *not* "
+            "here is any amplitude: a resonant response, a Q factor and a damping ratio are "
+            "all properties of the damping this model does not have."
+        ),
+        excludes=["damping_ratio", "q_factor", "resonant_amplitude", "frequency_response"],
+    ),
+    Assumption(
+        name="free_vibration",
+        statement=(
+            "No load, and none is accepted. An eigensolve asks what the structure does when "
+            "nothing drives it; a load case may restrain a boundary but cannot push on one, "
+            "and a traction is refused rather than ignored. Forced response — the answer to "
+            "'how much does it move at 50 Hz' — is a different solve."
+        ),
+        excludes=["forced_response", "harmonic_excitation", "base_excitation"],
+    ),
+    Assumption(
+        name="small_vibration",
+        statement=(
+            "Linear vibration about an unstressed, undeformed state. There is no stress "
+            "stiffening and no preload, so a taut membrane and a spun rotor — whose "
+            "stiffness comes *from* their load — are outside this model, and their "
+            "frequencies would be under-predicted rather than approximated."
+        ),
+        excludes=["stress_stiffening", "prestress", "spin_softening", "large_amplitude"],
+    ),
+    Assumption(
+        name="discretised_mass",
+        statement=(
+            "Both mass and stiffness are discretised, and each biases the frequencies. The "
+            "NumPy half lumps the mass at the nodes, which under-predicts; the FEniCSx half "
+            "uses the consistent mass matrix, which over-predicts; and the constant-strain "
+            "element the mock uses is stiff in bending, which pushes back the other way. So "
+            "the pair brackets rather than agrees, and refining is what closes the gap — "
+            "compare two resolutions before quoting a frequency to three figures."
+        ),
+    ),
+    TWO_DIMENSIONAL,
+]
+
+#: What a modal load case may say on a named boundary (#101).
+#:
+#: **The restraints of :data:`ELASTICITY_CONDITIONS`, and literally those objects** — filtered
+#: rather than re-spelled, so the two capabilities cannot drift into two vocabularies for one
+#: clamp. That sharing is the point: a load case authored to hold a bracket for a stress check
+#: applies unchanged to the modal solve of the same bracket, which is exactly the reuse #85
+#: made a load case an object for.
+#:
+#: The tractions are *absent*, and absent is a refusal: a key no capability declares is a 422
+#: at submit. An eigensolve has no load, so a load case carrying one describes a different
+#: problem, and saying so beats accepting it and ignoring it.
+MODAL_CONDITIONS = [spec for spec in ELASTICITY_CONDITIONS if spec.kind == "dirichlet"]
+
+
 #: Transient heat: the metrics a start-up answers that a steady solve cannot (#82).
 #:
 #: The interesting one is what is *missing* from the declared reductions. A declared metric

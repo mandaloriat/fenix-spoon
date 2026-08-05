@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field, model_validator
 from .. import fields
 from ..frames import MAX_FRAMES
 from ..geometry import Geometry
+from ..modes import MAX_MODES
 from ..series import Series1DData, check_series
 
 logger = logging.getLogger(__name__)
@@ -488,7 +489,11 @@ class SolverContext:
             raise JobCancelled()
 
     def artifact(
-        self, name: str, content_type: str | None = None, t: float | None = None
+        self,
+        name: str,
+        content_type: str | None = None,
+        t: float | None = None,
+        mode: int | None = None,
     ) -> Path:
         """Register an output file and return the path the solver should write it to.
 
@@ -499,9 +504,20 @@ class SolverContext:
         artifacts carrying one become the result's `frames`, in time order. Putting the
         instant on the file rather than in a parallel list is what makes an index that names
         a file the result does not serve unrepresentable rather than merely tested for.
+
+        ``mode`` marks it as **one mode shape of an eigensolve** (#101), and everything the
+        paragraph above says applies unchanged — it is the same index over a different
+        ordering, which is why it is a second field rather than a reuse of the first. The two
+        are mutually exclusive: a file holds an instant or a mode, and one that claimed both
+        would be ordered two ways.
         """
         if not name or "/" in name or "\\" in name or name.startswith(".") or ".." in name:
             raise ValueError(f"invalid artifact name: {name!r}")
+        if t is not None and mode is not None:
+            raise ValueError(
+                f"artifact {name!r} was given both an instant and a mode number; a file "
+                "holds one or the other"
+            )
         if self._artifact_dir is None:
             raise RuntimeError("this context has no artifact directory configured")
         self._artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -526,6 +542,15 @@ class SolverContext:
                     "rather than moving the history into the envelope"
                 )
             entry["t"] = float(t)
+        if mode is not None:
+            # The same cap, at the same place and for the same reason as the frame one above.
+            indexed = sum(1 for item in self._artifacts if item.get("mode") is not None)
+            if indexed >= MAX_MODES:
+                raise ValueError(
+                    f"a result may index at most {MAX_MODES} mode shapes; ask for fewer "
+                    "modes rather than moving the modal basis into the envelope"
+                )
+            entry["mode"] = int(mode)
         self._artifacts.append(entry)
         return self._artifact_dir / name
 

@@ -1,7 +1,7 @@
 # Changelog
 
 Notable changes to Fenix Spoon. The **wire protocol** has a version of its own
-(`MAJOR.MINOR`, currently 1.13) and its history is in
+(`MAJOR.MINOR`, currently 1.14) and its history is in
 [docs/04-wire-protocol.md](docs/04-wire-protocol.md); this file records what changed for the
 people who build on the toolkit, protocol bump or not.
 
@@ -15,6 +15,40 @@ project is pre-1.0, so the packages are versioned together and nothing here is a
 promise yet.
 
 ## Unreleased
+
+### Added — protocol 1.14: an eigensolve, and the index it needed (#101)
+
+*"Where does it resonate?"* was the one row of `series1d`'s own table of purposes with no
+producer behind it. `mock.modal2d` and `dolfinx.modal2d` are that producer, and the protocol
+change they needed is one field.
+
+- **Natural frequencies and mode shapes of a plane structure**, as the generalised
+  eigenproblem `K phi = omega^2 M phi`. The NumPy half lumps the mass and factorises densely
+  with `eigh`; the FEniCSx half uses the consistent mass matrix and SLEPc with
+  shift-and-invert. They err in opposite directions, which is what makes cross-validating them
+  informative rather than circular.
+- **Unrestrained structures work, and are the interesting case.** A floating structure has a
+  singular stiffness matrix and exactly three rigid-body modes in the plane. They are counted
+  and reported rather than filtered — `rigid_body_modes` is a declared metric — because the
+  count is how a caller tells a sound model from one held somewhere nobody intended. The
+  FEniCSx half takes its spectral shift just below zero for this reason, and the shift scales
+  with the structure rather than being a number.
+- **Checked against answers from outside this repository**: the tabulated roots of a prismatic
+  beam, 1.875 for a cantilever's first mode and 4.730 for a free-free bar's, both matched to a
+  few percent and from the expected side.
+- **`mode` on an artifact, and a derived `modes` on the result** — 1.7's time index applied to
+  an ordering that is not time. The frequencies need nothing new: they are a `series1d` whose
+  abscissa is the mode number, the same number the shapes are indexed by, so the two are
+  joined by a value rather than by list position.
+- **A mode number is not an instant**, and refusing to put one in `t` is
+  [ADR 0004](docs/adr/0004-a-mode-is-not-an-instant.md). It would have worked — the first
+  draft did exactly that and no test failed — and it would have made a viewer's time slider
+  read "mode 3" as three seconds while `frames` silently listed modes. The two fields are
+  mutually exclusive on one file, refused at registration rather than at serialisation.
+- **A modal load case is an elasticity load case minus the loads**, sharing the very
+  `ConditionSpec` objects rather than a second spelling: one set of restraints holds a bracket
+  for a stress check and for its modes. A traction is refused, because an eigensolve has no
+  load and ignoring the key would answer a different question.
 
 ### Added — protocol 1.13: `axisymmetric2d`, and the slice it stops you solving by accident (#100)
 

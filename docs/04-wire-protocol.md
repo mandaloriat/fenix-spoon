@@ -13,13 +13,13 @@ protocol version below is shared: `rpc.describe` reports it too.
 
 ## Versioning
 
-The protocol is versioned `MAJOR.MINOR`, currently **1.13**, and a server reports what it
+The protocol is versioned `MAJOR.MINOR`, currently **1.14**, and a server reports what it
 speaks:
 
 ### `GET /api/v1/version`
 
 ```json
-{ "protocol": "1.13", "implementation": "0.1.0", "api_path": "/api/v1" }
+{ "protocol": "1.14", "implementation": "0.1.0", "api_path": "/api/v1" }
 ```
 
 **The one route that never requires an API key.** A client needs to know whether it can talk
@@ -416,6 +416,51 @@ payload, and a transient's payload is its final instant. A scalar-against-time q
 answered by the curve; a field question means fetching the frame. That limit was accepted
 when the shape was settled rather than discovered afterwards, and a `t` argument on
 `FieldQuery` would answer about the wrong time.
+
+### Modes: the same index over an ordering that is not time
+
+*Added in protocol 1.14 ([#101](https://github.com/mandaloriat/fenix-spoon/issues/101)).*
+
+An eigensolve produces exactly the two natures above: **a scalar per member of an ordered
+family** — the spectrum — and **a field per member**, too large to inline. So it needed the
+shape 1.5 and 1.7 already built, and one new name:
+
+```json
+{
+  "artifacts": [
+    {"name": "mode_1.vtk", "size": 4096, "mode": 1, "url": "..."},
+    {"name": "mode_4.vtk", "size": 4096, "mode": 4, "url": "..."}
+  ],
+  "modes": [{"mode": 1, "artifact": "mode_1.vtk"}, {"mode": 4, "artifact": "mode_4.vtk"}]
+}
+```
+
+`modes` is derived from the artifacts exactly as `frames` is, is capped for the same reason,
+and rides on the same level. What is *not* shared is the field: **a mode number does not go
+in `t`**, and refusing to overload it is the decision this version records
+([ADR 0004](adr/0004-a-mode-is-not-an-instant.md)). `t` is an instant in the solver's time
+unit; a mode number is an ordinal — dimensionless, 1-based, with no metric on it, since the
+gap between mode 1 and mode 2 is not a quantity. One slot for both would sort modes as
+though they were seconds and leave every 1.7 consumer asking which meaning a result meant.
+**The two are mutually exclusive on one file**, and a payload carrying both is refused rather
+than resolved: a file indexed twice would be ordered two ways.
+
+The **frequencies** need nothing new at all. They are a `series1d` — the fourth row of the
+table in [one-dimensional results](#one-dimensional-results), which had had no producer since
+1.5 — whose abscissa is the **mode number**, in the same numbering the artifacts carry:
+
+```json
+{ "name": "spectrum",
+  "x": { "name": "mode", "unit": "1", "values": [1, 2, 3, 4] },
+  "traces": [ { "name": "frequency", "unit": "Hz", "values": [0.0, 0.0, 0.0, 537.2] },
+              { "name": "rigid_body", "unit": "1", "values": [1, 1, 1, 0] } ] }
+```
+
+so a caller joins "mode 4 is at 537 Hz" to mode 4's shape **by that number**, never by
+position in two lists that happen to be ordered alike. Rigid-body modes — the three
+zero-frequency motions of an unrestrained plane structure — are reported rather than filtered,
+flagged in the curve and counted in the `rigid_body_modes` metric, because their count is how
+a caller tells a sound model from one restrained somewhere nobody intended.
 
 The `params` section carries a flat parameter list — name, type, default, bounds, enum choices —
 plus `schema_ref`. Being flat is the point rather than being small: a `Literal` parameter reaches
@@ -1241,4 +1286,4 @@ second protocol. Each is driven by
 
 Until these land, the result envelope is exactly what is documented above: `job_id`, `kind`,
 `data`, `stats`, `metrics`, `diagnostics`, `provenance`, `series`, `artifacts`, and the derived
-`frames`.
+`frames` and `modes`.

@@ -11,6 +11,12 @@ and a unit:
 | Do I believe it? | a convergence history — a metric against mesh size |
 | Where does it resonate? | a frequency sweep, or a list of modal frequencies |
 
+The fourth row waited three protocol versions for a producer, and #101 is it: the modal pair
+returns its spectrum as one of these, with the **mode number** on the abscissa. That is not
+decoration — the mode shapes are indexed by the same number (:mod:`fenixspoon.modes`), so a
+caller joins a frequency to a shape by a value they share rather than by two lists happening
+to be ordered alike.
+
 Before this module the protocol-legal homes for such a curve were all wrong in a different
 way. `stats` is `dict[str, float]`, so a 200-point curve became 200 keys — and `stats` is
 what the solve *cost*, which #46 had just finished separating from what it answered. A

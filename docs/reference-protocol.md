@@ -230,6 +230,7 @@ What `GET /api/v1/jobs/{id}/result` returns once a job is `done`.
 | `series` | `list[Series1DData]` | no | `[]` | Curves this solve produced *alongside* its field — the airfoil adapters return the flow field and the surface `C_p` from one solve. Added in protocol 1.5. Empty on a result that carries none, and empty on a `series1d` result, whose curves are in `data` because that is what `kind` selects. |
 | `artifacts` | `list[ArtifactRef]` | no | `[]` | Files the solver wrote, downloadable from the artifact endpoint. |
 | `frames` | `list[FrameRef]` | derived | | Stored instants of a time-dependent solve, in time order (protocol 1.7, #86).  An index *over* the artifacts rather than beside them: derived from the ones carrying a `t`, so it cannot name a file this result does not serve. Empty for a steady solve and for a transient that was not asked to save any. |
+| `modes` | `list[ModeRef]` | derived | | Stored mode shapes of an eigensolve, in mode order (protocol 1.14, #101).  `frames`' twin, and derived the same way — from the artifacts carrying a `mode`, so it cannot name a file this result does not serve. Empty for everything that is not an eigensolve, and empty for one that was not asked to write its shapes.  The frequency of each is in the spectrum this result carries as a series, whose abscissa is the mode number: the two are joined by that number rather than by position in two lists. |
 
 ## `Grid2DData`
 
@@ -298,6 +299,7 @@ A downloadable file the solver produced alongside the inline result.
 | `size` | `int` | yes |  | Size on disk in bytes. |
 | `url` | `str` | yes |  | Server-relative download path; join with the API base URL. |
 | `t` | `float \| null` | no | `None` | The instant this file holds, for a time-dependent solve; null for everything else. Added in protocol 1.7 (#86) — the artifacts carrying one are the result's `frames`, and putting the time on the file itself is what makes the index and the files unable to disagree. |
+| `mode` | `int \| null` | no | `None` | The mode number this file holds, for an eigensolve; null for everything else. Added in protocol 1.14 (#101), and the artifacts carrying one are the result's `modes` — the same derivation `t` gets, because an eigensolve indexes its shapes exactly as a transient indexes its instants. A separate field rather than a reuse of `t`: a mode number is an ordinal, not a time, and a slot whose meaning has to be guessed from context is the failure this protocol keeps refusing. The two are mutually exclusive on one file. |
 
 ## `FrameRef`
 
@@ -306,6 +308,15 @@ One stored instant of a time-dependent solve: when it is, and which file holds i
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `t` | `float` | yes |  | The instant this frame holds, in the solver's time unit. |
+| `artifact` | `str` | yes |  | Name of the artifact holding it; must be one this result lists. |
+
+## `ModeRef`
+
+One stored mode shape: which mode it is, and which file holds it.
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `mode` | `int` | yes |  | 1-based mode number, ascending in frequency and **counting rigid-body modes**. It is the same number the spectrum's abscissa carries, which is what makes the shape and its frequency joinable without relying on list order. |
 | `artifact` | `str` | yes |  | Name of the artifact holding it; must be one this result lists. |
 
 
@@ -327,6 +338,7 @@ What `result.get` returns. Unrequested levels are absent, not null.
 | `fields` | `FieldsView \| null` | no | `None` | Level `fields`. |
 | `artifacts` | `list[ArtifactView] \| null` | no | `None` | Level `artifacts`. |
 | `frames` | `list[FrameRef] \| null` | derived | | The `artifacts` level's time index: the files carrying an instant, in time order.  Absent — not empty — when the level was not requested or nothing is framed, so a caller can tell "this solve has no time axis" from "you did not ask". `Selective` drops nulls on the wire, which is what makes the distinction free for a steady solve. |
+| `modes` | `list[ModeRef] \| null` | derived | | The `artifacts` level's mode index: the files carrying a mode, in mode order.  Absent rather than empty on the same terms as `frames`, and for the same reason: a caller can tell "this solve has no modal axis" from "you did not ask for the level". |
 
 ## `StatusView`
 
@@ -383,6 +395,7 @@ One file, by reference. The `artifacts` level never inlines bytes.
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `t` | `float \| null` | no | `None` | The instant this file holds, for a time-dependent solve; null otherwise. The artifacts carrying one are the result's frames (#86). |
+| `mode` | `int \| null` | no | `None` | The mode number this file holds, for an eigensolve; null otherwise. The artifacts carrying one are the result's modes (#101). |
 | `name` | `str` | yes |  | Bare filename, e.g. `solution.vtk`. |
 | `content_type` | `str` | yes |  | MIME type. |
 | `size` | `int` | yes |  | Size on disk in bytes. |
