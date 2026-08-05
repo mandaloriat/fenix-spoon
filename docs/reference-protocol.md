@@ -464,6 +464,7 @@ What `environment.inspect` returns: this installation, in a few hundred bytes.
 | `data_dir` | `str` | yes |  | Absolute path holding the job database, results and artifacts. |
 | `workspace` | `str` | yes |  | Absolute path holding the workspace object files. Under `data_dir` by construction — reported anyway because it is the directory a caller would commit to a repository, and deriving it from a convention is guesswork. |
 | `capabilities` | `int` | yes |  | How many capabilities are installed. |
+| `plugins` | `list[PluginInfo]` | no | `[]` | Third-party adapter sources and what each did (#105). Empty on an installation that declares none — which is why a switched-off loader reports a `disabled` entry instead of an empty list. |
 | `limits` | `LimitsInfo` | yes |  | Server-side caps applied to every submission. |
 | `principal` | `str` | yes |  | Who the server thinks is asking. |
 | `quotas` | `QuotaInfo` | yes |  | That principal's limits. |
@@ -530,6 +531,19 @@ State of the content-addressed result cache (roadmap M2.5, issue #47).
 | `scheme` | `str` | yes |  | Version of the hashing rule. Keys from a different scheme are never matched against these, because they describe inputs by a rule that no longer applies. |
 | `cacheable_capabilities` | `list[str]` | yes |  | Capabilities that declare themselves deterministic and so may be cached. The rest always recompute — see `Solver.deterministic`. Listed rather than counted because 'why did my resubmission not hit' is the question this answers. |
 | `retention` | `str` | yes |  | What expires a cache entry. The entry *is* the job, so the job TTL is the cache TTL; there is no second lifetime to reason about. |
+
+## `PluginInfo`
+
+One third-party adapter source, and what it did when the server imported it.
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `source` | `str` | yes |  | The entry-point name, or the module path as `FENIXSPOON_SOLVER_MODULES` spelled it. Identifies the source to the operator who configured it. |
+| `module` | `str` | yes |  | The module the server imported. Empty when disabled. |
+| `origin` | `'entry-point' \| 'environment'` | yes |  | Which mechanism declared it: an installed distribution, or the env var. |
+| `status` | `'loaded' \| 'failed' \| 'disabled'` | yes |  | `loaded` — imported cleanly. `failed` — raised; see `detail`, and note `capabilities` may still be non-empty if it registered before it raised. `disabled` — plugin loading is switched off, which is deliberately distinct from an empty list. |
+| `detail` | `str \| null` | no | `None` | Why it failed, as `TypeName: message`. The exception's text rather than a traceback: the sentence an operator needs, without a wall that also discloses more of the filesystem than the question warrants. |
+| `capabilities` | `list[str]` | no | `[]` | Solver names this source added to the registry. |
 
 
 # Capabilities

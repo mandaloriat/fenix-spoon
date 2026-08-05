@@ -88,7 +88,7 @@ vocabulary costs a few hundred bytes rather than every method's schema.
 | Method | What it does |
 |---|---|
 | `rpc.describe` | protocol version, framing, and every callable method |
-| `environment.inspect` | what this installation is, for the principal asking |
+| `environment.inspect` | what this installation is, for the principal asking — including which third-party adapters loaded, and why any did not |
 | `capability.list` | one line per installed capability |
 | `capability.describe` | selected sections of one capability |
 | `capability.schema` | the full params JSON Schema for one capability |

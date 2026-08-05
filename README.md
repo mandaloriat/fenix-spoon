@@ -49,7 +49,7 @@ and the FEniCSx solver.
 > 50 concurrent clients. What remains for M3 is deployment packaging — see the
 > [roadmap](docs/03-roadmap.md).
 >
-> **The wire protocol is at 1.14.** Six of the last nine minors came from adding physics
+> **The wire protocol is at 1.15.** Six of the last ten minors came from adding physics
 > rather than from planning: a transient needed a metric to say what it is taken over (1.6)
 > and a way to index its instants (1.7), elasticity needed a geometry that can *name*
 > pieces of its own boundary (1.8) and a load case to say what happens there (1.9),
@@ -57,7 +57,11 @@ and the FEniCSx solver.
 > **radius** (1.13) — not because the shape could not be sent before, but because a plane
 > solver accepted it and quietly solved a slice — and an eigensolve needed a name for an
 > ordering that is *not* time (1.14), since a mode number in a slot labelled `t` would have a
-> viewer read "mode 3" as three seconds. 1.10 and
+> viewer read "mode 3" as three seconds. 1.15 is the first bought by a *refusal to grow*: third-party
+> adapters can be loaded at last ([#105](https://github.com/mandaloriat/fenix-spoon/issues/105)), so
+> new physics no longer has to land in this repository, and `environment.inspect` reports what each
+> plugin did — because a capability that is missing because its import raised is a different fact
+> from one nobody installed. 1.10 and
 > 1.11 are the exceptions and were designed first, in
 > [ADR 0002](docs/adr/0002-workspace-over-http.md): the workspace on HTTP, so a browser can
 > keep its designs under stable ids and solve by reference instead of resending a geometry it
@@ -81,6 +85,7 @@ see the [state-of-the-art survey](docs/01-state-of-the-art.md). Fenix Spoon is t
 |---|---|---|
 | **Simulation server** — FastAPI app: job submission, WebSocket progress streaming, cancellation, wall-clock timeouts, cell budgets, result + artifact retrieval | [`server/`](server/) | ✅ working |
 | **Solver adapter protocol** — plug any solver (FEniCSx, mock, anything Python) behind the same API via `SolverContext` (progress / cancel / artifacts) | [`server/fenixspoon/solvers/`](server/fenixspoon/solvers/) | ✅ working |
+| **Third-party adapters** — an adapter from outside this repository loads from a `fenixspoon.solvers` entry point or from `FENIXSPOON_SOLVER_MODULES`, after the built-ins so it cannot take a shipped name. A broken plugin is reported rather than fatal, and `environment.inspect` says *why* a capability is missing — "not installed" and "installed and raised" are different facts. What a plugin cannot add is a geometry kind, a result kind or a field: breadth belongs in adapters so it does not accumulate in the protocol | [`solvers/plugins.py`](server/fenixspoon/solvers/plugins.py), [ADR 0005](docs/adr/0005-thin-about-physics-thick-about-claims.md) | ✅ protocol 1.15 |
 | **Mock solvers** — potential flow, magnetostatics, steady and transient heat conduction, linear elasticity, axisymmetric electrostatics, and natural frequencies in pure NumPy; let you develop the front-end without FEniCSx | [`mock_laplace.py`](server/fenixspoon/solvers/mock_laplace.py), [`mock_magnetostatics.py`](server/fenixspoon/solvers/mock_magnetostatics.py), [`mock_heat.py`](server/fenixspoon/solvers/mock_heat.py), [`mock_elasticity.py`](server/fenixspoon/solvers/mock_elasticity.py), [`mock_transient_heat.py`](server/fenixspoon/solvers/mock_transient_heat.py), [`mock_electrostatics.py`](server/fenixspoon/solvers/mock_electrostatics.py), [`mock_modal.py`](server/fenixspoon/solvers/mock_modal.py) | ✅ working |
 | **FEniCSx adapters** — the same seven problems on unstructured Gmsh meshes, cross-validated against the mock solvers and against closed forms — Joukowski circulation, Kirsch stress concentration, `PL³/3EI`, the coaxial `2πεL/ln(b/a)`, the beam roots 1.875 and 4.730 | [`dolfinx_poisson.py`](server/fenixspoon/solvers/dolfinx_poisson.py), [`dolfinx_magnetostatics.py`](server/fenixspoon/solvers/dolfinx_magnetostatics.py), [`dolfinx_heat.py`](server/fenixspoon/solvers/dolfinx_heat.py), [`dolfinx_elasticity.py`](server/fenixspoon/solvers/dolfinx_elasticity.py), [`dolfinx_transient_heat.py`](server/fenixspoon/solvers/dolfinx_transient_heat.py), [`dolfinx_electrostatics.py`](server/fenixspoon/solvers/dolfinx_electrostatics.py), [`dolfinx_modal.py`](server/fenixspoon/solvers/dolfinx_modal.py) | ✅ validated on dolfinx 0.11 (`pytest -m fenics`, CI job in the dolfinx image) |
 | **Wire protocol** — JSON schemas for geometry (`domain2d`, `regions2d`, `axisymmetric2d`), jobs, events, `grid2d`/`mesh2d`/`series1d` results, artifacts — with a conformance fixture corpus | [`docs/04-wire-protocol.md`](docs/04-wire-protocol.md), [`protocol/fixtures/`](protocol/fixtures/) | ✅ v0 implemented |

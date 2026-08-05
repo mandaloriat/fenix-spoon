@@ -155,6 +155,7 @@ def build() -> str:
         PackageInfo,
         ParamsSection,
         ParamSummary,
+        PluginInfo,
         QuotaInfo,
         RequirementsSection,
         UsageInfo,
@@ -277,7 +278,16 @@ def build() -> str:
         ("Discovery", [SolverInfo]),
         (
             "Environment",
-            [EnvironmentInfo, PackageInfo, MpiInfo, LimitsInfo, QuotaInfo, UsageInfo, CacheInfo],
+            [
+                EnvironmentInfo,
+                PackageInfo,
+                MpiInfo,
+                LimitsInfo,
+                QuotaInfo,
+                UsageInfo,
+                CacheInfo,
+                PluginInfo,
+            ],
         ),
         (
             "Capabilities",

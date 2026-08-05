@@ -97,11 +97,17 @@ services (#44, #46, #48) go into `core/` beside what is there now.
 1. **The protocol is the product.** Widgets and server are replaceable; the JSON contract for
    geometry, jobs, events, and fields is what makes the ecosystem composable. It must stay
    language-neutral and versioned (`/api/v1`).
-2. **Solvers are plug-ins.** The server core knows nothing about FEniCSx. A solver is any class
-   implementing the `Solver` protocol (`name`, `describe()`, `solve(geometry, params, progress)`),
-   registered in the registry. FEniCSx adapters register themselves only when dolfinx imports
-   successfully, so the same codebase runs in a plain Python venv (mock solver) or in the dolfinx
-   Docker image (real solvers).
+2. **Solvers are plug-ins**, and since 1.15 that is true of *other people's* solvers too. The
+   server core knows nothing about FEniCSx. A solver is any class implementing the `Solver`
+   protocol (`name`, `describe()`, `solve(geometry, params, progress)`), registered in the
+   registry. FEniCSx adapters register themselves only when dolfinx imports successfully, so the
+   same codebase runs in a plain Python venv (mock solver) or in the dolfinx Docker image (real
+   solvers). An adapter from outside this repository arrives the same way: a
+   `fenixspoon.solvers` entry point, or `FENIXSPOON_SOLVER_MODULES`, both loaded after the
+   built-ins so a plugin cannot take a shipped name ([#105](https://github.com/mandaloriat/fenix-spoon/issues/105)).
+   That was a hole until recently — the principle was stated here while nothing an operator
+   controlled ran before the registry filled — and it is the outlet decision 5 of ADR 0005
+   depends on: breadth belongs in adapters precisely so it does not accumulate in the protocol.
 3. **Front-end development must never require FEniCSx.** The mock solver (pure NumPy potential
    flow) returns the same result schema as the real adapters. Widget CI runs against it.
 4. **Small results travel inline, large results travel by reference.** v0 returns 2D grid fields
