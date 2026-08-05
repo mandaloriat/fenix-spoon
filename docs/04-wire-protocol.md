@@ -653,7 +653,11 @@ coordinate is a radius, rather than a field on the payload saying so, is
   `geometry_types` (see `GET /solvers`). This is the whole protection an axisymmetric section
   gets, and it is why the kind exists.
 
-Planned kinds: `spline2d` profiles, `step3d` (uploaded CAD).
+Planned kinds: `spline2d` profiles, `step3d` (uploaded CAD). Neither is planned *because someone
+wants to draw that shape* — [ADR 0005](adr/0005-thin-about-physics-thick-about-claims.md) is the
+test each has to pass first: what can a server refuse, or a consumer check, once the protocol
+knows the outline is a spline? `axisymmetric2d` passed it (`rmin >= 0`, the axis relaxation, the
+`422` above); these two have not been asked yet.
 
 ## Workspace objects
 

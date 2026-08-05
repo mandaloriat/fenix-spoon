@@ -113,6 +113,12 @@ services (#44, #46, #48) go into `core/` beside what is there now.
    JSON-RPC over stdio, CLI, Python and MCP all map onto one application core with one set of
    models. An operation added to the core is available everywhere; a shared conformance suite
    keeps the adapters from drifting apart.
+6. **Thin about physics, thick about claims.** The protocol adds no physical semantics FEniCS
+   does not have, and carries everything a capability asserts or refuses. Where the two pull
+   apart, an addition earns its place by making something *refusable or declarable* that would
+   otherwise live only inside an adapter's source — which is why `axisymmetric2d` is a kind and
+   a hypothetical `beam1d` would not be. The test, and the case that looks like a
+   counter-example, are [ADR 0005](adr/0005-thin-about-physics-thick-about-claims.md).
 
 ## Component decisions and trade-offs
 
@@ -274,16 +280,6 @@ One limit is deliberately absent: a per-job memory ceiling. Solves run on thread
 process and a memory limit is a property of a process, so the honest enforcement points today
 are the cell budget and the container's own limit. Per-job ceilings arrive with the worker
 backend, where each solve is a process.
-
-**The same rule holds for the planned local agent interface.** It is tempting to hand an agent
-`run_python(code)` or `execute_shell(command)` and call it a day — on a local machine the agent
-often *can* run a shell anyway, so it feels free. It isn't: an interface made of arbitrary
-execution has no schema to discover, no validation, no cache identity, no provenance, and cannot
-later be exposed over a network without becoming remote code execution. The local interface
-therefore exposes the same declarative vocabulary as the HTTP API — named capabilities, typed
-parameters, domain objects, engineering operations — and no `run_python`, `execute_shell`,
-`run_ufl`, `install_package` or `start_container`. Agents translate human intent into typed
-requests; the core validates and executes defined engineering operations.
 
 ## Package layout (server)
 

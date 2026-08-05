@@ -227,11 +227,12 @@ files; `make docs-serve` previews it locally.
 8. [JSON-RPC over stdio](docs/08-json-rpc.md) — the local transport: methods, framing, errors
 9. [MCP adapter](docs/09-mcp.md) — the tool vocabulary for Model Context Protocol hosts
 10. [CLI and Python API](docs/10-cli-and-python.md) — the shell command and the in-process entrypoint
-11. [Local agent interface](docs/07-local-agent-interface.md) — design draft for driving the same
-   core from a local process (M2.5; the core, discovery, workspace, results, cache and the
-   stdio transport have landed — the CLI, Python and MCP adapters have not)
-10. [Decision records](docs/adr/index.md) — the few decisions that set a boundary rather than
-    living next to one file's code
+11. [Local agent interface](docs/07-local-agent-interface.md) — the design draft M2.5's issues
+    were written against, kept for the reasoning rather than the specification; the milestone
+    shipped, so where the two differ the implementation is the accurate one
+12. [Decision records](docs/adr/index.md) — the few decisions that set a boundary rather than
+    living next to one file's code, including the
+    [test a protocol addition has to pass](docs/adr/0005-thin-about-physics-thick-about-claims.md)
 
 [CHANGELOG.md](CHANGELOG.md) records what changed for the people building on the toolkit; the
 wire protocol's own history is in [docs/04-wire-protocol.md](docs/04-wire-protocol.md).
