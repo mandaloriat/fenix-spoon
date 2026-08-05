@@ -292,7 +292,7 @@ physical model assumes something, so an empty list reads as undeclared.
 
 **Name a `field` and a `reduction` where the metric really is a reduction of one — and
 then write no code for it.** The runtime computes those after your `solve` returns, from
-the declaration itself, so four adapters do not each contain the same `float(T.max())`.
+the declaration itself, so no adapter contains the same `float(T.max())` as its neighbour.
 It also makes the declaration checkable rather than decorative: the test suite runs a
 solve and fails if the field is not in the payload.
 

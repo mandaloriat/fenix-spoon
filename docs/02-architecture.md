@@ -290,9 +290,11 @@ requests; the core validates and executes defined engineering operations.
 ```
 server/fenixspoon/
 ├── main.py            # app factory, CORS, static demo mount
-├── api.py             # /api/v1 routes: solvers, jobs, events WS, results
+├── api.py             # /api/v1 routes: solvers, jobs, events WS, results, objects, studies
 ├── jobs.py            # JobManager: submit/status/events/result, retention, reconciliation
 ├── store.py           # JobStore: durable job metadata, event log and result payloads
+├── objects.py         # ObjectFileStore: workspace objects as diffable JSON, by revision
+├── cache.py           # content-addressed result identity and the environment fingerprint
 ├── execution.py       # run_solve: the one solve path, shared by pool and worker
 ├── backends.py        # ExecutionBackend: in-process pool, or arq over Redis
 ├── events.py          # EventBus: in-process fan-out
@@ -300,18 +302,29 @@ server/fenixspoon/
 ├── worker.py          # arq entry point: `arq fenixspoon.worker.WorkerSettings`
 ├── auth.py            # Principal resolution (API keys), quotas, CORS policy
 ├── geometry.py        # pydantic models for the geometry schema (protocol source of truth)
+├── boundaries.py      # a named boundary resolved to one predicate both halves of a pair use
 ├── protocol.py        # pydantic models for requests, events and result envelopes
+├── series.py          # the `series1d` curve models, below protocol so both can import them
+├── frames.py          # the time index: which instants a solve stored, and where each lives
+├── modes.py           # the mode index: its twin over an ordering that is not time
+├── fields.py          # the bounded field queries `result.query` answers
+├── core/              # the transport-neutral application core (see above)
+├── rpc/               # JSON-RPC over stdio: method table, framing, error codes
+├── mcp_adapter.py     # the MCP tool surface, bound to the RPC method table
 └── solvers/
     ├── base.py        # Solver protocol, SolverContext, ProgressEvent, SolverResult
     ├── registry.py    # name → solver class, availability-aware
+    ├── declarations.py # the metric/assumption/condition sets an adapter pair shares
     ├── _gmsh.py       # shared Gmsh meshing helpers for the FEniCSx adapters
-    ├── mock_laplace.py         # NumPy potential flow (reference implementation)
-    ├── mock_magnetostatics.py  # NumPy magnetostatics over `regions2d`
-    ├── mock_heat.py            # NumPy conduction with convective surfaces
-    ├── dolfinx_poisson.py        # FEniCSx + Gmsh potential flow
-    ├── dolfinx_magnetostatics.py # FEniCSx + Gmsh magnetostatics
-    └── dolfinx_heat.py           # FEniCSx + Gmsh conduction (meshes the solid only)
+    ├── mock_*.py      # seven NumPy stand-ins — potential flow, magnetostatics, steady and
+    │                  # transient conduction, elasticity, axisymmetric electrostatics, modes
+    └── dolfinx_*.py   # the seven FEniCSx twins, each registering only if dolfinx imports
 ```
+
+**The adapters are listed by pattern rather than by name**, and that is a statement about the
+shape rather than brevity: every physics here ships *twice*, once in NumPy and once on a mesh,
+and the pair shares its declarations, its material handling and its post-processing. A single
+`mock_*.py` with no twin would be the thing worth naming.
 
 The FEniCSx adapters register only when dolfinx imports, so the same codebase runs in a plain
 venv (mock solvers only) or in the dolfinx image (both).

@@ -96,9 +96,10 @@ the seams a second caller needs. The design specification is
       #46 and #48. (#42)
 - [x] **Progressive capability discovery.** `environment.inspect`, `capability.list`,
       `capability.describe` with eight selectable sections, in `core/discovery.py` and bound to
-      HTTP as protocol 1.2 — nine since #70 added `assumptions`. `GET /solvers` keeps its
-      payload exactly — it is the right answer for a form generator — and `capability.list` is
-      the compact one beside it: 0.5 kB against 4.0 kB on the three mock adapters. An
+      HTTP as protocol 1.2 — **ten** since #70 added `assumptions` and #85 added `conditions`.
+      `GET /solvers` keeps its payload exactly — it is the right answer for a form generator —
+      and `capability.list` is the compact one beside it: 1.2 kB against 15 kB on the seven
+      mock adapters, and a line each whatever is installed. An
       unrequested section is *absent*, not null, and an unknown section name is refused rather
       than ignored, because a caller that misspells `metrics` and gets a payload without them
       would conclude the capability has none. Solver adapters gained a declaration — physics,
@@ -109,7 +110,8 @@ the seams a second caller needs. The design specification is
       is really emitted; and the flattened `params` list is **flatter, not smaller** — measured,
       marginally larger than the schema, and what it buys is that no `$ref` has to be resolved.*
       (#43)
-- [x] **Local workspace and object references.** Six object types under stable ids
+- [x] **Local workspace and object references.** Six object types under stable ids — seven
+      since #22 added `optimization` —
       (`geometry:g-1`, `design:d-18`), versioned rather than mutated, with `workspace.open`,
       `workspace.list`, `object.create`, `object.get`, `object.patch` and a `job.submit` that
       takes a design reference. A job records the exact revisions it ran on, so the
@@ -138,7 +140,7 @@ the seams a second caller needs. The design specification is
       HTTP now would mean designing an object API that JSON-RPC may want differently, so
       `/api/v1` is unchanged apart from `environment.inspect` gaining the workspace path #43
       had specified and could not yet fill in. (#44)
-- [x] **JSON-RPC 2.0 over stdio.** `fenix-spoon rpc --stdio`, twenty-four methods over the same
+- [x] **JSON-RPC 2.0 over stdio.** `fenix-spoon rpc --stdio`, twenty-eight methods over the same
       core the HTTP API uses, with no port opened and no FastAPI imported. Documented in
       [JSON-RPC over stdio](08-json-rpc.md).
       *Framing: **newline-delimited JSON written, either accepted**.* The issue left this open
@@ -174,8 +176,8 @@ the seams a second caller needs. The design specification is
       grew out of `stats` rather than beside it, gaining the three things a `dict[str, float]`
       could not hold: a convergence flag, a residual, and warnings.
       *Two things worth recording. A metric declared as a reduction of a field is computed
-      **generically** from the #43 declaration, so four adapters do not each write the same
-      `float(T.max())`; only the derived ones (`t_rise` needs `t_ambient`, `cp_min` needs
+      **generically** from the #43 declaration, so no adapter writes the same
+      `float(T.max())` twice; only the derived ones (`t_rise` needs `t_ambient`, `cp_min` needs
       `u_inf`) are adapter code. And writing the closed-form test for `integral` found a real
       10% bias — summing grid points and multiplying by the cell area over-counts by
       `(n/(n-1))²`, because a lattice has one more point per axis than it has intervals. It is
@@ -269,7 +271,7 @@ the seams a second caller needs. The design specification is
       everything except finishing a job. One loop makes submit-now-wait-later, the notebook
       shape, an ordinary blocking call. (#50)
 - [x] **Cross-transport conformance and the vertical slice.** The milestone's exit criterion,
-      and the guard that keeps five adapters from drifting.
+      and the guard that keeps the adapters from drifting.
       *The corpus grew a `protocol/fixtures/errors.json`* naming every domain error and how each
       transport represents it. Until it existed the transports agreed on the strength of
       *per-pair* tests, which is a shape that decays quietly: add an error, map it on one

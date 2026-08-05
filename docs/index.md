@@ -42,16 +42,17 @@ install, no desktop tooling — a browser talking to a FEniCSx server.
 | Piece | State |
 |---|---|
 | Simulation server: jobs, progress streaming, cancellation, budgets, persistence, auth | working |
-| FEniCSx adapters for 2D potential flow and magnetostatics | validated against dolfinx 0.11 |
-| Pure-NumPy mock solvers mirroring both | working — the whole loop runs without FEniCSx |
-| Wire protocol v0 with a shared conformance corpus | implemented, checked from both sides |
-| Three browser packages: SDK, geometry editor, field viewer | working |
+| FEniCSx adapters for seven physics: potential flow, magnetostatics, steady and transient heat, elasticity, axisymmetric electrostatics, natural frequencies | validated against dolfinx 0.11 |
+| Pure-NumPy mock solvers mirroring every one of them | working — the whole loop runs without FEniCSx |
+| Wire protocol 1.14 with a shared conformance corpus | implemented, checked from both sides |
+| Four browser packages: SDK, geometry editor, field viewer, curve plot | working |
 | Distributed execution: arq workers behind Redis | working |
+| The same core from a local process: JSON-RPC over stdio, MCP, a CLI and a Python API | working |
 
-Milestones M1–M3 are complete apart from a Helm chart. The
-[roadmap](03-roadmap.md) tracks the rest — including
-[driving the same core from a local process](07-local-agent-interface.md) rather than a browser,
-which is designed but not built.
+Milestones M1, M2 and M2.5 are complete and M3 is, apart from a Helm chart. The
+[roadmap](03-roadmap.md) tracks the rest — and
+[driving the same core from a local process](07-local-agent-interface.md) rather than a browser
+is no longer among it: that document is now a record of what was built rather than a plan.
 
 ## The one design decision worth knowing up front
 

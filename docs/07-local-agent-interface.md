@@ -20,12 +20,12 @@
     1.2 ([#43](https://github.com/mandaloriat/fenix-spoon/issues/43)); the workspace §8 —
     typed versioned objects, RFC 6902 patches, submission by design reference, reachable
     through the core only ([#44](https://github.com/mandaloriat/fenix-spoon/issues/44)); and
-    compact results §10 — the five levels, metric values, diagnostics and the nine bounded
-    field queries, bound to HTTP as protocol 1.3
+    compact results §10 — the seven levels, five of them on by default, metric values,
+    diagnostics and the nine bounded field queries, bound to HTTP as protocol 1.3
     ([#46](https://github.com/mandaloriat/fenix-spoon/issues/46)); and the **content-addressed
     cache** §9 — identity, reuse and provenance, protocol 1.4
     ([#47](https://github.com/mandaloriat/fenix-spoon/issues/47)); and the **JSON-RPC over
-    stdio transport** §11 — twenty-four methods, no port, no FastAPI
+    stdio transport** §11 — twenty-eight methods, no port, no FastAPI
     ([#45](https://github.com/mandaloriat/fenix-spoon/issues/45)), documented at
     [JSON-RPC over stdio](08-json-rpc.md); and the **study abstraction** §7 —
     `mesh_convergence` first ([#48](https://github.com/mandaloriat/fenix-spoon/issues/48)) and
@@ -326,7 +326,8 @@ seam they would implement.
 
 !!! success "Implemented (#44), and bound to HTTP by ADR 0002"
 
-    Six object types under ids like `geometry:g-1`, versioned rather than mutated, patched
+    Six object types under ids like `geometry:g-1` — seven since #22 added `optimization` —
+    versioned rather than mutated, patched
     with RFC 6902, and a `job.submit` that takes a design reference and freezes the revisions
     it resolved. The four questions this section left open are answered in
     [§15](#15-open-questions) with the evidence that decided each one.
@@ -441,7 +442,7 @@ caps it. Full arrays are reached exactly one way: fetch the artifact.
 
 !!! success "JSON-RPC over stdio implemented (#45)"
 
-    Twenty-four methods over the same core, no port and no FastAPI. The framing question this
+    Twenty-eight methods over the same core, no port and no FastAPI. The framing question this
     section left open is answered — **newline-delimited JSON written, either framing
     accepted** — with the evidence in [§15](#15-open-questions). Two things went differently
     from the sketch below: **batches are refused** rather than supported, and **progress is
