@@ -81,6 +81,11 @@ def test_the_corpus_and_the_server_agree_on_the_protocol_version():
 #: payload, and someone reaching for an example reaches for that.
 PROSE_CLAIMS = {
     "CHANGELOG.md": [r"`MAJOR\.MINOR`, currently ([0-9]+\.[0-9]+)\)"],
+    # The documentation site's front page, added by the housekeeping pass that found it
+    # describing a two-physics project with a protocol three minors old. It is the first page
+    # a reader sees, which by the argument above makes it the *last* place a stale number
+    # should be allowed to sit.
+    "docs/index.md": [r"Wire protocol ([0-9]+\.[0-9]+) with a shared conformance corpus"],
     "README.md": [r"\*\*The wire protocol is at ([0-9]+\.[0-9]+)\.\*\*"],
     "docs/04-wire-protocol.md": [
         r"versioned `MAJOR\.MINOR`, currently \*\*([0-9]+\.[0-9]+)\*\*",

@@ -131,6 +131,17 @@ there is no adapter between the two. That was the point of choosing that model f
 
 ## Not here yet
 
+Five entries, and **four of them are the same sentence**: the capability ships, both halves of
+the pair are cross-validated, and there is no page. That is worth saying out loud now that it
+is a pattern rather than a backlog, because the reason is consistent and it is not the physics.
+Three of the four are waiting on the *same* browser-side gap — a widget that can fetch and draw
+**one member of an indexed family**: an instant of a transient, a mode shape, a section on axes
+that are not x and y. The protocol has indexed those families since 1.7 and indexes two of them
+now; `<fs-viewer>` still takes one field and draws it.
+
+So the shortest path to three demos is one widget change, not three physics ones. That is the
+kind of thing this section exists to make visible.
+
 **Linear elasticity** has adapters but no page. `mock.elasticity2d` and
 `dolfinx.elasticity2d` solve a clamped, loaded plate — displacement, von Mises stress, the
 classical `K_t = 3` around a hole — and they are the first capabilities here whose unknown is a

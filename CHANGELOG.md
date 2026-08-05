@@ -16,6 +16,33 @@ promise yet.
 
 ## Unreleased
 
+### Documentation — the test a protocol addition has to pass before it is written
+
+No code changed. [ADR 0005](docs/adr/0005-thin-about-physics-thick-about-claims.md) writes down
+the criterion the last four records were applying case by case, and which nothing stated: the
+protocol is **thin about physics** — it adds no semantics FEniCS does not have, and no UFL travels
+in either direction — and **thick about claims** — what a capability asserts, refuses and lets a
+caller check is contract, and being sparing there is a defect rather than a virtue.
+
+Where the two pull apart, the question is one line: *is there something a server can now refuse,
+or a consumer now check, that would otherwise live only inside an adapter's source?* If yes it is
+contract; if it only makes a case more convenient to express, it is a recipe and belongs in an
+adapter.
+
+The record works that against the case that looks like a counter-example. `axisymmetric2d` **does**
+add semantics FEniCS lacks — a dolfinx mesh has an `x[0]`, not an `r`, and the revolution lives
+only in the weak form — and it passes anyway, because the semantics is what makes `rmin >= 0`,
+the on-axis relaxation and the plane solver's `422` expressible at all. It was added in order to
+be able to say no. A `beam1d` added because beams are common would not be.
+
+Consequences that are already visible: `spline2d` and `step3d` stay planned, but the wire protocol
+now says the question they have to answer is what a server could refuse once it knows the outline
+is a spline, not whether someone wants to draw one. And decision 5 names a contradiction rather
+than fixing it — breadth is supposed to be bought with adapters, but `solvers/__init__.py` imports
+its own by hand and there are no entry points, so today every new physics has to land *in this
+repository*. Third-party adapter loading stops being a convenience and becomes the outlet this
+criterion depends on.
+
 ### Added — protocol 1.14: an eigensolve, and the index it needed (#101)
 
 *"Where does it resonate?"* was the one row of `series1d`'s own table of purposes with no

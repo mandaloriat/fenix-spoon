@@ -920,6 +920,15 @@ METHOD_COUNT_CLAIMS = {
     "README.md": r"`fenix-spoon rpc --stdio`: ([0-9]+|[a-z-]+) methods",
     "docs/09-mcp.md": r"tools, not ([0-9]+|[a-z-]+)\b",
     "docs/03-roadmap.md": r"tools, not ([0-9]+|[a-z-]+)\.\*",
+    # The two below were the drift this guard was built for and did not cover: both said
+    # "twenty-four" while the transport had grown to twenty-eight, and both are read by
+    # someone deciding whether to build against it. A guard aimed at one file taught nothing
+    # about the others — the same lesson `PROSE_CLAIMS` learned about the protocol version.
+    "docs/03-roadmap.md#methods": r"`fenix-spoon rpc --stdio`, ([0-9]+|[a-z-]+) methods",
+    "docs/07-local-agent-interface.md": r"§11 — ([0-9]+|[a-z-]+) methods, no port",
+    "docs/07-local-agent-interface.md#implemented": (
+        r"    ([0-9]+|[A-Za-z-]+) methods over the same core"
+    ),
 }
 
 
@@ -932,7 +941,9 @@ def test_the_prose_counts_the_methods_this_transport_actually_has(filename):
     somebody typed once. The MCP suite makes the same check for the tool list.
     """
     root = Path(__file__).resolve().parents[2]
-    text = (root / filename).read_text()
+    # A file may state the count more than once and in different words, so a key carries an
+    # optional `#suffix` naming which claim it is; the path is everything before it.
+    text = (root / filename.split("#")[0]).read_text()
     assert stated_count(text, METHOD_COUNT_CLAIMS[filename]) == len(method_names()), (
         f"{filename} states a method count the transport does not have; "
         f"there are {len(method_names())}"
