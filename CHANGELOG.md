@@ -16,6 +16,25 @@ promise yet.
 
 ## Unreleased
 
+*Nothing yet.*
+
+## 0.1.0 — 2026-08-06
+
+**The first release, and it is everything below.** Nothing had ever been tagged, so the whole
+file was one `Unreleased` block covering sixteen protocol minors — which meant the version
+`pyproject.toml` had declared since the beginning was a number nobody could check against
+anything.
+
+What 0.1.0 is: a simulation server, a versioned wire contract at **protocol 1.16**, eight
+adapter pairs each shipped twice and cross-validated, four browser packages, four transports
+over one transport-neutral core, and a workspace of versioned objects. What it is not is a
+stability promise — the project is pre-1.0 and the packages are versioned together, which is
+what that means in practice.
+
+Read the entries below newest-first; each protocol minor names the capability that asked for
+it, because that is the order they were built in.
+
+
 ### Added — protocol 1.16: what a nonlinear solve's answer is worth (#107)
 
 `converged`, `residual` and `warnings` have been on a result since 1.3, and the iterative
