@@ -226,7 +226,7 @@ def test_live_results_conform(tmp_path, monkeypatch):
 
 #: Every file that states the *implementation* version, as opposed to the protocol's.
 #:
-#: There are seven of them and until the 0.1.0 release nothing compared any two. That is the
+#: There are six of them and until the 0.1.0 release nothing compared any two. That is the
 #: same drift the block above guards against, one layer down: the protocol version had a test
 #: because it had already drifted three minors, and the package version had none because
 #: nothing had ever been released, so `0.1.0` was a number that could not be wrong yet.
@@ -235,6 +235,13 @@ def test_live_results_conform(tmp_path, monkeypatch):
 #: The four browser packages are here because the changelog says the packages are versioned
 #: *together*; a client published at a version the server never had would make that sentence
 #: false, and the sentence is what a consumer pins against.
+#:
+#: **`protocol/fixtures/version.json` is deliberately not in this list**, though it does
+#: contain the string `0.1.0` twice. Its `implementation` values are sample payloads
+#: exercising the *shape* of the version reply, not claims about this build — one of them is
+#: `3.2.1` on purpose, standing for a server that is not this one. Guarding them would pin an
+#: example to a release it is not about, and would make the next version bump edit a
+#: conformance case for no reason.
 VERSION_CLAIMS = {
     "server/pyproject.toml": r'^version = "([0-9]+\.[0-9]+\.[0-9]+)"',
     "server/fenixspoon/__init__.py": r'^__version__ = "([0-9]+\.[0-9]+\.[0-9]+)"',
