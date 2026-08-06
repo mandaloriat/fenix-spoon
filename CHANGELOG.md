@@ -1,7 +1,7 @@
 # Changelog
 
 Notable changes to Fenix Spoon. The **wire protocol** has a version of its own
-(`MAJOR.MINOR`, currently 1.15) and its history is in
+(`MAJOR.MINOR`, currently 1.16) and its history is in
 [docs/04-wire-protocol.md](docs/04-wire-protocol.md); this file records what changed for the
 people who build on the toolkit, protocol bump or not.
 
@@ -15,6 +15,46 @@ project is pre-1.0, so the packages are versioned together and nothing here is a
 promise yet.
 
 ## Unreleased
+
+### Added — protocol 1.16: what a nonlinear solve's answer is worth (#107)
+
+`converged`, `residual` and `warnings` have been on a result since 1.3, and the iterative
+adapters set them. Nothing *declared* them — so a caller could not ask, before spending a
+solve, whether a capability iterates at all, what its residual measures, or what arrives
+when the tolerance is not reached. Seven adapter pairs shipped without anyone noticing,
+because not one of them was nonlinear: every operator was independent of its own solution,
+so the vocabulary was never under load.
+
+- **`ConvergenceSpec` on a capability**, reported as a `convergence` section by
+  `capability.describe`. The scheme, what the residual is the size of, its unit, the default
+  tolerance — and `on_failure`. Absent when a capability does not iterate, which is itself
+  the claim that makes a null `converged` readable rather than ambiguous.
+- **`on_failure` is the load-bearing field, and it has two right answers.** `return` means an
+  unconverged solve comes back with a flag and a warning; `fail` means the job fails. A
+  relaxation sweep stopped at its cap is a legitimate preview — `mock.heat2d`'s own example
+  says the temperature is not converged and the shape is — while a Newton iterate short of
+  tolerance solves a problem with the *wrong coefficients*, and returning that quietly is the
+  plausible-looking answer this project exists not to give. What is new is that a caller can
+  tell which it is about to get.
+- **Enforced rather than documented.** A capability declaring `fail` that returns
+  `converged: false` fails the job, naming the tolerance it missed. And `converged: false`
+  from a capability declaring nothing is refused outright: there is no tolerance to read it
+  against. `converged: true` needs no declaration — a direct LU factorisation is trivially
+  converged, and requiring a spec for that would have made seven adapters describe an
+  iteration none of them performs.
+- **`iterations` on the result** and in the `diagnostics` level, beside `converged` and
+  `residual` rather than in `stats` — which is `dict[str, float]` and about cost, where a
+  count reads as an expense.
+- **`mock.heat_nonlinear2d` and `dolfinx.heat_nonlinear2d`**: `k(T) = k0(1 + beta(T - T_ref))`
+  per region, Picard in NumPy and Newton on a mesh. Held to the **Kirchhoff closed form**
+  rather than to each other — unlike the modal pair they converge to the same fixed point
+  instead of bracketing it, so their agreement is weaker evidence and something outside has
+  to anchor it. `beta = 0` reproduces the straight line, and a second test asserts the
+  nonlinear answer is *not* it, so passing the first cannot be done by ignoring `beta`.
+- **`k_ratio`**, a declared metric that can tell a caller it did not need this capability:
+  the spread of the solved conductivity field, 1.0 when the material never varied.
+- The linear pair's `constant_properties` assumption now names the capability that removes it.
+
 
 ### Added — protocol 1.15: adapters can come from somewhere else (#105)
 

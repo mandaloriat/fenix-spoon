@@ -15,7 +15,7 @@ import json
 
 import pytest
 from fastapi.testclient import TestClient
-from geometries import ROD_ON_AXIS, SOLENOID, UNIFORM_BEAM
+from geometries import ROD_ON_AXIS, SLAB, SOLENOID, UNIFORM_BEAM
 from pydantic import ValidationError
 
 from fenixspoon.core import FenixSpoonCore, discovery, errors
@@ -47,6 +47,10 @@ SMOKE = {
     # A dense eigendecomposition, so the grid is the smallest one the adapter accepts and
     # the mode count is the smallest that reaches an elastic mode of a free structure (#101).
     "mock.modal2d": (UNIFORM_BEAM, {"resolution": 16, "n_modes": 4, "mode": 4}),
+    # The nonlinear pair takes fixed faces rather than the convective surface the linear
+    # heat adapters use, so it gets its own slab (#107). A coarse grid: what is being smoked
+    # is the declaration against the result, and the closed-form check lives elsewhere.
+    "mock.heat_nonlinear2d": (SLAB, {"resolution": 32, "outer_iterations": 20}),
     # Four steps, not a converged run: these tests ask which keys come back, and a
     # transient's cost is cells times steps.
     "mock.transient_heat2d": (SOLENOID, {"resolution": 32, "steps": 4, "duration": 10.0}),
@@ -70,6 +74,7 @@ FENICS_SMOKE = {
     "dolfinx.transient_heat2d": (SOLENOID, {"mesh_size": 0.004, "steps": 3, "duration": 10.0}),
     "dolfinx.electrostatics_axi2d": (ROD_ON_AXIS, {"mesh_size": 5.0e-4}),
     "dolfinx.modal2d": (UNIFORM_BEAM, {"mesh_size": 0.05, "n_modes": 4, "mode": 4}),
+    "dolfinx.heat_nonlinear2d": (SLAB, {"mesh_size": 0.04}),
 }
 
 

@@ -24,7 +24,12 @@ from pydantic import BaseModel, Field
 from ..geometry import Domain2D
 from . import aerodynamics as aero
 from .base import CapabilityExample, ProgressEvent, Solver, SolverContext, SolverResult
-from .declarations import POTENTIAL_FLOW_ASSUMPTIONS, POTENTIAL_FLOW_METRICS, VTK_ARTIFACT
+from .declarations import (
+    POTENTIAL_FLOW_ASSUMPTIONS,
+    POTENTIAL_FLOW_METRICS,
+    RELAXATION_CONVERGENCE,
+    VTK_ARTIFACT,
+)
 from .registry import register
 
 
@@ -182,6 +187,7 @@ class MockLaplace2D(Solver):
     )
     physics = "potential-flow"
     availability = "mock"
+    convergence = RELAXATION_CONVERGENCE
     metrics = POTENTIAL_FLOW_METRICS
     assumptions = POTENTIAL_FLOW_ASSUMPTIONS
     #: Pure NumPy with a fixed sweep count and no randomness anywhere: the same inputs give

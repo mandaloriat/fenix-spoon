@@ -360,7 +360,8 @@ The `diagnostics` level: what the solve cost and how well it went.
 |---|---|---|---|---|
 | `stats` | `dict[str, float]` | yes |  | What it cost: `cells`, `dofs`, `iterations`, `seconds`. Server-defined. |
 | `converged` | `bool \| null` | no | `None` | Whether an iterative solve reached tolerance. Null where it does not apply. |
-| `residual` | `float \| null` | no | `None` | Final residual, when iterative. |
+| `residual` | `float \| null` | no | `None` | Final residual, when iterative. **What it measures is the capability's to say** — `capability.describe?sections=convergence` reports that, plus the tolerance it was compared against (protocol 1.16). Two adapters' residuals are not comparable numbers without it: a relaxation sweep reports a temperature change in kelvin and a Newton solve a dimensionless relative residual. |
+| `iterations` | `int \| null` | no | `None` | How many iterations it took; null for a direct solve (protocol 1.16). Here rather than in `stats` because it is part of how the answer was reached, not what it cost. |
 | `warnings` | `list[str]` | no | `[]` | Non-fatal things worth knowing about this solve. |
 
 ## `Provenance`
@@ -579,6 +580,7 @@ What `capability.describe` returns. Every section is optional and omitted unless
 | `artifacts` | `list[ArtifactSpec] \| null` | no | `None` | Section `artifacts`: files a solve may write. |
 | `cost` | `CostSection \| null` | no | `None` | Section `cost`: whether a request can be sized in advance. |
 | `features` | `CapabilityFeatures \| null` | no | `None` | Section `features`: sweep, gradient and MPI support. |
+| `convergence` | `ConvergenceSpec \| null` | no | `None` | Section `convergence`: what this capability's iteration converges to, and what arrives when it does not (#107). Absent from the answer when the capability does not iterate — which is itself the claim that makes a null `converged` on its results readable. |
 | `requirements` | `RequirementsSection \| null` | no | `None` | Section `requirements`: declared imports and their state here. |
 | `examples` | `list[CapabilityExample] \| null` | no | `None` | Section `examples`: known-good parameter sets. |
 
@@ -686,6 +688,18 @@ What a capability supports beyond a single solve (issue #43).
 | `sweep` | `bool` | no | `False` | Can be driven by a parameter study without a bespoke driver. |
 | `gradient` | `bool` | no | `False` | Reports derivatives of a metric with respect to its params. |
 | `mpi` | `bool` | no | `False` | Produces a correct result when the process is launched under `mpirun`. False for the FEniCSx adapters too: they mesh on `COMM_WORLD` but serialise partition-local arrays, so a multi-rank run would return one rank's slice. |
+
+## `ConvergenceSpec`
+
+What a capability's iteration converges *to*, and what it does if it does not (#107).
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `method` | `str` | yes |  | The scheme, e.g. `newton`, `picard`, `relaxation`. An open string rather than an enum for the reason `Region2D.material` is an open map: a closed set of numerical schemes would put numerical analysis into the protocol and make every new one a protocol change. |
+| `measures` | `str` | yes |  | What the reported `residual` is the size of, in words. The declaration that turns a bare float into a number a caller can compare against a tolerance. |
+| `unit` | `str \| null` | no | `None` | Unit of the residual; null when it is dimensionless (a relative residual). |
+| `default_tolerance` | `float` | yes |  | The tolerance a solve targets unless a parameter overrides it. |
+| `on_failure` | `'fail' \| 'return'` | yes |  | What a caller receives when the tolerance is not reached. `fail` — the job fails, because the last iterate is not an answer to anything. `return` — the result comes back with `converged: false` and a warning, which is the right behaviour for a relaxation preview and the wrong one for a Newton solve. Enforced: an adapter declaring `fail` cannot return an unconverged result. |
 
 ## `RequirementsSection`
 

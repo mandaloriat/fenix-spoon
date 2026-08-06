@@ -16,7 +16,7 @@ adapter writes `float(T.max())` twice; the ones with neither are the adapter's o
 they need a parameter and a parameter is not in the result payload.
 """
 
-from .base import ArtifactSpec, Assumption, ConditionSpec, MetricSpec
+from .base import ArtifactSpec, Assumption, ConditionSpec, ConvergenceSpec, MetricSpec
 
 #: Every capability in this repository is a cross-section of a body infinitely long in z, and
 #: not one of them said so before #70. Shared rather than repeated per physics because it is
@@ -414,7 +414,9 @@ HEAT_ASSUMPTIONS = [
         statement=(
             "Conductivity is constant per region and independent of temperature. Good for "
             "metals over a modest range; poor across a phase change or for a material whose "
-            "k varies by tens of percent over the range the solve spans."
+            "k varies by tens of percent over the range the solve spans. The capability that "
+            "removes this assumption is `heat_nonlinear2d`, which reports `k_ratio` — the "
+            "spread of the solved conductivity — so a run can tell you whether it mattered."
         ),
     ),
     Assumption(
@@ -885,6 +887,160 @@ TRANSIENT_HEAT_ASSUMPTIONS = [
             "is damped rather than oscillatory when the step is coarse. Halve `steps` and "
             "the early rise moves; if it moves much, the step was too coarse to read."
         ),
+    ),
+    TWO_DIMENSIONAL,
+]
+
+
+# ------------------------------------------------------------------- convergence (#107)
+
+#: What the relaxation mocks converge to, and why they hand back an unconverged field.
+#:
+#: Every NumPy stand-in here sweeps a grid until the change per sweep falls below a
+#: tolerance, and every one of them stops at its iteration cap if it does not get there. That
+#: was already true and already reported — `converged`, `residual` and a warning have been on
+#: a result since 1.3 — but nothing *declared* it, so `residual` was a bare float whose
+#: meaning lived in the adapter's source. It is a temperature change per sweep in `mock.heat2d`
+#: and a change in vector potential in `mock.magnetostatics2d`, which is exactly the kind of
+#: difference a caller cannot guess.
+#:
+#: `on_failure="return"` is deliberate rather than lenient. A partly-relaxed field is a
+#: legitimate preview — `mock.heat2d`'s own "fast preview" example says the temperature is not
+#: converged and the shape is — and a caller that asked for 800 sweeps on a 160-cell grid
+#: asked for that. What makes it safe is that the caller can now *know* before submitting.
+RELAXATION_CONVERGENCE = ConvergenceSpec(
+    method="relaxation",
+    measures="largest change in the unknown over one sweep",
+    unit=None,
+    default_tolerance=1e-9,
+    on_failure="return",
+)
+
+#: The same, for the mocks whose unknown is a temperature, where the residual has a unit.
+RELAXATION_CONVERGENCE_K = ConvergenceSpec(
+    method="relaxation",
+    measures="largest temperature change over one sweep",
+    unit="K",
+    default_tolerance=1e-9,
+    on_failure="return",
+)
+
+#: Successive substitution on a temperature-dependent conductivity (#107).
+#:
+#: **`on_failure="fail"`, and that is the whole point of the pair.** Freeze `k` at the current
+#: temperature, solve the linear problem, repeat: the fixed point is the answer and an iterate
+#: short of it solves a conduction problem with the *wrong* conductivity — a field that is a
+#: solution to a question nobody asked. Returning it with a flag is the plausible answer this
+#: project exists not to give, which is why the relaxation adapters' policy would be wrong
+#: here even though it is right there.
+PICARD_CONVERGENCE = ConvergenceSpec(
+    method="picard",
+    measures=(
+        "largest temperature change between successive outer iterations, "
+        "relative to the temperature rise"
+    ),
+    unit=None,
+    default_tolerance=1e-6,
+    on_failure="fail",
+)
+
+#: Newton on the same problem: the FEniCSx half of the pair.
+#:
+#: A different residual from Picard's — this one is the norm of the discrete heat balance
+#: itself rather than a step size — and declaring both is what stops a caller comparing two
+#: numbers that are not the same quantity. Same `on_failure` for the same reason.
+NEWTON_CONVERGENCE = ConvergenceSpec(
+    method="newton",
+    measures="norm of the nonlinear residual, relative to the first iteration's",
+    unit=None,
+    default_tolerance=1e-8,
+    on_failure="fail",
+)
+
+
+# ------------------------------------------------- temperature-dependent conduction (#107)
+
+#: What a nonlinear conduction solve answers, beyond the linear pair's peak and flux.
+#:
+#: `k_ratio` is the one that is new, and it is the metric that says whether this capability
+#: was worth using: it is the spread of the *solved* conductivity field, so a value near 1
+#: means the material barely varied over the range and the linear adapter would have given
+#: the same answer for a fraction of the cost. A capability that can tell a caller it was
+#: unnecessary is more useful than one that cannot.
+NONLINEAR_HEAT_METRICS = [
+    MetricSpec(
+        name="t_max",
+        unit="degC",
+        description="Peak temperature in the domain.",
+        field="T",
+        reduction="max",
+    ),
+    MetricSpec(
+        name="flux_max",
+        unit="W/m^2",
+        description="Peak conductive heat flux magnitude, k(T)|grad T|.",
+        field="flux",
+        reduction="max",
+    ),
+    MetricSpec(
+        name="k_ratio",
+        unit="1",
+        description=(
+            "Highest conductivity in the converged field over the lowest. 1.0 means the "
+            "material did not vary over the range this solve spanned, and a linear solve "
+            "would have answered the same question more cheaply."
+        ),
+        # Not a reduction: it is the ratio of two reductions of one field, and declaring it
+        # as `max` of `k` would report a number in W/(m·K) under a dimensionless name.
+    ),
+]
+
+#: What the nonlinear pair assumes — and, as importantly, which of the linear pair's
+#: assumptions it *retires*.
+#:
+#: `constant_properties` was in `HEAT_ASSUMPTIONS` from #70, complete with the sentence
+#: saying when it fails. This is the capability that removes it, which is why this list is a
+#: separate object rather than an extension: an assumption set describes one capability, and
+#: sharing the linear pair's would have had this adapter claim a limitation it does not have.
+NONLINEAR_HEAT_ASSUMPTIONS = [
+    Assumption(
+        name="steady_state",
+        statement=(
+            "No time derivative: the temperature reported is the equilibrium reached after a "
+            "time this model cannot tell you. A nonlinear transient is a harder problem than "
+            "either half of this one and is not it."
+        ),
+        excludes=["thermal_time_constant", "transient_temperature", "duty_cycle_rise"],
+    ),
+    Assumption(
+        name="linear_conductivity_law",
+        statement=(
+            "k varies *linearly* with temperature, k(T) = k0 (1 + beta (T - T_ref)). That is "
+            "a good fit for metals over a few hundred kelvin and a poor one across a phase "
+            "change, where k moves discontinuously — this reports a smooth answer either way, "
+            "which is the failure mode to watch for. Extrapolating far outside the range beta "
+            "was fitted over is the same error in slower motion."
+        ),
+        excludes=["phase_change", "latent_heat", "tabulated_conductivity"],
+    ),
+    Assumption(
+        name="positive_conductivity",
+        statement=(
+            "k is clamped at a small positive value. A beta steep enough to drive it negative "
+            "over the solved range is outside the model's regime, and the clamp means such a "
+            "case returns a *converged-looking* answer for a material that stopped being the "
+            "one you described — check `k_ratio` against what you expect."
+        ),
+    ),
+    Assumption(
+        name="fixed_and_insulated_faces",
+        statement=(
+            "Two faces are held at fixed temperatures and every other face is insulated. No "
+            "convection, no radiation, no flux boundary — the linear heat pair is where the "
+            "convective surface model lives, and this capability trades it for a problem with "
+            "a closed-form answer to be checked against."
+        ),
+        excludes=["convection_coefficient", "emissivity", "radiative_flux"],
     ),
     TWO_DIMENSIONAL,
 ]

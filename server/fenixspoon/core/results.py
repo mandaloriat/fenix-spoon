@@ -111,7 +111,24 @@ class DiagnosticsView(BaseModel):
         default=None,
         description="Whether an iterative solve reached tolerance. Null where it does not apply.",
     )
-    residual: float | None = Field(default=None, description="Final residual, when iterative.")
+    residual: float | None = Field(
+        default=None,
+        description=(
+            "Final residual, when iterative. **What it measures is the capability's to "
+            "say** — `capability.describe?sections=convergence` reports that, plus the "
+            "tolerance it was compared against (protocol 1.16). Two adapters' residuals are "
+            "not comparable numbers without it: a relaxation sweep reports a temperature "
+            "change in kelvin and a Newton solve a dimensionless relative residual."
+        ),
+    )
+    iterations: int | None = Field(
+        default=None,
+        description=(
+            "How many iterations it took; null for a direct solve (protocol 1.16). Here "
+            "rather than in `stats` because it is part of how the answer was reached, not "
+            "what it cost."
+        ),
+    )
     warnings: list[str] = Field(
         default=[], description="Non-fatal things worth knowing about this solve."
     )
@@ -375,6 +392,7 @@ def build(
             stats=dict(summary.stats),
             converged=summary.converged,
             residual=summary.residual,
+            iterations=summary.iterations,
             warnings=list(summary.warnings),
         )
     if "provenance" in levels:

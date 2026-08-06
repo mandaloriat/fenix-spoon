@@ -51,6 +51,7 @@ from .declarations import (
     ELECTROSTATICS_ASSUMPTIONS,
     ELECTROSTATICS_CONDITIONS,
     ELECTROSTATICS_METRICS,
+    RELAXATION_CONVERGENCE,
     VTK_ARTIFACT,
 )
 from .mock_laplace import _grid_shape, grid_to_mesh2d, polygon_mask, write_vtk_structured_points
@@ -201,6 +202,7 @@ class MockElectrostaticsAxi2D(Solver):
     geometry_types = ["axisymmetric2d"]
     physics = "electrostatics"
     availability = "mock"
+    convergence = RELAXATION_CONVERGENCE
     metrics = ELECTROSTATICS_METRICS
     assumptions = ELECTROSTATICS_ASSUMPTIONS
     conditions = ELECTROSTATICS_CONDITIONS

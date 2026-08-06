@@ -44,6 +44,7 @@ from ..series import Series1DData, SeriesAxis, SeriesTrace
 from .base import CapabilityExample, ProgressEvent, Solver, SolverContext, SolverResult
 from .declarations import (
     FRAME_ARTIFACT,
+    RELAXATION_CONVERGENCE_K,
     TRANSIENT_HEAT_ASSUMPTIONS,
     TRANSIENT_HEAT_METRICS,
     VTK_ARTIFACT,
@@ -119,6 +120,7 @@ class MockTransientHeat2D(Solver):
     #: discretises.
     physics = "heat-conduction-transient"
     availability = "mock"
+    convergence = RELAXATION_CONVERGENCE_K
     metrics = TRANSIENT_HEAT_METRICS
     assumptions = TRANSIENT_HEAT_ASSUMPTIONS
     #: Fixed step count, fixed sweep count, no randomness: same inputs, same arrays (#47).

@@ -626,6 +626,7 @@ def job_result(
             {
                 "converged": summary.converged,
                 "residual": summary.residual,
+                "iterations": summary.iterations,
                 "warnings": summary.warnings,
             }
             if summary

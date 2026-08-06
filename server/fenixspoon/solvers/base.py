@@ -86,7 +86,21 @@ class SolverResult(BaseModel):
     be smuggled in as 0.0/1.0 and hoped about."""
 
     residual: float | None = None
-    """Final residual for an iterative solve; ``None`` for a direct one."""
+    """Final residual for an iterative solve; ``None`` for a direct one.
+
+    What it *measures* is the capability's to say: see :class:`ConvergenceSpec`. A number
+    with no stated meaning is the thing that declaration exists to stop — `mock.heat2d`'s is
+    a temperature change per sweep in kelvin and `dolfinx.heat_nonlinear2d`'s is a
+    dimensionless relative residual, and nothing on the wire distinguished them before 1.16.
+    """
+
+    iterations: int | None = None
+    """How many iterations the solve took; ``None`` for a direct one (protocol 1.16, #107).
+
+    Beside `converged` and `residual` rather than in ``stats``, which is ``dict[str, float]``
+    and about *cost*. A count smuggled in there as ``3.0`` reads as an expense; here it is
+    part of how the answer was reached, which is what a caller checking a nonlinear solve is
+    actually asking about."""
 
     warnings: list[str] = []
     """Things the caller should know that did not fail the job — a solve stopped at its
@@ -388,6 +402,64 @@ class ArtifactSpec(BaseModel):
         )
 
 
+class ConvergenceSpec(BaseModel):
+    """What a capability's iteration converges *to*, and what it does if it does not (#107).
+
+    *Added in protocol 1.16.* `converged`, `residual` and `warnings` have been on a result
+    since 1.3 and the iterative adapters set them — but nothing declared them, so a caller
+    could not ask, before spending a solve:
+
+    - does this capability iterate at all, or is `converged: null` simply what a direct LU
+      factorisation looks like?
+    - what does `residual` measure, and in what unit? `mock.heat2d`'s is a temperature change
+      per sweep; `mock.magnetostatics2d`'s is a change in vector potential; both were bare
+      floats.
+    - **and what arrives when it does not reach tolerance** — an error, or the last iterate
+      with a flag on it?
+
+    That last question is why this class exists, and it is the one with two different answers
+    in this repository. A relaxation sweep stopped at its cap is a legitimate preview and
+    `mock.heat2d` returns it deliberately. A Newton solve stopped mid-iteration is a field
+    that solves nothing, and handing it back with a quiet flag is exactly the *plausible
+    answer* this project exists not to give. Both behaviours are right for their adapter;
+    what was missing is that a caller could not tell which it was about to get.
+
+    ``None`` on a capability is itself a claim — *this does not iterate* — which is what makes
+    a null `converged` readable rather than ambiguous.
+    """
+
+    method: str = Field(
+        description=(
+            "The scheme, e.g. `newton`, `picard`, `relaxation`. An open string rather than an "
+            "enum for the reason `Region2D.material` is an open map: a closed set of numerical "
+            "schemes would put numerical analysis into the protocol and make every new one a "
+            "protocol change."
+        )
+    )
+    measures: str = Field(
+        description=(
+            "What the reported `residual` is the size of, in words. The declaration that "
+            "turns a bare float into a number a caller can compare against a tolerance."
+        )
+    )
+    unit: str | None = Field(
+        default=None,
+        description="Unit of the residual; null when it is dimensionless (a relative residual).",
+    )
+    default_tolerance: float = Field(
+        gt=0.0, description="The tolerance a solve targets unless a parameter overrides it."
+    )
+    on_failure: Literal["fail", "return"] = Field(
+        description=(
+            "What a caller receives when the tolerance is not reached. `fail` — the job "
+            "fails, because the last iterate is not an answer to anything. `return` — the "
+            "result comes back with `converged: false` and a warning, which is the right "
+            "behaviour for a relaxation preview and the wrong one for a Newton solve. "
+            "Enforced: an adapter declaring `fail` cannot return an unconverged result."
+        )
+    )
+
+
 class CapabilityFeatures(BaseModel):
     """What a capability supports beyond a single solve (issue #43).
 
@@ -651,6 +723,11 @@ class Solver(ABC):
     #: Sweep / gradient / MPI support. See :class:`CapabilityFeatures`.
     features: ClassVar[CapabilityFeatures] = CapabilityFeatures()
 
+    #: What its iteration converges to, and what it does if it does not (#107).
+    #: ``None`` is a claim rather than an omission — *this capability does not iterate* —
+    #: and it is what makes a null `converged` on the result readable.
+    convergence: ClassVar[ConvergenceSpec | None] = None
+
     #: Known-good parameter sets. See :class:`CapabilityExample`.
     examples: ClassVar[list[CapabilityExample]] = []
 
@@ -694,6 +771,59 @@ class Solver(ABC):
     def solve(
         self, geometry: Geometry, params: "Solver.Params", ctx: SolverContext
     ) -> SolverResult: ...
+
+
+class ConvergenceNotReached(RuntimeError):
+    """A capability that declared ``on_failure="fail"`` did not reach its tolerance (#107).
+
+    Raised after the solve returns rather than inside it, so an adapter states the policy
+    once in its declaration instead of implementing it — and so the two halves of a pair
+    cannot implement it differently.
+    """
+
+
+def check_declared_convergence(solver_cls: type[Solver], result: SolverResult) -> None:
+    """Hold a result to what its capability declared about converging (#107).
+
+    **`converged: false` is the value that needs a declaration**, and that asymmetry is the
+    rule. A solve saying *no* is telling a caller the answer is not the answer, and without a
+    spec there is nothing to read that against — no tolerance, no meaning for the residual,
+    and no statement of whether this capability considers the iterate usable. A solve saying
+    *yes* needs nothing: a direct LU factorisation reporting `converged: true` is trivially
+    true and every FEniCSx adapter here does exactly that.
+
+    So two refusals, both about a claim nobody can act on:
+
+    - `converged: false` from a capability that declares no spec — unreadable by construction;
+    - `converged: false` from one declaring ``on_failure="fail"`` — the policy was stated and
+      then not implemented, which is worse, because a caller who read the declaration
+      reasonably stopped checking the flag.
+
+    Everything else is filled in rather than refused. A declaring adapter that simply did not
+    set `converged` is taken to have converged, because it returned normally and the
+    alternative reading — silence means failure — would fail every solve that worked.
+    """
+    spec = solver_cls.convergence
+    if spec is None:
+        if result.converged is False:
+            raise ConvergenceNotReached(
+                f"{solver_cls.name} reports that it did not converge but declares no "
+                "`convergence` spec, so a caller has nothing to read the flag against — no "
+                "tolerance, no meaning for the residual, and no statement of whether this "
+                "capability considers the iterate usable"
+            )
+        return
+
+    if result.converged is None:
+        result.converged = True
+    if result.converged is False and spec.on_failure == "fail":
+        residual = "unreported" if result.residual is None else f"{result.residual:.3g}"
+        raise ConvergenceNotReached(
+            f"{solver_cls.name} did not reach its tolerance ({spec.default_tolerance:g}) — "
+            f"final residual {residual} after {result.iterations} iterations. The capability "
+            "declares `on_failure=\"fail\"` because the last iterate of this scheme is not a "
+            "solution; raise the iteration cap, loosen the tolerance, or take a smaller step."
+        )
 
 
 def fill_declared_metrics(solver_cls: type[Solver], result: SolverResult) -> None:

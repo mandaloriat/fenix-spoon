@@ -96,7 +96,7 @@ the seams a second caller needs. The design specification is
       #46 and #48. (#42)
 - [x] **Progressive capability discovery.** `environment.inspect`, `capability.list`,
       `capability.describe` with eight selectable sections, in `core/discovery.py` and bound to
-      HTTP as protocol 1.2 — **ten** since #70 added `assumptions` and #85 added `conditions`.
+      HTTP as protocol 1.2 — **eleven** since #70 added `assumptions`, #85 added `conditions` and #107 added `convergence`.
       `GET /solvers` keeps its payload exactly — it is the right answer for a form generator —
       and `capability.list` is the compact one beside it: 1.2 kB against 15 kB on the seven
       mock adapters, and a line each whatever is installed. An

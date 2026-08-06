@@ -40,6 +40,7 @@ from ..solvers.base import (
     CapabilityExample,
     CapabilityFeatures,
     ConditionSpec,
+    ConvergenceSpec,
     MetricSpec,
     Solver,
 )
@@ -60,6 +61,7 @@ SECTIONS: tuple[str, ...] = (
     "artifacts",
     "cost",
     "features",
+    "convergence",
     "requirements",
     "examples",
 )
@@ -439,6 +441,15 @@ class CapabilityDescription(Selective):
     features: CapabilityFeatures | None = Field(
         default=None, description="Section `features`: sweep, gradient and MPI support."
     )
+    convergence: ConvergenceSpec | None = Field(
+        default=None,
+        description=(
+            "Section `convergence`: what this capability's iteration converges to, and what "
+            "arrives when it does not (#107). Absent from the answer when the capability "
+            "does not iterate — which is itself the claim that makes a null `converged` on "
+            "its results readable."
+        ),
+    )
     requirements: RequirementsSection | None = Field(
         default=None, description="Section `requirements`: declared imports and their state here."
     )
@@ -646,6 +657,12 @@ def describe_capability(
         # sharper one: "this capability reads no boundary-condition keys" is exactly what a
         # caller needs to know before authoring a load case for it.
         out.conditions = list(solver_cls.conditions)
+    if "convergence" in wanted:
+        # Null rather than an empty object when the capability does not iterate, and the
+        # asymmetry with `assumptions` above is deliberate: an empty assumption list says
+        # "none declared", while there is no such thing as an empty convergence spec — the
+        # absence *is* the statement.
+        out.convergence = solver_cls.convergence
     if "artifacts" in wanted:
         out.artifacts = list(solver_cls.artifacts)
     if "cost" in wanted:

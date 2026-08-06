@@ -26,7 +26,12 @@ from pydantic import BaseModel, Field
 
 from ..geometry import Axisymmetric2D, Regions2D
 from .base import CapabilityExample, ProgressEvent, Solver, SolverContext, SolverResult
-from .declarations import MAGNETOSTATICS_ASSUMPTIONS, MAGNETOSTATICS_METRICS, VTK_ARTIFACT
+from .declarations import (
+    MAGNETOSTATICS_ASSUMPTIONS,
+    MAGNETOSTATICS_METRICS,
+    RELAXATION_CONVERGENCE,
+    VTK_ARTIFACT,
+)
 from .mock_laplace import (
     _grid_shape,
     grid_to_mesh2d,
@@ -74,6 +79,7 @@ class MockMagnetostatics2D(Solver):
     geometry_types = ["regions2d"]
     physics = "magnetostatics"
     availability = "mock"
+    convergence = RELAXATION_CONVERGENCE
     metrics = MAGNETOSTATICS_METRICS
     assumptions = MAGNETOSTATICS_ASSUMPTIONS
     #: Pure NumPy with a fixed sweep count and no randomness anywhere: the same inputs give

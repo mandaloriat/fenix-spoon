@@ -53,6 +53,7 @@ class ResultSummary:
     metrics: dict[str, float] = field(default_factory=dict)
     converged: bool | None = None
     residual: float | None = None
+    iterations: int | None = None
     warnings: list[str] = field(default_factory=list)
     series: list[Series1DData] = field(default_factory=list)
     """The result's curves (protocol 1.4, issue #69).
@@ -139,6 +140,7 @@ class JobRecord:
                 metrics=dict(self.result.metrics),
                 converged=self.result.converged,
                 residual=self.result.residual,
+                iterations=self.result.iterations,
                 warnings=list(self.result.warnings),
                 # `curves_of`, not `result.series`: a `series1d` adapter puts its curves in
                 # `data`, and this column is what the compact `series` level reads. Storing them
@@ -596,6 +598,7 @@ class SqliteJobStore(JobStore):
                         {
                             "converged": record.result.converged,
                             "residual": record.result.residual,
+                            "iterations": record.result.iterations,
                             "warnings": record.result.warnings,
                         }
                         if record.result
@@ -664,6 +667,7 @@ class SqliteJobStore(JobStore):
                     metrics=json.loads(row["metrics"] or "{}"),
                     converged=stored_diagnostics.get("converged"),
                     residual=stored_diagnostics.get("residual"),
+                    iterations=stored_diagnostics.get("iterations"),
                     warnings=stored_diagnostics.get("warnings") or [],
                     series=stored_series,
                 )
@@ -678,6 +682,7 @@ class SqliteJobStore(JobStore):
                 metrics=json.loads(row["metrics"] or "{}"),
                 converged=stored_diagnostics.get("converged"),
                 residual=stored_diagnostics.get("residual"),
+                iterations=stored_diagnostics.get("iterations"),
                 warnings=stored_diagnostics.get("warnings") or [],
                 series=stored_series,
             )
