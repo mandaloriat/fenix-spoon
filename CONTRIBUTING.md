@@ -88,6 +88,35 @@ Everything above, plus:
 An older client meeting a newer major should get a comprehensible refusal, not a parse error.
 `checkProtocolCompatibility` in the SDK is the client-side half of that.
 
+## Cutting a release
+
+The **implementation** version is separate from the protocol's, and moves for different
+reasons: a release can carry no protocol change at all, and a protocol minor does not oblige
+one. Both are pre-1.0 in their own way — the protocol is at 1.x and stable in the additive
+sense, the packages are at 0.x and promise nothing.
+
+**The packages are versioned together.** Server and the four browser packages share one
+number, which is what lets a consumer pin `@fenix-spoon/client@0.1.0` against a server and
+know what it is talking to. `test_every_package_states_the_implementation_version` compares
+all six declarations against `fenixspoon.__version__` and fails if any one of them drifts.
+
+To cut one:
+
+1. Bump the version in `server/pyproject.toml`, `server/fenixspoon/__init__.py`, and the four
+   `client/packages/*/package.json`. All six, or the test above fails — which is the point.
+2. Rename the `## Unreleased` heading in `CHANGELOG.md` to `## X.Y.Z — YYYY-MM-DD` and open a
+   fresh empty `## Unreleased` above it.
+   `test_the_changelog_has_a_section_for_the_released_version` checks the dated heading exists
+   and sits below `Unreleased`.
+3. Merge that, then tag the merge commit: `git tag -a vX.Y.Z -m "…" && git push origin vX.Y.Z`.
+   **The tag goes on the merge commit, not on the branch** — a tag pointing at a commit that
+   is not on `main` names a version nobody can check out from the default branch.
+
+The first release, 0.1.0, was cut long after the code it describes: nothing had been tagged,
+so the changelog was one `Unreleased` block covering sixteen protocol minors and the version
+in `pyproject.toml` was a number that could not be wrong yet because nothing compared it to
+anything. That is the failure mode the two tests above exist for.
+
 ## Code style
 
 - Python: `ruff` (configured in `server/pyproject.toml`), type hints on public APIs.

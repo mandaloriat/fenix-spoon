@@ -222,3 +222,52 @@ def test_live_results_conform(tmp_path, monkeypatch):
                         "cancelled",
                     ):
                         break
+
+
+#: Every file that states the *implementation* version, as opposed to the protocol's.
+#:
+#: There are seven of them and until the 0.1.0 release nothing compared any two. That is the
+#: same drift the block above guards against, one layer down: the protocol version had a test
+#: because it had already drifted three minors, and the package version had none because
+#: nothing had ever been released, so `0.1.0` was a number that could not be wrong yet.
+#: Tagging it makes it a claim, and a claim gets a check.
+#:
+#: The four browser packages are here because the changelog says the packages are versioned
+#: *together*; a client published at a version the server never had would make that sentence
+#: false, and the sentence is what a consumer pins against.
+VERSION_CLAIMS = {
+    "server/pyproject.toml": r'^version = "([0-9]+\.[0-9]+\.[0-9]+)"',
+    "server/fenixspoon/__init__.py": r'^__version__ = "([0-9]+\.[0-9]+\.[0-9]+)"',
+    "client/packages/client/package.json": r'"version": "([0-9]+\.[0-9]+\.[0-9]+)"',
+    "client/packages/geometry-2d/package.json": r'"version": "([0-9]+\.[0-9]+\.[0-9]+)"',
+    "client/packages/viewer/package.json": r'"version": "([0-9]+\.[0-9]+\.[0-9]+)"',
+    "client/packages/plot/package.json": r'"version": "([0-9]+\.[0-9]+\.[0-9]+)"',
+}
+
+
+@pytest.mark.parametrize("filename", sorted(VERSION_CLAIMS))
+def test_every_package_states_the_implementation_version(filename):
+    """The version `environment.inspect` reports is the version every package declares."""
+    from fenixspoon import __version__
+
+    text = (FIXTURES.parents[1] / filename).read_text()
+    found = re.search(VERSION_CLAIMS[filename], text, re.MULTILINE)
+    assert found, f"{filename} states no package version"
+    assert found.group(1) == __version__, (
+        f"{filename} says {found.group(1)}, but fenixspoon.__version__ is {__version__}"
+    )
+
+
+def test_the_changelog_has_a_section_for_the_released_version():
+    """A released version needs an entry, and an entry needs a date rather than a placeholder.
+
+    The whole file was one `Unreleased` block across sixteen protocol minors before 0.1.0,
+    which is the failure this guards: not a wrong heading but a missing one, and a missing one
+    is invisible until someone goes looking for what a version contains.
+    """
+    from fenixspoon import __version__
+
+    text = (FIXTURES.parents[1] / "CHANGELOG.md").read_text()
+    heading = re.search(rf"^## {re.escape(__version__)} — (\d{{4}}-\d{{2}}-\d{{2}})$", text, re.M)
+    assert heading, f"CHANGELOG.md has no dated `## {__version__}` section"
+    assert text.index("## Unreleased") < heading.start(), "Unreleased must stay above the releases"
