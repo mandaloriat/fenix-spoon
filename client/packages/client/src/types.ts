@@ -54,8 +54,15 @@
  * constant advertising an index the types denied would be exactly the drift the shared
  * fixture corpus exists to catch. Why it is a second field rather than a reuse of `t` is
  * ADR 0004 — a mode number is an ordinal, and `t` is a time.
+ *
+ * 1.15 gave `environment.inspect` a `plugins` list: the third-party adapter sources a server
+ * loaded, and why any of them did not. Tracked here but **not typed**, like 1.2's and 1.6's
+ * discovery payloads — the environment payload is not a shape this file carries, and adding
+ * types for it would commit the SDK to a surface no widget reads. What the bump is *for* is
+ * that adapters can finally come from outside that repository at all, so breadth stops
+ * arriving as protocol; see ADR 0005.
  */
-export const PROTOCOL_VERSION = '1.14';
+export const PROTOCOL_VERSION = '1.15';
 
 /** What `GET /api/v1/version` returns. The one endpoint that never requires a key. */
 export interface ProtocolVersion {

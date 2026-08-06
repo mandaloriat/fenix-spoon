@@ -35,12 +35,20 @@ try:
 except ImportError:  # pragma: no cover - exercised only without dolfinx
     pass
 
+# Third-party adapters last, so the built-ins own their names and a plugin cannot take one by
+# importing first. Failures are recorded rather than raised — see `plugins.py` for why a
+# stranger's broken import must not be this server's outage.
+from .plugins import PluginLoad, load_plugins, plugin_loads  # noqa: E402
+
+load_plugins()
+
 __all__ = [
     "ArtifactSpec",
     "CapabilityExample",
     "CapabilityFeatures",
     "JobCancelled",
     "MetricSpec",
+    "PluginLoad",
     "ProgressEvent",
     "Solver",
     "SolverContext",
@@ -49,6 +57,8 @@ __all__ = [
     "available_solvers",
     "fill_declared_metrics",
     "get_solver",
+    "load_plugins",
+    "plugin_loads",
     "register",
     "registered_solvers",
 ]

@@ -28,7 +28,7 @@ adapters (#45, #49) expose these three operations without going through a server
 
 import platform
 import sys
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -43,6 +43,7 @@ from ..solvers.base import (
     MetricSpec,
     Solver,
 )
+from ..solvers.plugins import plugin_loads
 from . import errors
 from .identity import Principal
 from .wire import Selective
@@ -159,6 +160,57 @@ class CacheInfo(BaseModel):
     )
 
 
+class PluginInfo(BaseModel):
+    """One third-party adapter source, and what it did when the server imported it.
+
+    *Added in protocol 1.15 (#105).* The reason this is on the wire at all is that a missing
+    capability is otherwise a refusal with no reason: a caller that does not find
+    `acoustics.helmholtz2d` cannot tell "the operator did not install it" from "it is
+    installed and raised `ImportError: no module named slepc4py`". The first is a
+    configuration; the second is a broken deployment, and only one of them is worth reporting
+    to a human.
+    """
+
+    source: str = Field(
+        description=(
+            "What the operator configured, named back to them: the entry-point name, or the "
+            "module path as `FENIXSPOON_SOLVER_MODULES` spelled it. Two entries report a "
+            "condition rather than an import and name the thing responsible instead — "
+            "`FENIXSPOON_DISABLE_PLUGINS` when loading is switched off, and "
+            "`fenixspoon.solvers` when the installed entry-point metadata could not be read "
+            "at all."
+        )
+    )
+    module: str = Field(
+        description=(
+            "The module the server imported. Empty on the two entries that report a "
+            "condition rather than an import."
+        )
+    )
+    origin: Literal["entry-point", "environment"] = Field(
+        description="Which mechanism declared it: an installed distribution, or the env var."
+    )
+    status: Literal["loaded", "failed", "disabled"] = Field(
+        description=(
+            "`loaded` — imported cleanly. `failed` — raised; see `detail`, and note "
+            "`capabilities` may still be non-empty if it registered before it raised. "
+            "`disabled` — plugin loading is switched off, which is deliberately distinct "
+            "from an empty list."
+        )
+    )
+    detail: str | None = Field(
+        default=None,
+        description=(
+            "Why it failed, as `TypeName: message`. The exception's text rather than a "
+            "traceback: the sentence an operator needs, without a wall that also discloses "
+            "more of the filesystem than the question warrants."
+        ),
+    )
+    capabilities: list[str] = Field(
+        default=[], description="Solver names this source added to the registry."
+    )
+
+
 class EnvironmentInfo(BaseModel):
     """What `environment.inspect` returns: this installation, in a few hundred bytes.
 
@@ -196,6 +248,14 @@ class EnvironmentInfo(BaseModel):
         )
     )
     capabilities: int = Field(description="How many capabilities are installed.")
+    plugins: list[PluginInfo] = Field(
+        default=[],
+        description=(
+            "Third-party adapter sources and what each did (#105). Empty on an installation "
+            "that declares none — which is why a switched-off loader reports a `disabled` "
+            "entry instead of an empty list."
+        ),
+    )
     limits: LimitsInfo = Field(description="Server-side caps applied to every submission.")
     principal: str = Field(description="Who the server thinks is asking.")
     quotas: QuotaInfo = Field(description="That principal's limits.")
@@ -447,6 +507,17 @@ def environment_info(
         workspace=workspace,
         cache=cache,
         capabilities=capabilities,
+        plugins=[
+            PluginInfo(
+                source=load.source,
+                module=load.module,
+                origin=load.origin,
+                status=load.status,
+                detail=load.detail,
+                capabilities=load.capabilities,
+            )
+            for load in plugin_loads()
+        ],
         limits=limits,
         principal=principal.id,
         quotas=QuotaInfo(

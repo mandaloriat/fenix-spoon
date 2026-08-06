@@ -13,13 +13,13 @@ protocol version below is shared: `rpc.describe` reports it too.
 
 ## Versioning
 
-The protocol is versioned `MAJOR.MINOR`, currently **1.14**, and a server reports what it
+The protocol is versioned `MAJOR.MINOR`, currently **1.15**, and a server reports what it
 speaks:
 
 ### `GET /api/v1/version`
 
 ```json
-{ "protocol": "1.14", "implementation": "0.1.0", "api_path": "/api/v1" }
+{ "protocol": "1.15", "implementation": "0.1.0", "api_path": "/api/v1" }
 ```
 
 **The one route that never requires an API key.** A client needs to know whether it can talk
@@ -217,9 +217,50 @@ principal's** quotas and current usage. No schemas. Behind the auth gate, unlike
 two version strings are not secret, but a data directory, a backend topology and another
 principal's quota position are not free information.
 
-`cache` is reported as an explicit `null`: the content-addressed cache is
-[#47](https://github.com/mandaloriat/fenix-spoon/issues/47) and does not exist yet, and a null
-lets a caller distinguish "no cache here" from "this server is too old to say".
+`cache` carries the content-addressed cache's real state since 1.4
+([#47](https://github.com/mandaloriat/fenix-spoon/issues/47)) — whether it is enabled, the hashing
+scheme, which capabilities declare themselves cacheable. It stays *optional* rather than becoming
+required, so a caller can still tell "no cache here" from "this server is too old to say".
+
+**`plugins` is what each third-party adapter source did**, added in 1.15 with
+[#105](https://github.com/mandaloriat/fenix-spoon/issues/105):
+
+```json
+{
+  "plugins": [
+    {"source": "acoustics", "module": "myphysics.adapters", "origin": "entry-point",
+     "status": "loaded", "capabilities": ["acoustics.helmholtz2d"]},
+    {"source": "thermal", "module": "othervendor.thermal", "origin": "entry-point",
+     "status": "failed", "detail": "ImportError: No module named 'slepc4py'",
+     "capabilities": []}
+  ]
+}
+```
+
+The list is empty on an installation that declares none, and a server with plugin loading switched
+off reports one entry with `status: "disabled"` instead — *off* and *none installed* are different
+answers to the same missing capability. Two entries report a condition rather than an import and
+name what is responsible in `source` instead of a module: `FENIXSPOON_DISABLE_PLUGINS` for that
+one, and `fenixspoon.solvers` when the installed entry-point metadata could not be read at all —
+which is the one condition an operator can do nothing about, and so the last that should be
+silent.
+
+**Why this is on the wire at all** is the whole argument for the bump. A caller that does not find
+`acoustics.helmholtz2d` cannot otherwise tell "the operator did not install it" from "it is
+installed and raised on import": a refusal with no reason, which is the failure the declaration
+machinery exists to prevent everywhere else. One of those two is a working configuration and the
+other is a broken deployment, and only the report distinguishes them. `detail` is the exception's
+text rather than a traceback — the sentence an operator needs, without a wall that also discloses
+more of the filesystem than the question warrants — and `capabilities` may be non-empty on a
+failure, because a module that registers two adapters and raises between them really did add the
+first one.
+
+What a plugin **cannot** do is add a geometry kind, a result kind or a field. An adapter chooses
+from the vocabulary here, or its author comes and argues for more; otherwise
+[ADR 0005](adr/0005-thin-about-physics-thick-about-claims.md)'s admission test would have a back
+door, and the protocol would grow by whoever shipped a package rather than by whoever won an
+argument. Getting adapters *loaded* is what #105 adds — see
+[writing a solver](start-write-a-solver.md#getting-it-loaded).
 
 #### `GET /api/v1/capabilities`
 

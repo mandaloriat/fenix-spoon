@@ -51,12 +51,75 @@ class SteadyHeat2D(Solver):
         )
 ```
 
-Import the module once at startup and `@register` does the rest: the solver appears in
+`@register` does the rest once the module is imported: the solver appears in
 `GET /api/v1/solvers`, its `Params` model is published as JSON Schema so a client can
 build a form from it, and `POST /api/v1/jobs` will accept it.
 
 `fenixspoon/solvers/mock_laplace.py` is the reference implementation and is written to
 be read.
+
+## Getting it loaded
+
+*Added in 1.15 ([#105](https://github.com/mandaloriat/fenix-spoon/issues/105)). Before it, this
+page said "import the module once at startup" and left you to find a place to do that — there
+wasn't one, because nothing you control runs before `fenixspoon.solvers` populates the registry.*
+
+Two ways, and they are the same loader.
+
+**A distribution declares an entry point.** This is the one to use for anything you install:
+
+```toml
+# your pyproject.toml
+[project.entry-points."fenixspoon.solvers"]
+acoustics = "myphysics.adapters"
+```
+
+The value is a **module**. Importing it is what runs your `@register` calls, so put them there —
+or import your adapter modules from it, which is what `fenixspoon/solvers/__init__.py` does.
+`pip install` your package into the same environment as the server and the capability is there.
+
+**Or name the modules in the environment**, for an adapter that lives in your application's own
+tree and is not worth packaging:
+
+```bash
+export FENIXSPOON_SOLVER_MODULES=myapp.adapters.acoustics,myapp.adapters.creep
+```
+
+Both are loaded **after** the built-ins, which is the whole of the shadowing rule: a plugin
+claiming `dolfinx.poisson` loses, and cannot win by importing first.
+
+### What happens when it goes wrong
+
+Nothing you ship can take the server down at import. A module that raises is caught, and the
+failure is *reported* rather than swallowed: `environment.inspect` (`GET /api/v1/environment`)
+lists every source with `status` — `loaded`, `failed` with the exception text, or `disabled` —
+and the capability names it added. That is the first place to look when your adapter is not in
+`capability.list`, and it will usually just tell you.
+
+Two consequences worth knowing:
+
+- **A collision is a failure of yours, not an outage of theirs.** Claiming a name that is already
+  registered raises out of your import, so your module does not load and the incumbent keeps the
+  name. Namespace your solvers (`acoustics.helmholtz2d`, not `poisson`).
+- **A module that registers two solvers and raises between them leaves the first registered.**
+  The load is reported as `failed` and lists what it did add. Rolling back would need the
+  registry to support removal for the sake of a case that is already a bug.
+
+`FENIXSPOON_DISABLE_PLUGINS=1` skips both sources, for a deployment that wants the installed set
+to be exactly what this repository ships. It reports itself, so an operator can tell it from an
+installation that simply has no plugins.
+
+### What a plugin cannot do
+
+Add a geometry kind, a result kind, or a field. You choose from the vocabulary in the
+[wire protocol](04-wire-protocol.md); if your physics genuinely needs a kind that does not exist,
+that is an issue here rather than a package of yours —
+[ADR 0005](adr/0005-thin-about-physics-thick-about-claims.md) is the argument, and the short
+version is that a protocol which grows by whoever ships a package cannot refuse anything.
+
+**Do declare `version` and `requires`.** They are not decoration: the result cache keys on your
+declared `version` and on the versions of the packages you say you need, so an adapter that
+changes its maths without bumping `version` will serve the old answer forever.
 
 ## The contract, in four points
 

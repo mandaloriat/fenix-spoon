@@ -473,6 +473,25 @@ capability first and the protocol change second.
       it is excluded by name in `plane_idealisation`, and #101 deliberately kept it out so that
       one straightforward ask did not arrive looking like two hard ones.
 
+- [x] **The thread's own conclusion, turned into a rule and then into a mechanism**
+      ([ADR 0005](adr/0005-thin-about-physics-thick-about-claims.md), then #105, protocol 1.15) —
+      six of the last ten minors came from the entries above, which is either the process working
+      or a protocol growing by accretion, and nothing written down said which. The rule now does:
+      **thin about physics, thick about claims**, and an addition earns its place by making
+      something *refusable or declarable* that would otherwise live only inside an adapter's
+      source. *Applied to this list it is not a new standard* — it is what these entries were
+      already doing, which is the argument for writing it down rather than inventing one.
+      **The mechanism is the half the rule could not supply by itself.** If breadth belongs in
+      adapters, adapters have to be addable from outside, and they were not: the registry
+      imported its own by hand and there were no entry points, so every entry above *had* to be
+      a change to this repository. #105 is the outlet — a `fenixspoon.solvers` entry point,
+      `FENIXSPOON_SOLVER_MODULES` for the unpackaged case, both loaded after the built-ins. The
+      protocol change it needed is one field and it passes the rule's own test: `plugins` on
+      `environment.inspect` makes *"absent because its import raised"* distinguishable from
+      *"absent because nobody installed it"*, which is a refusal acquiring a reason. What a
+      plugin deliberately cannot add is a kind, a result kind or a field — otherwise the test
+      has a back door and the protocol grows by whoever ships a package.
+
 **Where this thread leaves the open questions.** #44 said `boundary_condition` and `load_case`
 would stay thin "until a capability needs them", and elasticity is the capability that did —
 so `load_case` acquired a body the same way `study` did at #48, by having something concrete to

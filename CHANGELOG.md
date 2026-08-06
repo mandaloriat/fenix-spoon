@@ -1,7 +1,7 @@
 # Changelog
 
 Notable changes to Fenix Spoon. The **wire protocol** has a version of its own
-(`MAJOR.MINOR`, currently 1.14) and its history is in
+(`MAJOR.MINOR`, currently 1.15) and its history is in
 [docs/04-wire-protocol.md](docs/04-wire-protocol.md); this file records what changed for the
 people who build on the toolkit, protocol bump or not.
 
@@ -15,6 +15,51 @@ project is pre-1.0, so the packages are versioned together and nothing here is a
 promise yet.
 
 ## Unreleased
+
+### Added — protocol 1.15: adapters can come from somewhere else (#105)
+
+ADR 0005 said breadth is bought with adapters and depth with protocol, and named the reason
+that split did not work: there was no supported way to load an adapter that does not live in
+this repository. `solvers/__init__.py` imported its own by hand, there were no entry points,
+and the solver guide's advice — *"import the module once at startup"* — pointed at a place
+that did not exist, because nothing an operator controls runs before the registry is
+populated. So every new physics had to land here, in the thing that is supposed to refuse
+recipes.
+
+- **Two sources, one loader.** An entry point in the `fenixspoon.solvers` group, which is how
+  an installed distribution says it carries adapters; and `FENIXSPOON_SOLVER_MODULES`, a
+  comma-separated list of module paths, for an adapter that lives in an application's own tree
+  and is not worth packaging. Both load **after** the built-ins, which is the whole of the
+  shadowing rule — a plugin claiming `dolfinx.poisson` loses and cannot win by importing first.
+- **A failure is data, not a traceback and not a silence.** A stranger's broken import must not
+  take down a server whose other thirteen capabilities are fine, and a name collision is the
+  plugin author's bug rather than the operator's outage — but swallowing either leaves a
+  missing capability with no reason attached, which is the failure every other declaration here
+  exists to prevent. So each source is caught, classified and reported.
+- **`plugins` on `environment.inspect`**, which is the protocol half and the whole of the bump.
+  A caller that does not find a capability could not previously tell *"the operator did not
+  install it"* from *"it is installed and raised `ImportError: no module named slepc4py`"* —
+  one is a configuration and the other is a broken deployment. `status` is `loaded`, `failed`
+  with the exception's text, or `disabled`; the last exists because *off* and *none installed*
+  are different answers, and an operator debugging a locked-down deployment deserves to be told
+  which. `capabilities` may be non-empty on a failure: a module that registers two adapters and
+  raises between them really did add the first, and the registry has no removal.
+- **What a plugin cannot do is add a geometry kind, a result kind or a field.** An adapter
+  chooses from the vocabulary the protocol already has, or its author comes here and argues for
+  more. Otherwise ADR 0005's admission test would have a back door and the protocol would grow
+  by whoever shipped a package rather than by whoever won an argument.
+- **The result cache already covered a stranger, and now there is a test saying so.** `version`
+  and `requires` are declared per adapter and the content address reads both, so a third-party
+  adapter that changes its maths and bumps its version stops matching its own cached results.
+  Nothing in `cache.py` changed — but *"it should already work"* is how a cache serves a stale
+  answer forever.
+- `docs/start-write-a-solver.md` gains a **Getting it loaded** section with a working
+  `pyproject.toml` fragment, and the front page's *"the server needs no changes to accept it"*
+  is true for the first time.
+
+Not in scope, and refused rather than deferred: loading an adapter from a path, a URL or an
+upload. That is arbitrary code execution wearing a feature's clothes, and it gets the same
+answer as `run_python`.
 
 ### Documentation — the test a protocol addition has to pass before it is written
 
