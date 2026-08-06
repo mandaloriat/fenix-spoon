@@ -358,7 +358,7 @@ The `diagnostics` level: what the solve cost and how well it went.
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `stats` | `dict[str, float]` | yes |  | What it cost: `cells`, `dofs`, `iterations`, `seconds`. Server-defined. |
+| `stats` | `dict[str, float]` | yes |  | What it cost: `cells`, `dofs`, `seconds`. Server-defined. **Not** the iteration count — that is `iterations` below, because it is part of how the answer was reached rather than what it cost (protocol 1.16). |
 | `converged` | `bool \| null` | no | `None` | Whether an iterative solve reached tolerance. Null where it does not apply. |
 | `residual` | `float \| null` | no | `None` | Final residual, when iterative. **What it measures is the capability's to say** — `capability.describe?sections=convergence` reports that, plus the tolerance it was compared against (protocol 1.16). Two adapters' residuals are not comparable numbers without it: a relaxation sweep reports a temperature change in kelvin and a Newton solve a dimensionless relative residual. |
 | `iterations` | `int \| null` | no | `None` | How many iterations it took; null for a direct solve (protocol 1.16). Here rather than in `stats` because it is part of how the answer was reached, not what it cost. |

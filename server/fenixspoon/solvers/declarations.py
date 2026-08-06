@@ -894,34 +894,85 @@ TRANSIENT_HEAT_ASSUMPTIONS = [
 
 # ------------------------------------------------------------------- convergence (#107)
 
-#: What the relaxation mocks converge to, and why they hand back an unconverged field.
+#: Convergence declarations, one per adapter (#107).
 #:
-#: Every NumPy stand-in here sweeps a grid until the change per sweep falls below a
-#: tolerance, and every one of them stops at its iteration cap if it does not get there. That
-#: was already true and already reported — `converged`, `residual` and a warning have been on
-#: a result since 1.3 — but nothing *declared* it, so `residual` was a bare float whose
-#: meaning lived in the adapter's source. It is a temperature change per sweep in `mock.heat2d`
-#: and a change in vector potential in `mock.magnetostatics2d`, which is exactly the kind of
-#: difference a caller cannot guess.
+#: **Not shared, and the first draft of this getting it wrong is the argument for the field.**
+#: The metric sets above are shared because two halves of a pair must report the same
+#: quantities or they are only interchangeable in principle. Convergence is the opposite: it is
+#: a property of the *implementation*, not of the physics, and the nonlinear pair proves it —
+#: Picard measures a temperature step and Newton a heat balance, for one problem. A first pass
+#: at this file gave six relaxation mocks one shared spec and had four of them describing a
+#: tolerance they do not use; caught in review of #108, which is exactly the failure the
+#: declaration exists to prevent, committed in the change that introduced it.
 #:
-#: `on_failure="return"` is deliberate rather than lenient. A partly-relaxed field is a
-#: legitimate preview — `mock.heat2d`'s own "fast preview" example says the temperature is not
-#: converged and the shape is — and a caller that asked for 800 sweeps on a 160-cell grid
-#: asked for that. What makes it safe is that the caller can now *know* before submitting.
-RELAXATION_CONVERGENCE = ConvergenceSpec(
+#: They still live here rather than beside each adapter for the reason everything else in this
+#: module does: side by side, a wrong one is visible.
+#:
+#: `on_failure="return"` throughout below. A partly-relaxed field is a legitimate preview —
+#: `mock.heat2d`'s own "fast preview" example says the temperature is not converged and the
+#: shape is — and a caller that asked for 800 sweeps on a 160-cell grid asked for that. What
+#: makes it safe is that the caller can now know before submitting.
+
+HEAT_CONVERGENCE = ConvergenceSpec(
     method="relaxation",
-    measures="largest change in the unknown over one sweep",
-    unit=None,
+    measures="largest temperature change over one red-black sweep",
+    unit="K",
     default_tolerance=1e-9,
     on_failure="return",
 )
 
-#: The same, for the mocks whose unknown is a temperature, where the residual has a unit.
-RELAXATION_CONVERGENCE_K = ConvergenceSpec(
+#: The transient's is a *per-step* tolerance, and `converged` is the conjunction over steps.
+#:
+#: Spelled out because it is the one whose flag does not mean what the others' means: a run of
+#: 200 steps reports `converged: false` if any single step hit its sweep cap, and the
+#: `residual` that comes back is the last step's rather than the worst. Scaled by the
+#: temperature range, so the tolerance below is the coefficient rather than an absolute.
+TRANSIENT_HEAT_CONVERGENCE = ConvergenceSpec(
     method="relaxation",
-    measures="largest temperature change over one sweep",
-    unit="K",
+    measures=(
+        "largest temperature change over one sweep within a time step, relative to the "
+        "temperature range; `converged` is true only if every step reached it"
+    ),
+    unit=None,
+    default_tolerance=1e-7,
+    on_failure="return",
+)
+
+POTENTIAL_FLOW_CONVERGENCE = ConvergenceSpec(
+    method="relaxation",
+    measures="largest change in the streamfunction over one sweep",
+    unit="m^2/s",
     default_tolerance=1e-9,
+    on_failure="return",
+)
+
+#: Tight, and deliberately so: the iron/air contrast makes this the slowest solve here, so a
+#: loose tolerance would report a converged field that is still moving.
+MAGNETOSTATICS_CONVERGENCE = ConvergenceSpec(
+    method="relaxation",
+    measures="largest change in the magnetic vector potential over one sweep",
+    unit="Wb/m",
+    default_tolerance=1e-14,
+    on_failure="return",
+)
+
+#: Scaled by the domain span, so the number below is a coefficient rather than an absolute —
+#: an axisymmetric section is metres wide in one problem and millimetres in another.
+ELECTROSTATICS_CONVERGENCE = ConvergenceSpec(
+    method="relaxation",
+    measures="largest potential change over one sweep, scaled by the domain span",
+    unit=None,
+    default_tolerance=1e-12,
+    on_failure="return",
+)
+
+#: Conjugate gradients, not a sweep — so the residual is a *force* balance rather than a step
+#: size, and the two are not comparable numbers. The distinction this field exists for.
+ELASTICITY_CONVERGENCE = ConvergenceSpec(
+    method="conjugate-gradient",
+    measures="norm of the force residual, relative to the applied load",
+    unit=None,
+    default_tolerance=1e-12,
     on_failure="return",
 )
 

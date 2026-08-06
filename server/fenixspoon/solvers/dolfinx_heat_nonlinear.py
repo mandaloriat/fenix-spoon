@@ -254,30 +254,27 @@ def _newton(residual_form, jacobian_form, temperature, bcs, params, ctx) -> list
 
     jacobian = fem.form(jacobian_form)
     residual = fem.form(residual_form)
-    A = fem_petsc.create_matrix(jacobian)
-    b = fem_petsc.create_vector(residual)
     correction = fem.Function(temperature.function_space)
 
-    solver = PETSc.KSP().create(temperature.function_space.mesh.comm)
-    solver.setOperators(A)
-    solver.setType("preonly")
-    solver.getPC().setType("lu")
-
+    # `assemble_matrix(form)` / `assemble_vector(form)` — the variants that *return* a fresh
+    # object — rather than pre-allocating with `create_matrix` / `create_vector` and filling
+    # in place. The pre-allocating pair took a single form at 0.9 and takes a list at 0.11,
+    # where a lone form fails with "'Form' object is not iterable"; the returning pair has
+    # been stable across both, and is what `dolfinx_modal.py` already uses. Reallocating per
+    # iteration costs a sparsity pattern each time, which is a real cost and a small one next
+    # to the LU factorisation in the same loop.
     history: list[float] = []
     reference = 0.0
     for iteration in range(1, params.max_iterations + 1):
         ctx.check_cancelled()
-        A.zeroEntries()
-        fem_petsc.assemble_matrix(A, jacobian, bcs=bcs)
+        A = fem_petsc.assemble_matrix(jacobian, bcs=bcs)
         A.assemble()
+        b = fem_petsc.assemble_vector(residual)
 
-        with b.localForm() as local:
-            local.set(0.0)
-        fem_petsc.assemble_vector(b, residual)
         # The correction is zero on a Dirichlet face, so the *lifted* residual is what the
         # iteration is actually driving down — measuring the raw one would report a number
         # the boundary conditions were never going to reduce.
-        fem_petsc.apply_lifting(b, [jacobian], [bcs], x0=[temperature.x.petsc_vec], alpha=-1.0)
+        _apply_lifting(fem_petsc, b, jacobian, bcs, temperature)
         b.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
         fem_petsc.set_bc(b, bcs, temperature.x.petsc_vec, -1.0)
 
@@ -289,14 +286,33 @@ def _newton(residual_form, jacobian_form, temperature, bcs, params, ctx) -> list
             ProgressEvent(iteration=iteration, total=params.max_iterations, residual=relative)
         )
         if relative < params.tolerance:
+            A.destroy()
+            b.destroy()
             break
 
+        solver = PETSc.KSP().create(temperature.function_space.mesh.comm)
+        solver.setOperators(A)
+        solver.setType("preonly")
+        solver.getPC().setType("lu")
         solver.solve(b, correction.x.petsc_vec)
+        solver.destroy()
         correction.x.scatter_forward()
         temperature.x.array[:] += correction.x.array
         temperature.x.scatter_forward()
+        A.destroy()
+        b.destroy()
 
-    A.destroy()
-    b.destroy()
-    solver.destroy()
     return history
+
+
+def _apply_lifting(fem_petsc, b, jacobian, bcs, temperature) -> None:
+    """`apply_lifting`, whichever name this dolfinx gives the scale factor.
+
+    Renamed from `scale` to `alpha` at 0.9. Same shim shape as `dolfinx_modal.py`'s
+    `diagonal`/`diag`, and kept beside the call so the reason travels with it.
+    """
+    x0 = [temperature.x.petsc_vec]
+    try:
+        fem_petsc.apply_lifting(b, [jacobian], [bcs], x0=x0, alpha=-1.0)
+    except TypeError:  # dolfinx <= 0.8 spelled it `scale`
+        fem_petsc.apply_lifting(b, [jacobian], [bcs], x0=x0, scale=-1.0)

@@ -817,12 +817,21 @@ def check_declared_convergence(solver_cls: type[Solver], result: SolverResult) -
     if result.converged is None:
         result.converged = True
     if result.converged is False and spec.on_failure == "fail":
+        # Neither the tolerance nor the iteration count is stated as fact here, and both
+        # omissions were review findings on #108. The tolerance a run used may be a
+        # parameter — the declaration's is the *default* — so naming it as "its tolerance"
+        # would be a number the caller could not reconcile with what they submitted. And a
+        # capability that reports no `iterations` would have had `None` interpolated into a
+        # sentence, which is a message that looks like a bug rather than an answer.
         residual = "unreported" if result.residual is None else f"{result.residual:.3g}"
+        took = "" if result.iterations is None else f" after {result.iterations} iterations"
         raise ConvergenceNotReached(
-            f"{solver_cls.name} did not reach its tolerance ({spec.default_tolerance:g}) — "
-            f"final residual {residual} after {result.iterations} iterations. The capability "
-            "declares `on_failure=\"fail\"` because the last iterate of this scheme is not a "
-            "solution; raise the iteration cap, loosen the tolerance, or take a smaller step."
+            f"{solver_cls.name} did not reach its tolerance — final residual {residual}"
+            f"{took}, measuring {spec.measures} (the capability's default tolerance is "
+            f"{spec.default_tolerance:g}; a `tolerance` parameter, if this capability has "
+            "one, overrides it). It declares `on_failure=\"fail\"` because the last iterate "
+            "of this scheme is not a solution; raise the iteration cap, loosen the "
+            "tolerance, or take a smaller step."
         )
 
 

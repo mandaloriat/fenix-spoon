@@ -44,8 +44,8 @@ from ..series import Series1DData, SeriesAxis, SeriesTrace
 from .base import CapabilityExample, ProgressEvent, Solver, SolverContext, SolverResult
 from .declarations import (
     FRAME_ARTIFACT,
-    RELAXATION_CONVERGENCE_K,
     TRANSIENT_HEAT_ASSUMPTIONS,
+    TRANSIENT_HEAT_CONVERGENCE,
     TRANSIENT_HEAT_METRICS,
     VTK_ARTIFACT,
 )
@@ -120,7 +120,7 @@ class MockTransientHeat2D(Solver):
     #: discretises.
     physics = "heat-conduction-transient"
     availability = "mock"
-    convergence = RELAXATION_CONVERGENCE_K
+    convergence = TRANSIENT_HEAT_CONVERGENCE
     metrics = TRANSIENT_HEAT_METRICS
     assumptions = TRANSIENT_HEAT_ASSUMPTIONS
     #: Fixed step count, fixed sweep count, no randomness: same inputs, same arrays (#47).
@@ -252,6 +252,7 @@ class MockTransientHeat2D(Solver):
         mean = [float(temperature[solid].mean())]
         residual = 0.0
         capped: list[int] = []
+        sweeps_used = 0
 
         # Each backward-Euler step is solved to a tolerance *relative to the temperature
         # scale*, not to an absolute one. An absolute 1e-10 on a 400 K field asks for
@@ -280,6 +281,7 @@ class MockTransientHeat2D(Solver):
             before = previous
             reached_tolerance = False
             for _sweep in range(params.sweeps):
+                sweeps_used += 1
                 residual = 0.0
                 for colour in colours:
                     neighbours = (
@@ -387,6 +389,9 @@ class MockTransientHeat2D(Solver):
             # happened to be easy.
             "converged": not capped,
             "residual": residual,
+            # Sweeps across every step, not steps: `converged` here is the conjunction
+            # over steps, so the count that goes with it is the work the relaxation did.
+            "iterations": sweeps_used,
             "warnings": warnings,
         }
         if params.output == "mesh2d":

@@ -53,6 +53,14 @@ so the vocabulary was never under load.
   nonlinear answer is *not* it, so passing the first cannot be done by ignoring `beta`.
 - **`k_ratio`**, a declared metric that can tell a caller it did not need this capability:
   the spread of the solved conductivity field, 1.0 when the material never varied.
+- **Every iterating capability declares its own spec, and that is not a detail.** The first
+  draft shared one across six relaxation mocks, and four then advertised a tolerance they do
+  not use — magnetostatics stops at 1e-14, the axisymmetric electrostatics scales by the
+  domain span, and elasticity is conjugate gradients reporting a *force* residual rather than
+  a sweep change. Metric sets are shared on purpose, because two halves of a pair must report
+  the same quantities; convergence describes the *implementation*, and this pair proves it —
+  Picard measures a temperature step and Newton a heat balance for one problem. A test now
+  forbids sharing the object.
 - The linear pair's `constant_properties` assumption now names the capability that removes it.
 
 

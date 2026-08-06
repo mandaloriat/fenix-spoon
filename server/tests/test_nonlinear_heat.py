@@ -250,3 +250,52 @@ def test_the_iterating_mocks_all_declare_a_spec():
     assert len(iterating) >= 7
     assert all(spec.default_tolerance > 0 for spec in (cls.convergence for cls in iterating))
     assert {cls.convergence.on_failure for cls in iterating} == {"return", "fail"}
+
+
+def test_no_two_capabilities_share_a_convergence_declaration():
+    """The guard for the mistake this feature made on its own first draft.
+
+    Metric sets *are* shared, deliberately: two halves of a pair must report the same
+    quantities or they are interchangeable only in principle. Convergence is the opposite —
+    it describes the *implementation*, and this pair is the proof, since Picard measures a
+    temperature step and Newton a heat balance for one problem.
+
+    The first version of #107 missed that and gave six relaxation mocks one shared spec. Four
+    of them then advertised a tolerance they do not use: magnetostatics stops at 1e-14, the
+    axisymmetric electrostatics scales its tolerance by the domain span, and elasticity is
+    conjugate gradients reporting a *force* residual rather than a sweep change. Caught in
+    review of #108 — a declaration that lies, shipped in the change whose argument is that
+    undeclared numbers are unreadable.
+
+    Sharing the object is what made one edit wrong in four places, so that is what this
+    forbids.
+    """
+    from fenixspoon.solvers import registered_solvers
+
+    declared = [(cls.name, cls.convergence) for cls in registered_solvers() if cls.convergence]
+    by_identity: dict[int, list[str]] = {}
+    for name, spec in declared:
+        by_identity.setdefault(id(spec), []).append(name)
+
+    shared = {names[0]: names for names in by_identity.values() if len(names) > 1}
+    assert not shared, f"one ConvergenceSpec object serves several capabilities: {shared}"
+
+
+def test_a_declared_tolerance_is_the_one_the_solve_uses(tmp_path):
+    """The declaration checked against the implementation, on the case where it is checkable.
+
+    A capability with a `tolerance` parameter cannot be pinned this way — the run's tolerance
+    is the caller's. But this one's default *is* the declaration, so a solve that reports
+    convergence must have a residual under it, and one that does not must not. That is the
+    narrow version of the claim `measures` and `default_tolerance` make.
+    """
+    spec = MockNonlinearHeat2D.convergence
+    converged = solve(tmp_path, geometry=slab_of(-4.0e-4), resolution=64)
+
+    assert converged.converged is True
+    assert converged.residual < spec.default_tolerance
+
+    # And the other direction, forced: one Picard step cannot solve a nonlinear problem.
+    capped = solve(tmp_path, geometry=slab_of(1.5e-3), resolution=64, outer_iterations=1)
+    assert capped.converged is False
+    assert capped.residual > spec.default_tolerance

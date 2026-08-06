@@ -64,8 +64,8 @@ from .base import CapabilityExample, ProgressEvent, Solver, SolverContext, Solve
 from .declarations import (
     ELASTICITY_ASSUMPTIONS,
     ELASTICITY_CONDITIONS,
+    ELASTICITY_CONVERGENCE,
     ELASTICITY_METRICS,
-    RELAXATION_CONVERGENCE,
     VTK_ARTIFACT,
 )
 from .mock_laplace import _grid_shape, grid_to_mesh2d, polygon_mask, write_vtk_structured_points
@@ -351,7 +351,7 @@ class MockElasticity2D(Solver):
     geometry_types = ["domain2d", "regions2d"]
     physics = "elasticity"
     availability = "mock"
-    convergence = RELAXATION_CONVERGENCE
+    convergence = ELASTICITY_CONVERGENCE
     metrics = ELASTICITY_METRICS
     assumptions = ELASTICITY_ASSUMPTIONS
     conditions = ELASTICITY_CONDITIONS
@@ -548,6 +548,7 @@ class MockElasticity2D(Solver):
             # payload, so it is computed here.
             metrics={"compliance": float(rhs @ solution)},
             converged=converged,
+            iterations=iterations,
             residual=residual,
             warnings=(
                 []

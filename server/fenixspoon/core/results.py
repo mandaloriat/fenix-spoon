@@ -105,7 +105,11 @@ class DiagnosticsView(BaseModel):
     """
 
     stats: dict[str, float] = Field(
-        description="What it cost: `cells`, `dofs`, `iterations`, `seconds`. Server-defined."
+        description=(
+            "What it cost: `cells`, `dofs`, `seconds`. Server-defined. **Not** the iteration "
+            "count — that is `iterations` below, because it is part of how the answer was "
+            "reached rather than what it cost (protocol 1.16)."
+        )
     )
     converged: bool | None = Field(
         default=None,

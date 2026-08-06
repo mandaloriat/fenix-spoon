@@ -50,8 +50,8 @@ from .base import CapabilityExample, ProgressEvent, Solver, SolverContext, Solve
 from .declarations import (
     ELECTROSTATICS_ASSUMPTIONS,
     ELECTROSTATICS_CONDITIONS,
+    ELECTROSTATICS_CONVERGENCE,
     ELECTROSTATICS_METRICS,
-    RELAXATION_CONVERGENCE,
     VTK_ARTIFACT,
 )
 from .mock_laplace import _grid_shape, grid_to_mesh2d, polygon_mask, write_vtk_structured_points
@@ -202,7 +202,7 @@ class MockElectrostaticsAxi2D(Solver):
     geometry_types = ["axisymmetric2d"]
     physics = "electrostatics"
     availability = "mock"
-    convergence = RELAXATION_CONVERGENCE
+    convergence = ELECTROSTATICS_CONVERGENCE
     metrics = ELECTROSTATICS_METRICS
     assumptions = ELECTROSTATICS_ASSUMPTIONS
     conditions = ELECTROSTATICS_CONDITIONS
@@ -369,6 +369,7 @@ class MockElectrostaticsAxi2D(Solver):
             "metrics": metrics,
             "converged": converged,
             "residual": residual,
+            "iterations": it,
             "warnings": warnings,
         }
         if params.write_vtk:
