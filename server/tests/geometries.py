@@ -231,3 +231,36 @@ ROD_ON_AXIS = Axisymmetric2D(
     ],
     background={"eps_r": 1.0},
 )
+
+
+def slab_of(beta: float, k0: float = 50.0, t_ref: float = 20.0) -> Regions2D:
+    """A uniform slab with a temperature-dependent conductivity (#107).
+
+    One region covering the whole domain, plus a matching `background`, so the material is
+    uniform however a solver samples it — the closed form it is checked against assumes so,
+    and a rasterised region that misses the boundary column would quietly break that.
+    """
+    material = {"k": k0, "beta": beta, "t_ref": t_ref}
+    inset = 1.0e-3
+    return Regions2D(
+        bounds=(0.0, 0.0, 1.0, 0.2),
+        regions=[
+            Region2D(
+                name="slab",
+                shape=Polygon2D(
+                    points=[
+                        (inset, inset),
+                        (1.0 - inset, inset),
+                        (1.0 - inset, 0.2 - inset),
+                        (inset, 0.2 - inset),
+                    ]
+                ),
+                material=material,
+            )
+        ],
+        background=material,
+    )
+
+
+#: The default slab: carbon steel, whose conductivity falls about 11% over a 280 K span.
+SLAB = slab_of(-4.0e-4)

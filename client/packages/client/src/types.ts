@@ -55,6 +55,14 @@
  * fixture corpus exists to catch. Why it is a second field rather than a reuse of `t` is
  * ADR 0004 — a mode number is an ordinal, and `t` is a time.
  *
+ * 1.16 gave a capability a `convergence` declaration and a result an `iterations` count.
+ * Tracked, not typed, like 1.15's plugins list and 1.2's discovery payloads. What it fixes is
+ * a half-shipped vocabulary: `converged` and `residual` have been on a result since 1.3 with
+ * nothing saying what either meant, so two adapters' residuals were incomparable numbers under
+ * one name. The field that matters is `on_failure` — whether a solve short of tolerance comes
+ * back with a flag or fails the job — and it is enforced server-side, so a client reads the
+ * declaration rather than implementing it.
+ *
  * 1.15 gave `environment.inspect` a `plugins` list: the third-party adapter sources a server
  * loaded, and why any of them did not. Tracked here but **not typed**, like 1.2's and 1.6's
  * discovery payloads — the environment payload is not a shape this file carries, and adding
@@ -62,7 +70,7 @@
  * that adapters can finally come from outside that repository at all, so breadth stops
  * arriving as protocol; see ADR 0005.
  */
-export const PROTOCOL_VERSION = '1.15';
+export const PROTOCOL_VERSION = '1.16';
 
 /** What `GET /api/v1/version` returns. The one endpoint that never requires a key. */
 export interface ProtocolVersion {

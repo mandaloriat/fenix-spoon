@@ -83,27 +83,29 @@ def test_an_unchanged_design_is_reused_and_a_changed_one_is_not(tmp_path):
                 await asyncio.sleep(0.02)
             return core.job(job.id, me)
 
-        started = time.monotonic()
-        job = asyncio.run(go())
-        return job, time.monotonic() - started
+        return asyncio.run(go())
 
-    first, computed_seconds = run_design()
+    first = run_design()
     assert core.result_levels(first.id, me).provenance.cached is False
 
     # Re-solving the unchanged design reuses the answer.
-    second, cached_seconds = run_design()
+    second = run_design()
     assert second.id == first.id
     assert core.result_levels(second.id, me).provenance.cached is True
-    # "In the time it takes to read a file": no solve happened, so it is far quicker than
-    # the run that did. A ratio rather than an absolute, because a CI box is not a
-    # benchmark machine and the number that matters is "did it recompute".
-    assert cached_seconds < computed_seconds / 2
+
+    # This used to also assert `cached_seconds < computed_seconds / 2`, and that assertion
+    # was measuring the wrong thing. The wait loop above polls every 20 ms, and `FAST` makes
+    # the solve itself a few milliseconds — so *both* runs are one poll tick long and the
+    # ratio is scheduler jitter. It failed on CI at 17 ms against a 22 ms baseline, which is
+    # two samples of the same number. What the criterion actually claims is "did it
+    # recompute", and the two lines above answer that exactly: same job id, and `cached`
+    # true from the provenance the server itself recorded.
 
     # Patch one control point — an input that affects the answer — and it recomputes.
     core.patch_object(
         geometry_ref, [{"op": "replace", "path": "/obstacle/points/1", "value": [0.35, 0.2]}], me
     )
-    third, _ = run_design()
+    third = run_design()
     assert third.id != first.id
     assert core.result_levels(third.id, me).provenance.cached is False
 

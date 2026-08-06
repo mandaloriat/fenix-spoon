@@ -13,13 +13,13 @@ protocol version below is shared: `rpc.describe` reports it too.
 
 ## Versioning
 
-The protocol is versioned `MAJOR.MINOR`, currently **1.15**, and a server reports what it
+The protocol is versioned `MAJOR.MINOR`, currently **1.16**, and a server reports what it
 speaks:
 
 ### `GET /api/v1/version`
 
 ```json
-{ "protocol": "1.15", "implementation": "0.1.0", "api_path": "/api/v1" }
+{ "protocol": "1.16", "implementation": "0.1.0", "api_path": "/api/v1" }
 ```
 
 **The one route that never requires an API key.** A client needs to know whether it can talk
@@ -282,8 +282,8 @@ availability (`mock` or `fenicsx`). No schemas, no prose:
 #### `GET /api/v1/capabilities/{name}`
 
 One capability, in the sections asked for. `?sections=` is repeatable and selects from
-`geometries`, `params`, `metrics`, `assumptions`, `artifacts`, `cost`, `features`,
-`requirements`, `examples`. Omit it entirely for all of them plus the title, description,
+`geometries`, `params`, `metrics`, `assumptions`, `conditions`, `artifacts`, `cost`,
+`features`, `convergence`, `requirements`, `examples`. Omit it entirely for all of them plus the title, description,
 physics tag and availability.
 
 **An unrequested section is absent from the JSON, not present and null.** `?sections=metrics`
@@ -314,6 +314,50 @@ instead: `c_l` and `c_m_c4` are integrals over the **body surface**, not over th
 saying so is what lets a caller tell "the solver integrates this over the body" from "the solver
 works this out somehow" — added in 1.5 with
 [#68](https://github.com/mandaloriat/fenix-spoon/issues/68).
+
+`convergence` says **what an iterative capability converges to, and what arrives when it does
+not** — added in 1.16 with [#107](https://github.com/mandaloriat/fenix-spoon/issues/107):
+
+```json
+{
+  "convergence": {
+    "method": "newton",
+    "measures": "norm of the nonlinear residual, relative to the first iteration's",
+    "unit": null,
+    "default_tolerance": 1e-8,
+    "on_failure": "fail"
+  }
+}
+```
+
+The section is **absent** when the capability does not iterate, and that absence is a claim
+rather than a gap: it is what makes a null `converged` on a result readable instead of
+ambiguous.
+
+`converged`, `residual` and `warnings` have been on a result since 1.3 and the iterative
+adapters have always set them. What was missing was anything to read them *against*. A bare
+`residual` is not a comparable number — `mock.heat2d`'s is a temperature change per sweep in
+kelvin, `dolfinx.heat_nonlinear2d`'s is a dimensionless relative residual — so `measures` and
+`unit` are what stop a caller comparing two quantities that are not the same quantity.
+
+**`on_failure` is the load-bearing field.** `return` means an unconverged solve comes back
+with `converged: false` and a warning; `fail` means the job fails. Both are right for their
+capability and the difference is not a matter of strictness. A relaxation sweep stopped at its
+cap is a legitimate preview — `mock.heat2d`'s own *fast preview* example says the temperature
+is not converged and the shape is — while a Newton iterate short of its tolerance solves a
+problem with the wrong coefficients, and handing that back with a quiet flag is the
+plausible-looking answer this contract exists to prevent. What 1.16 adds is that a caller can
+know which it is about to get **before** spending the solve.
+
+It is enforced rather than documented: a capability declaring `fail` that returns
+`converged: false` fails the job with a message naming the tolerance it missed. A declaration
+whose two halves contradict each other is caught at the source, which is the same refusal
+`MetricSpec.over` makes in 1.6.
+
+`iterations` joins `converged` and `residual` on the result and in the `diagnostics` level.
+It is not in `stats`, which is `dict[str, float]` and about cost: a count smuggled in there
+reads as an expense, where beside the convergence flags it is part of how the answer was
+reached.
 
 `over` says **what the number is taken over**, and 1.6 added it because a transient made the
 question unavoidable ([#86](https://github.com/mandaloriat/fenix-spoon/issues/86)). `payload` is

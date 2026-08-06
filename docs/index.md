@@ -44,7 +44,7 @@ install, no desktop tooling — a browser talking to a FEniCSx server.
 | Simulation server: jobs, progress streaming, cancellation, budgets, persistence, auth | working |
 | FEniCSx adapters for seven physics: potential flow, magnetostatics, steady and transient heat, elasticity, axisymmetric electrostatics, natural frequencies | validated against dolfinx 0.11 |
 | Pure-NumPy mock solvers mirroring every one of them | working — the whole loop runs without FEniCSx |
-| Wire protocol 1.15 with a shared conformance corpus | implemented, checked from both sides |
+| Wire protocol 1.16 with a shared conformance corpus | implemented, checked from both sides |
 | Four browser packages: SDK, geometry editor, field viewer, curve plot | working |
 | Distributed execution: arq workers behind Redis | working |
 | The same core from a local process: JSON-RPC over stdio, MCP, a CLI and a Python API | working |

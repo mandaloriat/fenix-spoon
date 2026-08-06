@@ -204,6 +204,7 @@ def build() -> str:
         CapabilityExample,
         CapabilityFeatures,
         ConditionSpec,
+        ConvergenceSpec,
         MetricSpec,
         SolverInfo,
     )
@@ -309,6 +310,10 @@ def build() -> str:
                 ArtifactSpec,
                 CostSection,
                 CapabilityFeatures,
+                # Protocol 1.16, #107. After the features because it is the same kind of
+                # statement — what this capability does beyond returning a field — and the
+                # one that says what its answer is worth when the iteration falls short.
+                ConvergenceSpec,
                 RequirementsSection,
                 CapabilityExample,
             ],

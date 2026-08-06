@@ -24,7 +24,12 @@ from pydantic import BaseModel, Field
 from ..geometry import Domain2D
 from . import aerodynamics as aero
 from .base import CapabilityExample, ProgressEvent, Solver, SolverContext, SolverResult
-from .declarations import POTENTIAL_FLOW_ASSUMPTIONS, POTENTIAL_FLOW_METRICS, VTK_ARTIFACT
+from .declarations import (
+    POTENTIAL_FLOW_ASSUMPTIONS,
+    POTENTIAL_FLOW_CONVERGENCE,
+    POTENTIAL_FLOW_METRICS,
+    VTK_ARTIFACT,
+)
 from .registry import register
 
 
@@ -182,6 +187,7 @@ class MockLaplace2D(Solver):
     )
     physics = "potential-flow"
     availability = "mock"
+    convergence = POTENTIAL_FLOW_CONVERGENCE
     metrics = POTENTIAL_FLOW_METRICS
     assumptions = POTENTIAL_FLOW_ASSUMPTIONS
     #: Pure NumPy with a fixed sweep count and no randomness anywhere: the same inputs give
@@ -423,6 +429,7 @@ class MockLaplace2D(Solver):
             "series": aerodynamics.series if aerodynamics else [],
             "converged": converged,
             "residual": residual,
+            "iterations": clock.done,
             "warnings": warnings + (aerodynamics.warnings if aerodynamics else []),
         }
         if params.output == "mesh2d":

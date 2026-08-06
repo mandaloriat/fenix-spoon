@@ -27,6 +27,7 @@ from .solvers.base import (
     ProgressEvent,
     Solver,
     SolverContext,
+    check_declared_convergence,
     fill_declared_metrics,
 )
 from .store import JobRecord, JobStore
@@ -116,6 +117,9 @@ async def run_solve(
         # After the timing, before persisting: the metrics belong to the stored record, and
         # computing them here rather than in each adapter is what keeps the declaration in
         # #43 and the value in #46 from being two independent statements about one number.
+        # Before the metrics, because a capability that declares `on_failure="fail"` must
+        # not have `t_max` computed off an iterate it already disowned.
+        check_declared_convergence(solver_cls, record.result)
         fill_declared_metrics(solver_cls, record.result)
         record.artifacts = ctx.artifacts
         record.status = "done"

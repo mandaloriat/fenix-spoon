@@ -121,6 +121,45 @@ version is that a protocol which grows by whoever ships a package cannot refuse 
 declared `version` and on the versions of the packages you say you need, so an adapter that
 changes its maths without bumping `version` will serve the old answer forever.
 
+## If it iterates, say so
+
+*Added in 1.16 ([#107](https://github.com/mandaloriat/fenix-spoon/issues/107)).*
+
+`SolverResult` has `converged`, `residual` and `iterations`, and setting them is not optional
+housekeeping — a capability that can report `converged: false` **must** declare what that
+means:
+
+```python
+from .base import ConvergenceSpec
+
+class MyNonlinearSolver(Solver):
+    convergence = ConvergenceSpec(
+        method="newton",
+        measures="norm of the nonlinear residual, relative to the first iteration's",
+        unit=None,                 # a relaxation sweep's might be "K"
+        default_tolerance=1e-8,
+        on_failure="fail",
+    )
+```
+
+**Choose `on_failure` by asking what the last iterate *is*.** If it is a usable preview — a
+partly-relaxed field, coarse but the right shape — `return` is correct and the caller gets it
+with a warning. If it solves a different problem from the one asked about, `fail` is correct,
+and the runtime will fail the job for you rather than you writing the check. A Newton iterate
+short of tolerance is the second kind: its coefficients are wrong, so the field is a solution
+to nothing.
+
+Two things follow, and they are the reason this is enforced rather than suggested:
+
+- Declaring `fail` and then returning `converged: false` raises. The policy was stated and a
+  caller who read it reasonably stopped checking the flag.
+- Returning `converged: false` with **no** declaration raises too. There is no tolerance to
+  read it against and no meaning for the residual, so the flag says only that something is
+  wrong — which is the shape of a plausible answer rather than a verifiable one.
+
+Reporting `converged: true` needs no declaration. A direct solve is trivially converged and
+every FEniCSx adapter here says so.
+
 ## The contract, in four points
 
 **`solve` runs on a worker thread, or in another process entirely.** It must be
