@@ -297,7 +297,12 @@ def _newton(residual_form, jacobian_form, temperature, bcs, params, ctx) -> list
         solver.solve(b, correction.x.petsc_vec)
         solver.destroy()
         correction.x.scatter_forward()
-        temperature.x.array[:] += correction.x.array
+        # **Minus.** Newton solves `J d = -F` and adds `d`; this assembles `b = F` and so
+        # subtracts what it gets back. Getting that backwards is not a slow convergence, it
+        # is a divergence with a signature: on a *linear* problem the step doubles the
+        # residual exactly, so the history reads 1, 2, 4, 8 — which is what CI printed, and
+        # why `test_a_linear_problem_takes_one_newton_step` is the cheap guard for it.
+        temperature.x.array[:] -= correction.x.array
         temperature.x.scatter_forward()
         A.destroy()
         b.destroy()

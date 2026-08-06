@@ -75,6 +75,22 @@ def test_the_slab_matches_the_kirchhoff_closed_form(tmp_path, beta):
     assert np.max(np.abs(temperature - exact)) < 0.05, "over a 280 K span"
 
 
+def test_a_linear_problem_takes_one_newton_step(tmp_path):
+    """At `beta = 0` the operator does not depend on the solution, so Newton is exact at once.
+
+    The cheapest possible check on the step, and the one that would have caught the sign error
+    CI found: with the correction added instead of subtracted, a linear problem's residual
+    *doubles* every iteration — the history read 1, 2, 4, 8, 16 rather than falling to zero.
+    A wrong-signed Newton still looks plausible on a nonlinear case, where slow divergence
+    can be mistaken for a hard problem; on this one it cannot.
+    """
+    result = solve(tmp_path, beta=0.0, mesh_size=0.04)
+
+    assert result.converged is True
+    assert result.iterations <= 2
+    assert result.series[0].traces[0].values[-1] < 1e-10
+
+
 def test_newton_converges_quadratically(tmp_path):
     """What distinguishes this half from the Picard twin, and the reason for the residual curve.
 
