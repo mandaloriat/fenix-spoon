@@ -124,7 +124,14 @@ def test_agrees_with_the_picard_twin(tmp_path):
     )
 
     assert fem.metrics["k_ratio"] == pytest.approx(mock.metrics["k_ratio"], rel=0.01)
-    assert fem.metrics["t_max"] == pytest.approx(mock.metrics["t_max"], rel=0.001)
+    # The peak is read out of the payloads rather than out of `metrics`. `t_max` is a
+    # *declared* reduction, so it is filled by `fill_declared_metrics` after the runtime gets
+    # the result — calling `solve` directly, as this test does, returns only what the adapter
+    # supplies. The discovery suite is where the declared metrics are checked against a real
+    # submission; here the field is the honest source.
+    peak_fem = max(fem.data["point_fields"]["T"])
+    peak_mock = max(mock.data["fields"]["T"])
+    assert peak_fem == pytest.approx(peak_mock, rel=0.001)
 
 
 def test_the_two_halves_report_different_residuals_and_say_so(tmp_path):
