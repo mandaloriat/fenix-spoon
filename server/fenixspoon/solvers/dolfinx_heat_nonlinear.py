@@ -130,6 +130,11 @@ class DolfinxNonlinearHeat2D(Solver):
         msh = mesh.create_rectangle(
             MPI.COMM_WORLD, [(xmin, ymin), (xmax, ymax)], (nx, ny), mesh.CellType.triangle
         )
+        # Locating DG0 dofs *by cell* needs the cell-to-cell connectivity, and a freshly
+        # created mesh does not have it — `locate_dofs_topological` raises "Missing dims 2->2"
+        # rather than computing it on demand. The linear heat adapter never hit this because
+        # its mesh comes from `gmshio`, which builds the connectivity while reading the tags.
+        msh.topology.create_connectivity(msh.topology.dim, msh.topology.dim)
 
         ctx.check_cancelled()
         ctx.progress(ProgressEvent(iteration=1, total=3, message="assembling"))
